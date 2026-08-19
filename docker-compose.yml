@@ -30,9 +30,20 @@ services:
   diagnostic: {build: ./server, restart: unless-stopped, command: ["node","src/diagnostic-flow.js"], environment: {<<: *env, PORT: 8097}, depends_on: {db: {condition: service_healthy}, warehouse: {condition: service_healthy}, pricebook: {condition: service_healthy}}, healthcheck: *hc}
   parts: {build: ./server, restart: unless-stopped, command: ["node","src/parts-orchestrator.js"], environment: {<<: *env, PORT: 8098}, depends_on: {db: {condition: service_healthy}, warehouse: {condition: service_healthy}, procurement: {condition: service_healthy}}, healthcheck: *hc}
   completion: {build: ./server, restart: unless-stopped, command: ["node","src/completion.js"], environment: {<<: *env, PORT: 8099}, depends_on: {db: {condition: service_healthy}, warehouse: {condition: service_healthy}, documents: {condition: service_healthy}, parts: {condition: service_healthy}}, healthcheck: *hc}
+  reliability: {build: ./server, restart: unless-stopped, command: ["node","src/reliability.js"], environment: {<<: *env, PORT: 8100}, depends_on: {db: {condition: service_healthy}, completion: {condition: service_healthy}, parts: {condition: service_healthy}}, healthcheck: *hc}
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-profi24}:${POSTGRES_PASSWORD:-profi24-change-me}@db:5432/${POSTGRES_DB:-profi24}"
+      BACKUP_DIR: /backups
+      BACKUP_RETENTION_DAYS: "${BACKUP_RETENTION_DAYS:-14}"
+    volumes: [./ops/backup.sh:/backup.sh:ro, backups:/backups, uploads:/data/uploads:ro]
+    depends_on: {db: {condition: service_healthy}}
+    command: ["sh","-c","while true; do sh /backup.sh; sleep 86400; done"]
   web:
     build: ./web
     restart: unless-stopped
     ports: ["${WEB_PORT:-5173}:80"]
-    depends_on: {api: {condition: service_healthy}, warehouse: {condition: service_healthy}, procurement: {condition: service_healthy}, payroll: {condition: service_healthy}, analytics: {condition: service_healthy}, finance: {condition: service_healthy}, documents: {condition: service_healthy}, notifications: {condition: service_healthy}, communications: {condition: service_healthy}, approvals: {condition: service_healthy}, workflow: {condition: service_healthy}, operations: {condition: service_healthy}, performance: {condition: service_healthy}, kpi: {condition: service_healthy}, profitability: {condition: service_healthy}, pricing: {condition: service_healthy}, pricebook: {condition: service_healthy}, diagnostic: {condition: service_healthy}, parts: {condition: service_healthy}, completion: {condition: service_healthy}}
-volumes: {pgdata: {}, uploads: {}}
+    depends_on: {api: {condition: service_healthy}, warehouse: {condition: service_healthy}, procurement: {condition: service_healthy}, payroll: {condition: service_healthy}, analytics: {condition: service_healthy}, finance: {condition: service_healthy}, documents: {condition: service_healthy}, notifications: {condition: service_healthy}, communications: {condition: service_healthy}, approvals: {condition: service_healthy}, workflow: {condition: service_healthy}, operations: {condition: service_healthy}, performance: {condition: service_healthy}, kpi: {condition: service_healthy}, profitability: {condition: service_healthy}, pricing: {condition: service_healthy}, pricebook: {condition: service_healthy}, diagnostic: {condition: service_healthy}, parts: {condition: service_healthy}, completion: {condition: service_healthy}, reliability: {condition: service_healthy}}
+volumes: {pgdata: {}, uploads: {}, backups: {}}
