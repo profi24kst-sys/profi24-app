@@ -34,6 +34,29 @@ services:
       retries: 10
       start_period: 10s
 
+  warehouse:
+    build: ./server
+    restart: unless-stopped
+    command: ["node", "src/warehouse.js"]
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-profi24}:${POSTGRES_PASSWORD:-profi24-change-me}@db:5432/${POSTGRES_DB:-profi24}
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
+      DB_POOL_MAX: ${DB_POOL_MAX:-10}
+      PORT: 8081
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:8081/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
   web:
     build: ./web
     restart: unless-stopped
@@ -41,6 +64,8 @@ services:
       - "${WEB_PORT:-5173}:80"
     depends_on:
       api:
+        condition: service_healthy
+      warehouse:
         condition: service_healthy
 
 volumes:
