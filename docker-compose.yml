@@ -129,6 +129,22 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+  notifications:
+    build: ./server
+    restart: unless-stopped
+    command: ["node", "src/notifications.js"]
+    environment:
+      <<: *env
+      PORT: 8087
+    depends_on:
+      db: {condition: service_healthy}
+      api: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:8087/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
   web:
     build: ./web
     restart: unless-stopped
@@ -141,6 +157,7 @@ services:
       analytics: {condition: service_healthy}
       finance: {condition: service_healthy}
       documents: {condition: service_healthy}
+      notifications: {condition: service_healthy}
 volumes:
   pgdata:
   uploads:
