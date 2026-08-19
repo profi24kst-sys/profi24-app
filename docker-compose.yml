@@ -21,6 +21,10 @@ services:
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
       DB_POOL_MAX: ${DB_POOL_MAX:-10}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      WHATSAPP_TOKEN: ${WHATSAPP_TOKEN:-}
+      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+      WHATSAPP_API_VERSION: ${WHATSAPP_API_VERSION:-v23.0}
       PORT: 8080
     depends_on:
       db: {condition: service_healthy}
@@ -145,6 +149,22 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+  communications:
+    build: ./server
+    restart: unless-stopped
+    command: ["node", "src/communications.js"]
+    environment:
+      <<: *env
+      PORT: 8088
+    depends_on:
+      db: {condition: service_healthy}
+      api: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:8088/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
   web:
     build: ./web
     restart: unless-stopped
@@ -158,6 +178,7 @@ services:
       finance: {condition: service_healthy}
       documents: {condition: service_healthy}
       notifications: {condition: service_healthy}
+      communications: {condition: service_healthy}
 volumes:
   pgdata:
   uploads:
