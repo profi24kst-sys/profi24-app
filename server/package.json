@@ -5,7 +5,8 @@
   "scripts": {
     "migrate": "node src/migrate.js",
     "start": "node src/migrate.js && node src/index.js",
-    "check": "node --check src/migrate.js && node --check src/index.js"
+    "check": "node --check src/migrate.js && node --check src/index.js && node --check src/set-password.js",
+    "set-password": "node src/set-password.js"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.1",
