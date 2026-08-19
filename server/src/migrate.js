@@ -3,11 +3,18 @@ import pg from 'pg';
 const pool=new pg.Pool({connectionString:process.env.DATABASE_URL});
 const statements=[
   `CREATE SEQUENCE IF NOT EXISTS request_number_seq START 1001`,
+  `CREATE TABLE IF NOT EXISTS users(id SERIAL PRIMARY KEY,name TEXT NOT NULL,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN ('OWNER','MANAGER','ENGINEER')),active BOOLEAN DEFAULT TRUE,created_at TIMESTAMPTZ DEFAULT now())`,
+  `CREATE TABLE IF NOT EXISTS customers(id SERIAL PRIMARY KEY,name TEXT NOT NULL,phone TEXT NOT NULL,email TEXT,address TEXT,created_at TIMESTAMPTZ DEFAULT now())`,
+  `CREATE TABLE IF NOT EXISTS equipment(id SERIAL PRIMARY KEY,customer_id INT REFERENCES customers(id) ON DELETE CASCADE,category TEXT NOT NULL,brand TEXT,model TEXT,serial_number TEXT,created_at TIMESTAMPTZ DEFAULT now())`,
+  `CREATE TABLE IF NOT EXISTS requests(id SERIAL PRIMARY KEY,number TEXT UNIQUE NOT NULL,customer_id INT REFERENCES customers(id),equipment_id INT REFERENCES equipment(id),engineer_id INT REFERENCES users(id),status TEXT NOT NULL DEFAULT 'NEW',priority TEXT NOT NULL DEFAULT 'NORMAL',complaint TEXT NOT NULL,diagnosis TEXT,work_description TEXT,total NUMERIC(12,2) DEFAULT 0,paid NUMERIC(12,2) DEFAULT 0,scheduled_at TIMESTAMPTZ,sla_deadline TIMESTAMPTZ,created_at TIMESTAMPTZ DEFAULT now(),closed_at TIMESTAMPTZ)`,
+  `CREATE TABLE IF NOT EXISTS request_history(id SERIAL PRIMARY KEY,request_id INT REFERENCES requests(id) ON DELETE CASCADE,user_id INT REFERENCES users(id),action TEXT NOT NULL,details JSONB DEFAULT '{}',created_at TIMESTAMPTZ DEFAULT now())`,
   `ALTER TABLE customers ADD COLUMN IF NOT EXISTS phone_norm TEXT`,
   `ALTER TABLE customers ADD COLUMN IF NOT EXISTS notes TEXT`,
   `ALTER TABLE customers ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now()`,
   `UPDATE customers SET phone_norm=regexp_replace(phone,'\\D','','g') WHERE phone_norm IS NULL`,
   `CREATE INDEX IF NOT EXISTS idx_customers_phone_norm ON customers(phone_norm)`,
+  `ALTER TABLE equipment DROP CONSTRAINT IF EXISTS equipment_customer_id_fkey`,
+  `ALTER TABLE equipment ADD CONSTRAINT equipment_customer_id_fkey FOREIGN KEY(customer_id) REFERENCES customers(id)`,
   `ALTER TABLE equipment ADD COLUMN IF NOT EXISTS notes TEXT`,
   `ALTER TABLE equipment ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now()`,
   `ALTER TABLE requests ADD COLUMN IF NOT EXISTS manager_id INT REFERENCES users(id)`,
