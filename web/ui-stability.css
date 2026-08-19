@@ -1,0 +1,23 @@
+/* UI stability layer: keep the application shell intact while addon roots mount dynamically. */
+.docsHint{display:none!important}
+
+@media (min-width:701px){
+  .shell{display:block!important;min-height:100vh!important;padding-left:220px!important}
+  .shell>aside{position:fixed!important;left:0!important;top:0!important;bottom:0!important;width:220px!important;height:100vh!important;z-index:100!important;background:#17202b!important;color:#dbe2ea!important;padding:18px 12px!important;display:flex!important;flex-direction:column!important;overflow:hidden!important}
+  .shell>aside .logo,.shell>aside .office{flex:0 0 auto!important}
+  .shell>aside nav{display:flex!important;flex-direction:column!important;gap:5px!important;flex:1 1 auto!important;min-height:0!important;overflow-y:auto!important;overflow-x:hidden!important;padding-right:3px!important;scrollbar-width:thin!important;scrollbar-color:#3b4858 transparent!important}
+  .shell>aside nav::-webkit-scrollbar{width:6px}
+  .shell>aside nav::-webkit-scrollbar-track{background:transparent}
+  .shell>aside nav::-webkit-scrollbar-thumb{background:#3b4858;border-radius:999px}
+  .shell>aside nav>div{display:contents!important}
+  .shell>aside nav button{flex:0 0 auto!important;width:100%!important;min-height:40px!important;color:#bac4cf!important;background:transparent!important}
+  .shell>aside nav button:hover,.shell>aside nav button.on{background:#253141!important;color:#fff!important}
+  .shell>aside .profile{flex:0 0 auto!important;margin-top:10px!important;background:#17202b!important;position:relative!important;z-index:2!important}
+  .shell>main{min-height:100vh!important;width:100%!important}
+}
+
+@media (max-width:700px){
+  .shell{padding-left:0!important}
+  .shell>aside nav>div{display:contents!important}
+  .docsHint{display:none!important}
+}
