@@ -3,8 +3,9 @@
   "version": "1.1.0",
   "type": "module",
   "scripts": {
-    "start": "node src/index.js",
-    "check": "node --check src/index.js"
+    "migrate": "node src/migrate.js",
+    "start": "node src/migrate.js && node src/index.js",
+    "check": "node --check src/migrate.js && node --check src/index.js"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.1",
