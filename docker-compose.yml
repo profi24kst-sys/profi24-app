@@ -21,9 +21,10 @@ services:
   communications: {build: ./server, restart: unless-stopped, command: ["node","src/communications.js"], environment: {<<: *env, PORT: 8088}, depends_on: {db: {condition: service_healthy}}, healthcheck: *hc}
   approvals: {build: ./server, restart: unless-stopped, command: ["node","src/approvals-portal.js"], environment: {<<: *env, PORT: 8089}, depends_on: {db: {condition: service_healthy}}, healthcheck: *hc}
   workflow: {build: ./server, restart: unless-stopped, command: ["node","src/workflow.js"], environment: {<<: *env, PORT: 8090}, depends_on: {db: {condition: service_healthy}}, healthcheck: *hc}
+  operations: {build: ./server, restart: unless-stopped, command: ["node","src/operations-center.js"], environment: {<<: *env, PORT: 8091}, depends_on: {db: {condition: service_healthy}, workflow: {condition: service_healthy}, approvals: {condition: service_healthy}}, healthcheck: *hc}
   web:
     build: ./web
     restart: unless-stopped
     ports: ["${WEB_PORT:-5173}:80"]
-    depends_on: {api: {condition: service_healthy}, warehouse: {condition: service_healthy}, procurement: {condition: service_healthy}, payroll: {condition: service_healthy}, analytics: {condition: service_healthy}, finance: {condition: service_healthy}, documents: {condition: service_healthy}, notifications: {condition: service_healthy}, communications: {condition: service_healthy}, approvals: {condition: service_healthy}, workflow: {condition: service_healthy}}
+    depends_on: {api: {condition: service_healthy}, warehouse: {condition: service_healthy}, procurement: {condition: service_healthy}, payroll: {condition: service_healthy}, analytics: {condition: service_healthy}, finance: {condition: service_healthy}, documents: {condition: service_healthy}, notifications: {condition: service_healthy}, communications: {condition: service_healthy}, approvals: {condition: service_healthy}, workflow: {condition: service_healthy}, operations: {condition: service_healthy}}
 volumes: {pgdata: {}, uploads: {}}
