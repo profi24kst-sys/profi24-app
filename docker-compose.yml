@@ -28,10 +28,11 @@ services:
       db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:8080/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))\""]
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 10s
 
   web:
     build: ./web
