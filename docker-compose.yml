@@ -111,6 +111,24 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+  documents:
+    build: ./server
+    restart: unless-stopped
+    command: ["node", "src/documents.js"]
+    environment:
+      <<: *env
+      PORT: 8086
+      UPLOAD_DIR: /data/uploads
+    volumes: [uploads:/data/uploads]
+    depends_on:
+      db: {condition: service_healthy}
+      api: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:8086/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
   web:
     build: ./web
     restart: unless-stopped
@@ -122,5 +140,7 @@ services:
       payroll: {condition: service_healthy}
       analytics: {condition: service_healthy}
       finance: {condition: service_healthy}
+      documents: {condition: service_healthy}
 volumes:
   pgdata:
+  uploads:
