@@ -94,6 +94,23 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+  finance:
+    build: ./server
+    restart: unless-stopped
+    command: ["node", "src/finance.js"]
+    environment:
+      <<: *env
+      PORT: 8085
+    depends_on:
+      db: {condition: service_healthy}
+      api: {condition: service_healthy}
+      payroll: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:8085/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
   web:
     build: ./web
     restart: unless-stopped
@@ -104,5 +121,6 @@ services:
       procurement: {condition: service_healthy}
       payroll: {condition: service_healthy}
       analytics: {condition: service_healthy}
+      finance: {condition: service_healthy}
 volumes:
   pgdata:
