@@ -1,38 +1,46 @@
 services:
   db:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-profi24}
       POSTGRES_USER: ${POSTGRES_USER:-profi24}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-profi24}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-profi24-change-me}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-profi24}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-profi24} -d ${POSTGRES_DB:-profi24}"]
       interval: 5s
       timeout: 5s
       retries: 10
 
   api:
     build: ./server
+    restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-profi24}:${POSTGRES_PASSWORD:-profi24}@db:5432/${POSTGRES_DB:-profi24}
+      NODE_ENV: ${NODE_ENV:-production}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-profi24}:${POSTGRES_PASSWORD:-profi24-change-me}@db:5432/${POSTGRES_DB:-profi24}
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
+      DB_POOL_MAX: ${DB_POOL_MAX:-10}
       PORT: 8080
-    ports:
-      - "8080:8080"
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   web:
     build: ./web
-    environment:
-      VITE_API_URL: http://localhost:8080/api/v1
+    restart: unless-stopped
     ports:
-      - "5173:80"
+      - "${WEB_PORT:-5173}:80"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
 
 volumes:
   pgdata:
