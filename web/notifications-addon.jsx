@@ -1,0 +1,42 @@
+import React,{useEffect,useMemo,useState}from'react';
+import{createRoot}from'react-dom/client';
+import{Bell,AlertTriangle,Clock3,UserRound,CalendarClock,RefreshCw,X,CheckCheck,Volume2,VolumeX,TimerReset}from'lucide-react';
+import'./notifications.css';
+
+const A='/api/v1',token=()=>localStorage.token;
+async function api(p,o={}){const r=await fetch(A+p,{...o,headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`,...(o.headers||{})}}),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error?.message||'Ошибка');return j.data}
+const dt=v=>v?new Date(v).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
+const ago=v=>{if(!v)return'';const m=Math.max(0,Math.floor((Date.now()-new Date(v).getTime())/60000));if(m<1)return'только что';if(m<60)return`${m} мин назад`;const h=Math.floor(m/60);if(h<24)return`${h} ч назад`;return`${Math.floor(h/24)} дн назад`};
+const active=x=>!['CLOSED','CANCELLED'].includes(x.status);
+const getUser=()=>{try{return JSON.parse(localStorage.user||'null')}catch{return null}};
+const READ_KEY='profi24_notifications_read_v1';
+const readSet=()=>{try{return new Set(JSON.parse(localStorage.getItem(READ_KEY)||'[]'))}catch{return new Set()}};
+const saveRead=s=>localStorage.setItem(READ_KEY,JSON.stringify([...s].slice(-800)));
+
+function buildAlerts(orders,tasks,user){const now=Date.now(),out=[];for(const x of orders.filter(active)){
+ const sla=x.sla_deadline?new Date(x.sla_deadline).getTime():0,scheduled=x.scheduled_at?new Date(x.scheduled_at).getTime():0,created=x.created_at?new Date(x.created_at).getTime():now,updated=x.updated_at?new Date(x.updated_at).getTime():created;
+ if(sla&&sla<now)out.push(a(`sla:${x.id}:${x.sla_deadline}`,'critical','SLA просрочен',`${x.number} · ${x.customer_name}`,`Срок SLA истёк ${dt(x.sla_deadline)}`,x));
+ else if(sla&&sla-now<=30*60000)out.push(a(`sla-soon:${x.id}:${x.sla_deadline}`,'warning','SLA заканчивается',`${x.number} · ${x.customer_name}`,`До SLA осталось ${Math.max(1,Math.ceil((sla-now)/60000))} мин`,x));
+ if(!x.engineer_id&&now-created>15*60000)out.push(a(`unassigned:${x.id}`,'warning','Заявка без инженера',`${x.number} · ${x.customer_name}`,`Не распределена ${ago(x.created_at)}`,x));
+ if(x.status==='ASSIGNED'&&x.engineer_id&&now-updated>20*60000)out.push(a(`not-accepted:${x.id}:${x.engineer_id}`,'warning','Инженер не принял заявку',`${x.number} · ${x.engineer_name||'Инженер'}`,`Назначение ожидает принятия ${ago(x.updated_at)}`,x));
+ if(scheduled&&scheduled>now&&scheduled-now<=60*60000)out.push(a(`visit-soon:${x.id}:${x.scheduled_at}`,'info','Скоро выезд',`${x.number} · ${x.customer_name}`,`${x.engineer_name||'Инженер не назначен'} · ${dt(x.scheduled_at)}`,x));
+ if(scheduled&&scheduled<now&&now-scheduled>20*60000&&!['PAYMENT_REQUIRED','CLOSED','CANCELLED'].includes(x.status))out.push(a(`visit-late:${x.id}:${x.scheduled_at}`,'critical','Просрочка по расписанию',`${x.number} · ${x.customer_name}`,`Выезд был назначен на ${dt(x.scheduled_at)}`,x));
+ if(x.status==='APPROVAL_REQUIRED'&&now-updated>30*60000)out.push(a(`approval:${x.id}`,'warning','Зависло согласование',`${x.number} · ${x.customer_name}`,`Стоимость/работы ожидают согласования ${ago(x.updated_at)}`,x));
+ }
+ for(const t of tasks||[]){if(t.status!=='OPEN'||!t.due_at)continue;const due=new Date(t.due_at).getTime();if(due<now)out.push({id:`task:${t.id}:${t.due_at}`,severity:'warning',title:'Просрочена задача',subtitle:t.title,detail:`Срок: ${dt(t.due_at)}${t.request_number?' · '+t.request_number:''}`,request_id:t.request_id,created_at:t.due_at});}
+ if(user?.role==='ENGINEER'){return out.filter(n=>{const x=orders.find(o=>o.id===n.request_id);return !x||x.engineer_id===user.id})}
+ return out.sort((p,q)=>rank(q.severity)-rank(p.severity)||new Date(q.created_at||0)-new Date(p.created_at||0));}
+function a(id,severity,title,subtitle,detail,x){return{id,severity,title,subtitle,detail,request_id:x.id,created_at:x.updated_at||x.created_at}}
+const rank=s=>s==='critical'?3:s==='warning'?2:1;
+
+function App(){const[open,setOpen]=useState(false),[orders,setOrders]=useState([]),[tasks,setTasks]=useState([]),[err,setErr]=useState(''),[read,setRead]=useState(readSet),[sound,setSound]=useState(localStorage.getItem('profi24_notifications_browser')==='1');const user=getUser();
+ async function load(silent=false){if(!token())return;try{if(!silent)setErr('');const [r,t]=await Promise.all([api('/requests'),api('/tasks').catch(()=>[])]);setOrders(r||[]);setTasks(t||[])}catch(e){if(!silent)setErr(e.message)}}
+ useEffect(()=>{if(!token())return;load();const id=setInterval(()=>load(true),60000);return()=>clearInterval(id)},[]);
+ const alerts=useMemo(()=>buildAlerts(orders,tasks,user),[orders,tasks,user?.id,user?.role]);const unread=alerts.filter(x=>!read.has(x.id));
+ useEffect(()=>{if(!sound||!unread.length||typeof Notification==='undefined'||Notification.permission!=='granted')return;const last=localStorage.getItem('profi24_notification_last_popup');const n=unread[0];if(last===n.id)return;new Notification(n.title,{body:`${n.subtitle}. ${n.detail}`,tag:n.id});localStorage.setItem('profi24_notification_last_popup',n.id)},[unread.length,sound]);
+ useEffect(()=>{const nav=document.querySelector('aside nav');if(!nav||!user)return;const m=document.createElement('div');nav.appendChild(m);const r=createRoot(m);r.render(<button className="notifyNav" onClick={()=>setOpen(true)}><Bell size={18}/><span>Уведомления</span>{unread.length>0&&<b>{unread.length>99?'99+':unread.length}</b>}</button>);return()=>{r.unmount();m.remove()}},[user,unread.length]);
+ function mark(id){const s=new Set(read);s.add(id);setRead(s);saveRead(s)}function markAll(){const s=new Set(read);alerts.forEach(x=>s.add(x.id));setRead(s);saveRead(s)}
+ async function toggleBrowser(){if(typeof Notification==='undefined'){setErr('Браузер не поддерживает системные уведомления');return}if(!sound){const p=await Notification.requestPermission();if(p!=='granted'){setErr('Разрешение на уведомления не выдано');return}localStorage.setItem('profi24_notifications_browser','1');setSound(true)}else{localStorage.setItem('profi24_notifications_browser','0');setSound(false)}}
+ if(!open)return null;return <div className="notifyShade" onMouseDown={e=>e.target===e.currentTarget&&setOpen(false)}><aside className="notifyPanel"><header><div><h2><Bell size={21}/> Центр уведомлений</h2><p>Автоматический контроль заявок, выездов и SLA</p></div><button onClick={()=>setOpen(false)}><X/></button></header><div className="notifyTools"><button onClick={()=>load()}><RefreshCw size={16}/>Обновить</button><button onClick={markAll} disabled={!unread.length}><CheckCheck size={16}/>Все прочитано</button><button onClick={toggleBrowser}>{sound?<Volume2 size={16}/>:<VolumeX size={16}/>}Браузер</button></div>{err&&<div className="notifyError">{err}</div>}<div className="notifySummary"><span><b>{unread.length}</b> новых</span><span><b>{alerts.filter(x=>x.severity==='critical').length}</b> критичных</span><span><b>{alerts.length}</b> всего</span></div><div className="notifyList">{alerts.length?alerts.map(n=><NotificationCard key={n.id} n={n} unread={!read.has(n.id)} onRead={()=>mark(n.id)}/>):<div className="notifyEmpty"><CheckCheck size={34}/><b>Всё под контролем</b><span>Сейчас нет событий, требующих внимания.</span></div>}</div><footer><TimerReset size={15}/> Автообновление каждые 60 секунд</footer></aside></div>}
+function NotificationCard({n,unread,onRead}){const Icon=n.title.includes('SLA')?TimerReset:n.title.includes('выезд')||n.title.includes('расписанию')?CalendarClock:n.title.includes('Инженер')?UserRound:n.severity==='critical'?AlertTriangle:Clock3;return <article className={`notifyCard ${n.severity} ${unread?'unread':''}`}><div className="notifyIcon"><Icon size={18}/></div><div className="notifyBody"><div className="notifyTitle"><b>{n.title}</b>{unread&&<i/>}</div><strong>{n.subtitle}</strong><p>{n.detail}</p><small>{ago(n.created_at)}</small></div>{unread&&<button className="notifyRead" onClick={onRead} title="Отметить прочитанным"><CheckCheck size={17}/></button>}</article>}
+const root=document.createElement('div');document.body.appendChild(root);createRoot(root).render(<App/>);
