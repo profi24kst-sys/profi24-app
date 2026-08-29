@@ -1,46 +1,29 @@
-// PROFI24 Order Card v2 — non-destructive workflow layer for the main order card.
+// PROFI24 Order Card v2.1 — unified lifecycle guidance and role-aware next action.
 (function(){
-  const stages=[
-    ['NEW','Новая'],['ASSIGNED','Назначена'],['DIAGNOSTICS','Диагностика'],['APPROVAL_REQUIRED','Согласование'],['WAITING_PART','Запчасти'],['REPAIR','Ремонт'],['TESTING','Проверка'],['PAYMENT_REQUIRED','Оплата'],['CLOSED','Закрыта']
-  ];
-  const statusAliases={ACCEPTED:'ASSIGNED'};
-  const nextActions={
-    NEW:{title:'Назначьте инженера и время',detail:'Заполните блок управления справа и сохраните назначение.',action:'Управление',kind:'side'},
-    ASSIGNED:{title:'Перейдите к диагностике',detail:'После осмотра зафиксируйте причину неисправности и результат диагностики.',action:'Диагностика',kind:'main'},
-    ACCEPTED:{title:'Перейдите к диагностике',detail:'После осмотра зафиксируйте причину неисправности и результат диагностики.',action:'Диагностика',kind:'main'},
-    DIAGNOSTICS:{title:'Подготовьте работы и стоимость',detail:'Добавьте работы, запчасти и сформируйте итоговую сумму для клиента.',action:'Работы',kind:'tab',tab:'Работы'},
-    APPROVAL_REQUIRED:{title:'Ожидается решение клиента',detail:'Проверьте согласование и не запускайте ремонт до подтверждения.',action:'Согласования',kind:'nav'},
-    WAITING_PART:{title:'Контролируйте поступление запчасти',detail:'Проверьте заказанные позиции и ожидаемую дату поступления.',action:'Запчасти',kind:'tab',tab:'Запчасти'},
-    REPAIR:{title:'Выполните ремонт',detail:'После выполнения работ перейдите к контрольной проверке.',action:'Основное',kind:'main'},
-    TESTING:{title:'Завершите контрольную проверку',detail:'Зафиксируйте результат проверки после ремонта.',action:'Основное',kind:'main'},
-    PAYMENT_REQUIRED:{title:'Примите оплату',detail:'Проверьте начисленную сумму, долг и способ оплаты.',action:'Оплаты',kind:'tab',tab:'Оплаты'},
-    CLOSED:{title:'Заказ завершён',detail:'Все ключевые этапы заказа пройдены.',action:null,kind:null}
+  const stages=[['NEW','Новая'],['ASSIGNED','Назначена'],['DIAGNOSTICS','Диагностика'],['APPROVAL_REQUIRED','Согласование'],['WAITING_PART','Запчасти'],['REPAIR','Ремонт'],['TESTING','Проверка'],['PAYMENT_REQUIRED','Оплата'],['CLOSED','Закрыта']];
+  const aliases={ACCEPTED:'ASSIGNED'};
+  const user=()=>{try{return JSON.parse(localStorage.getItem('user')||'null')}catch{return null}};
+  const roleName=r=>r==='OWNER'?'Владелец':r==='MANAGER'?'Менеджер':r==='ENGINEER'?'Инженер':r||'—';
+  const flow={
+    NEW:{title:'Назначьте инженера и время',detail:'Заказ не должен переходить дальше без ответственного и времени выезда.',action:'К назначению',kind:'side',roles:['OWNER','MANAGER']},
+    ASSIGNED:{title:'Проведите диагностику',detail:'Инженер фиксирует причину неисправности и результат диагностики.',action:'К диагностике',kind:'focus',target:'diagnosis',roles:['OWNER','MANAGER','ENGINEER']},
+    ACCEPTED:{title:'Проведите диагностику',detail:'Инженер фиксирует причину неисправности и результат диагностики.',action:'К диагностике',kind:'focus',target:'diagnosis',roles:['OWNER','MANAGER','ENGINEER']},
+    DIAGNOSTICS:{title:'Сформируйте стоимость ремонта',detail:'Добавьте работы и необходимые запчасти. Итоговая сумма должна быть понятна до согласования.',action:'Работы',kind:'tab',tab:'Работы',roles:['OWNER','MANAGER','ENGINEER']},
+    APPROVAL_REQUIRED:{title:'Получите решение клиента',detail:'Ремонт нельзя считать согласованным, пока решение клиента не зафиксировано.',action:'Согласования',kind:'nav',roles:['OWNER','MANAGER']},
+    WAITING_PART:{title:'Контролируйте запчасть',detail:'Проверьте заказанные позиции, поставщика и ожидаемую дату поступления.',action:'Запчасти',kind:'tab',tab:'Запчасти',roles:['OWNER','MANAGER','ENGINEER']},
+    REPAIR:{title:'Выполните ремонт',detail:'После выполнения работ зафиксируйте результат и переходите к контрольной проверке.',action:'Основное',kind:'main',roles:['OWNER','MANAGER','ENGINEER']},
+    TESTING:{title:'Проведите контрольную проверку',detail:'Зафиксируйте тест после ремонта. Только после успешной проверки переходите к оплате.',action:'К проверке',kind:'focus',target:'test',roles:['OWNER','MANAGER','ENGINEER']},
+    PAYMENT_REQUIRED:{title:'Закройте оплату',detail:'Проверьте начисление, полученную сумму, остаток долга и способ оплаты.',action:'Оплаты',kind:'tab',tab:'Оплаты',roles:['OWNER','MANAGER']},
+    CLOSED:{title:'Заказ завершён',detail:'Проверьте документы и историю заказа. Дальнейших обязательных действий нет.',action:'Документы',kind:'tab',tab:'Документы',roles:['OWNER','MANAGER']},
+    CANCELLED:{title:'Заказ отменён',detail:'Заказ исключён из активного жизненного цикла.',action:'История',kind:'tab',tab:'История',roles:['OWNER','MANAGER']}
   };
-  const getStatus=pill=>stages.map(x=>x[0]).concat(['ACCEPTED','CANCELLED']).find(s=>pill.classList.contains(s))||'';
+  const statuses=stages.map(x=>x[0]).concat(['ACCEPTED','CANCELLED']);
+  const getStatus=pill=>statuses.find(s=>pill.classList.contains(s))||'';
   const clickTab=name=>{const b=[...document.querySelectorAll('.ordertabs button')].find(x=>x.textContent.trim().includes(name));b?.click()};
-  const clickNav=name=>{const b=[...document.querySelectorAll('.shell>aside nav button')].find(x=>x.textContent.trim().includes(name));b?.click()};
-  const perform=(cfg)=>{
-    if(!cfg)return;
-    if(cfg.kind==='tab')clickTab(cfg.tab||cfg.action);
-    else if(cfg.kind==='main'){clickTab('Основное');setTimeout(()=>document.querySelector('.maincol')?.scrollIntoView({behavior:'smooth',block:'start'}),60)}
-    else if(cfg.kind==='side')document.querySelector('.sidecol')?.scrollIntoView({behavior:'smooth',block:'start'});
-    else if(cfg.kind==='nav')clickNav(cfg.action);
-  };
-  function render(){
-    const title=document.querySelector('.ordertitle');
-    const tabs=document.querySelector('.ordertabs');
-    if(!title||!tabs){document.querySelector('.orderFlowV2')?.remove();return}
-    const pill=title.querySelector('.pill');if(!pill)return;
-    const raw=getStatus(pill),status=statusAliases[raw]||raw;
-    const idx=Math.max(0,stages.findIndex(x=>x[0]===status));
-    let root=document.querySelector('.orderFlowV2');
-    if(!root){root=document.createElement('section');root.className='orderFlowV2';tabs.parentElement.insertBefore(root,tabs)}
-    const cfg=nextActions[raw]||nextActions[status]||nextActions.NEW;
-    root.innerHTML=`<div class="orderFlowHead"><div><small>ЭТАП ЗАКАЗА</small><b>${cfg.title}</b><span>${cfg.detail}</span></div>${cfg.action?'<button type="button" class="orderFlowAction">'+cfg.action+' →</button>':''}</div><div class="orderFlowSteps">${stages.map((s,i)=>`<div class="${i<idx?'done':i===idx?'current':''}"><i>${i<idx?'✓':i+1}</i><span>${s[1]}</span></div>`).join('')}</div>`;
-    root.querySelector('.orderFlowAction')?.addEventListener('click',()=>perform(cfg));
-    const total=title.querySelector('.total');if(total){const amount=Number((total.querySelector('b')?.textContent||'').replace(/[^0-9,-]/g,'').replace(',','.'))||0;const note=total.querySelector('span');if(note&&amount===0)note.textContent='Сумма не начислена';}
-  }
-  const obs=new MutationObserver(()=>requestAnimationFrame(render));
-  function start(){obs.observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['class']});render()}
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+  const clickNav=name=>{const b=[...document.querySelectorAll('.shell>aside nav button')].find(x=>!x.hidden&&x.textContent.trim().includes(name));b?.click()};
+  function focusField(type){clickTab('Основное');setTimeout(()=>{const all=[...document.querySelectorAll('.maincol textarea,.maincol input')];const el=type==='test'?all.find(x=>(x.placeholder||'').toLowerCase().includes('провер')||(x.closest('.card')?.textContent||'').includes('Провер')):all.find(x=>(x.placeholder||'').toLowerCase().includes('диагност')||(x.closest('.card')?.textContent||'').includes('Диагност'));el?.scrollIntoView({behavior:'smooth',block:'center'});el?.focus()},80)}
+  function perform(cfg){if(!cfg)return;if(cfg.kind==='tab')clickTab(cfg.tab||cfg.action);else if(cfg.kind==='main'){clickTab('Основное');setTimeout(()=>document.querySelector('.maincol')?.scrollIntoView({behavior:'smooth',block:'start'}),60)}else if(cfg.kind==='side')document.querySelector('.sidecol')?.scrollIntoView({behavior:'smooth',block:'start'});else if(cfg.kind==='nav')clickNav(cfg.action);else if(cfg.kind==='focus')focusField(cfg.target)}
+  function blockers(status){const list=[];const text=(document.querySelector('.sidecol')?.innerText||'')+' '+(document.querySelector('.maincol')?.innerText||'');if(status==='NEW'){if(/Не назначен/i.test(text))list.push('Не назначен инженер');if(/Без времени/i.test(text))list.push('Не указано время выезда')}if(status==='DIAGNOSTICS'){const total=Number((document.querySelector('.ordertitle .total b')?.textContent||'').replace(/[^0-9,-]/g,'').replace(',','.'))||0;if(total<=0)list.push('Сумма ремонта ещё не сформирована')}if(status==='PAYMENT_REQUIRED'){const note=document.querySelector('.ordertitle .total span')?.textContent||'';if(/Долг/i.test(note))list.push(note)}return list}
+  function render(){const title=document.querySelector('.ordertitle'),tabs=document.querySelector('.ordertabs');if(!title||!tabs){document.querySelector('.orderFlowV2')?.remove();return}const pill=title.querySelector('.pill');if(!pill)return;const raw=getStatus(pill),status=aliases[raw]||raw,cfg=flow[raw]||flow[status]||flow.NEW,idx=status==='CANCELLED'?-1:Math.max(0,stages.findIndex(x=>x[0]===status)),u=user(),can=cfg.roles?.includes(u?.role),blocks=blockers(status);let root=document.querySelector('.orderFlowV2');if(!root){root=document.createElement('section');root.className='orderFlowV2';tabs.parentElement.insertBefore(root,tabs)}root.innerHTML=`<div class="orderFlowHead"><div><small>ЖИЗНЕННЫЙ ЦИКЛ · ${roleName(u?.role)}</small><b>${cfg.title}</b><span>${cfg.detail}</span>${blocks.length?`<div class="orderFlowBlockers">${blocks.map(x=>`<em>${x}</em>`).join('')}</div>`:''}</div>${cfg.action?`<button type="button" class="orderFlowAction" ${can?'':'disabled'}>${can?cfg.action:'Действие недоступно'} →</button>`:''}</div>${status==='CANCELLED'?'<div class="orderFlowCancelled">Заказ отменён</div>':`<div class="orderFlowSteps">${stages.map((s,i)=>`<div class="${i<idx?'done':i===idx?'current':''}"><i>${i<idx?'✓':i+1}</i><span>${s[1]}</span></div>`).join('')}</div>`}`;if(can)root.querySelector('.orderFlowAction')?.addEventListener('click',()=>perform(cfg));const total=title.querySelector('.total');if(total){const amount=Number((total.querySelector('b')?.textContent||'').replace(/[^0-9,-]/g,'').replace(',','.'))||0,note=total.querySelector('span');if(note&&amount===0)note.textContent='Сумма не начислена'}}
+  const obs=new MutationObserver(()=>requestAnimationFrame(render));function start(){obs.observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['class']});render()}if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
 })();
