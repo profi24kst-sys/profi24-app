@@ -1,4 +1,4 @@
-// PROFI24 Core UI v1.2.2 — stable central navigation registry with delegated clicks.
+// PROFI24 Core UI v1.3.0 — stable grouped navigation without moving React-owned DOM nodes.
 (function(){
   const groups={
     work:{title:'Работа',order:10,items:['Заказы','Заказ 360','Диспетчерская','Диспетчер','Диагностика','Завершение ремонта','Ожидание запчастей']},
@@ -8,27 +8,106 @@
     finance:{title:'Финансы',order:50,items:['Финансы','Прибыль заказов','Маржа']},
     analytics:{title:'Аналитика',order:60,items:['Аналитика','Отчеты','Пульт управления','Надёжность']}
   };
-  const state={nav:null,observer:null,scheduled:false,registry:new Map(),seq:0,rebuilding:false,clickHandler:null};
+  const state={nav:null,observer:null,scheduled:false,registry:new Map(),seq:0,rebuilding:false,clickHandler:null,proxySeq:0};
   const textOf=b=>(b?.querySelector('span')?.textContent||b?.textContent||'').trim().replace(/\s+\d+$/,'');
   const groupFor=label=>Object.entries(groups).find(([,g])=>g.items.includes(label))?.[0]||'analytics';
-  function section(nav,key){let s=nav.querySelector(`[data-core-group="${key}"]`);if(s)return s;s=document.createElement('section');s.dataset.coreGroup=key;s.className='coreNavGroup';const h=document.createElement('div');h.className='coreNavGroupTitle';h.textContent=groups[key].title;const body=document.createElement('div');body.className='coreNavGroupBody';s.append(h,body);return s}
-  function samePlace(node,parent,index){return node.parentElement===parent&&parent.children[index]===node}
-  function place(node,parent,index){if(!samePlace(node,parent,index))parent.insertBefore(node,parent.children[index]||null)}
-  function removeDuplicateLegacy(label,except){const nav=state.nav;if(!nav)return;[...nav.querySelectorAll('button')].forEach(b=>{if(b===except)return;if(textOf(b)===label&&!b.dataset.coreNavId){const wrap=b.parentElement;if(wrap&&wrap.parentElement===nav&&wrap.tagName==='DIV')wrap.remove();else b.remove()}})}
-  function mountRegistered(item){const nav=state.nav;if(!nav)return;let b=nav.querySelector(`[data-core-nav-id="${item.id}"]`);if(!b){b=document.createElement('button');b.type='button';b.dataset.coreNavId=item.id;b.dataset.coreManaged='1';b.dataset.coreLabel=item.label;const span=document.createElement('span');b.appendChild(span)}b.disabled=false;b.style.pointerEvents='auto';b.querySelector('span').textContent=item.label;const old=b.querySelector('b');if(item.badge===undefined||item.badge===null||item.badge==='')old?.remove();else if(old)old.textContent=String(item.badge);else{const badge=document.createElement('b');badge.textContent=String(item.badge);b.appendChild(badge)}const key=groups[item.group]?item.group:groupFor(item.label),sec=section(nav,key),body=sec.querySelector('.coreNavGroupBody');if(!sec.isConnected)nav.appendChild(sec);if(b.parentElement!==body)body.appendChild(b);removeDuplicateLegacy(item.label,b)}
-  function reorderBody(body,key){const preferred=groups[key].items;const ordered=[...body.children].sort((a,b)=>{const ai=preferred.indexOf(textOf(a)),bi=preferred.indexOf(textOf(b));return(ai<0?999:ai)-(bi<0?999:bi)});ordered.forEach((node,i)=>place(node,body,i))}
-  function reconnectObserver(){if(!state.nav||!state.observer)return;state.observer.observe(state.nav,{childList:true,subtree:true})}
-  function rebuild(){state.scheduled=false;const nav=document.querySelector('.shell>aside nav');if(!nav||state.rebuilding)return;state.rebuilding=true;if(state.nav!==nav)state.nav=nav;state.observer?.disconnect();try{state.registry.forEach(mountRegistered);const buttons=[...nav.querySelectorAll(':scope > button,:scope > div > button,:scope > section:not(.coreNavGroup) button')];const buckets={};Object.keys(groups).forEach(k=>buckets[k]=[]);buttons.forEach((b,i)=>{if(b.dataset.coreNavId)return;const label=textOf(b);if([...state.registry.values()].some(x=>x.label===label)){b.remove();return}b.dataset.coreManaged='legacy';b.dataset.coreLabel=label;b.dataset.coreSeq=String(i);buckets[groupFor(label)].push(b)});Object.entries(groups).sort((a,b)=>a[1].order-b[1].order).forEach(([key])=>{const sec=section(nav,key),body=sec.querySelector('.coreNavGroupBody');if(!sec.isConnected)nav.appendChild(sec);buckets[key].forEach(b=>{if(b.parentElement!==body)body.appendChild(b)});reorderBody(body,key)});[...nav.querySelectorAll('.coreNavGroup')].forEach(s=>s.hidden=!s.querySelector('button'))}finally{state.rebuilding=false;reconnectObserver()}}
+  const esc=s=>String(s).replace(/"/g,'\\"');
+
+  function section(nav,key){
+    let s=nav.querySelector(`:scope > section.coreNavGroup[data-core-group="${key}"]`);
+    if(s)return s;
+    s=document.createElement('section');s.dataset.coreGroup=key;s.className='coreNavGroup';
+    const h=document.createElement('div');h.className='coreNavGroupTitle';h.textContent=groups[key].title;
+    const body=document.createElement('div');body.className='coreNavGroupBody';s.append(h,body);return s;
+  }
+  function ensureSections(nav){
+    Object.entries(groups).sort((a,b)=>a[1].order-b[1].order).forEach(([key])=>{const s=section(nav,key);if(!s.isConnected)nav.appendChild(s)});
+  }
+  function originalButtons(nav){
+    return [...nav.children].flatMap(node=>{
+      if(node.tagName==='BUTTON')return[node];
+      if(node.tagName==='DIV'&&!node.dataset.coreOwned)return[...node.querySelectorAll(':scope > button')];
+      return[];
+    }).filter(b=>!b.dataset.coreNavId&&!b.dataset.coreProxy);
+  }
+  function originalKey(b,i){if(!b.dataset.coreOriginalId)b.dataset.coreOriginalId='base-'+(++state.proxySeq)+'-'+i;return b.dataset.coreOriginalId}
+  function copyButtonLook(from,to){
+    to.className=from.className;
+    to.disabled=!!from.disabled;
+    to.setAttribute('aria-current',from.getAttribute('aria-current')||'false');
+    to.innerHTML=from.innerHTML;
+  }
+  function mountProxy(nav,original,i){
+    const label=textOf(original);if(!label)return;
+    const id=originalKey(original,i);original.classList.add('coreNavOriginal');original.setAttribute('aria-hidden','true');
+    let p=nav.querySelector(`button[data-core-proxy="${esc(id)}"]`);
+    if(!p){p=document.createElement('button');p.type='button';p.dataset.coreProxy=id;p.dataset.coreManaged='proxy';}
+    copyButtonLook(original,p);p.dataset.coreLabel=label;p.style.pointerEvents='auto';p.removeAttribute('aria-hidden');
+    const key=groupFor(label),body=section(nav,key).querySelector('.coreNavGroupBody');if(p.parentElement!==body)body.appendChild(p);
+  }
+  function mountRegistered(nav,item){
+    let b=nav.querySelector(`button[data-core-nav-id="${esc(item.id)}"]`);
+    if(!b){b=document.createElement('button');b.type='button';b.dataset.coreNavId=item.id;b.dataset.coreManaged='1';const span=document.createElement('span');b.appendChild(span)}
+    b.disabled=false;b.style.pointerEvents='auto';b.dataset.coreLabel=item.label;
+    let span=b.querySelector('span');if(!span){span=document.createElement('span');b.prepend(span)}span.textContent=item.label;
+    const old=b.querySelector('b');if(item.badge===undefined||item.badge===null||item.badge==='')old?.remove();else if(old)old.textContent=String(item.badge);else{const badge=document.createElement('b');badge.textContent=String(item.badge);b.appendChild(badge)}
+    const key=groups[item.group]?item.group:groupFor(item.label),body=section(nav,key).querySelector('.coreNavGroupBody');if(b.parentElement!==body)body.appendChild(b);
+  }
+  function sortBodies(nav){
+    Object.entries(groups).forEach(([key,g])=>{const body=section(nav,key).querySelector('.coreNavGroupBody');const nodes=[...body.children];nodes.sort((a,b)=>{const al=a.dataset.coreLabel||textOf(a),bl=b.dataset.coreLabel||textOf(b),ai=g.items.indexOf(al),bi=g.items.indexOf(bl);if(ai!==bi)return(ai<0?999:ai)-(bi<0?999:bi);return Number(a.dataset.coreOrder||0)-Number(b.dataset.coreOrder||0)});nodes.forEach(n=>body.appendChild(n));section(nav,key).hidden=!body.querySelector('button')});
+  }
+  function reconnectObserver(){if(state.nav&&state.observer)state.observer.observe(state.nav,{childList:true,subtree:true,attributes:true,attributeFilter:['class','aria-current','disabled']})}
+  function rebuild(){
+    state.scheduled=false;const nav=document.querySelector('.shell>aside nav');if(!nav||state.rebuilding)return;state.rebuilding=true;
+    if(state.nav!==nav){state.nav=nav;attachClicks(nav)}state.observer?.disconnect();
+    try{
+      ensureSections(nav);
+      const originals=originalButtons(nav);originals.forEach((b,i)=>mountProxy(nav,b,i));
+      // remove stale base proxies only after React originals have been inspected
+      const live=new Set(originals.map(b=>b.dataset.coreOriginalId));
+      nav.querySelectorAll('button[data-core-proxy]').forEach(p=>{if(!live.has(p.dataset.coreProxy))p.remove()});
+      state.registry.forEach(item=>mountRegistered(nav,item));
+      nav.querySelectorAll('button[data-core-nav-id]').forEach(b=>{if(!state.registry.has(b.dataset.coreNavId))b.remove()});
+      sortBodies(nav);
+    }finally{state.rebuilding=false;reconnectObserver()}
+  }
   function schedule(){if(state.scheduled||state.rebuilding)return;state.scheduled=true;requestAnimationFrame(rebuild)}
-  function attachClicks(nav){if(state.clickHandler&&state.nav)state.nav.removeEventListener('click',state.clickHandler,true);state.clickHandler=e=>{const b=e.target.closest?.('button[data-core-nav-id]');if(!b||!nav.contains(b))return;const item=state.registry.get(b.dataset.coreNavId);if(!item?.onClick)return;e.stopPropagation();item.onClick()};nav.addEventListener('click',state.clickHandler,true)}
-  function bindNav(){const nav=document.querySelector('.shell>aside nav');if(!nav){setTimeout(bindNav,150);return}if(state.nav!==nav||!state.observer){state.observer?.disconnect();state.nav=nav;state.observer=new MutationObserver(()=>schedule());reconnectObserver();attachClicks(nav)}schedule();window.dispatchEvent(new CustomEvent('profi24:core-ui-ready'))}
+  function attachClicks(nav){
+    if(state.clickHandler&&state.nav)state.nav.removeEventListener('click',state.clickHandler,true);
+    state.clickHandler=e=>{
+      const b=e.target.closest?.('button');if(!b||!nav.contains(b))return;
+      if(b.dataset.coreProxy){
+        const original=nav.querySelector(`button[data-core-original-id="${esc(b.dataset.coreProxy)}"]`);if(!original)return;
+        e.preventDefault();e.stopPropagation();original.click();setTimeout(schedule,0);return;
+      }
+      if(b.dataset.coreNavId){
+        const item=state.registry.get(b.dataset.coreNavId);if(!item?.onClick)return;
+        e.preventDefault();e.stopPropagation();try{item.onClick()}catch(err){console.error('[PROFI24 NAV]',item.id,err)}setTimeout(schedule,0);
+      }
+    };
+    nav.addEventListener('click',state.clickHandler,true);
+  }
+  function bindNav(){
+    const nav=document.querySelector('.shell>aside nav');if(!nav){setTimeout(bindNav,120);return}
+    if(state.nav!==nav||!state.observer){state.observer?.disconnect();state.nav=nav;state.observer=new MutationObserver(schedule);attachClicks(nav);reconnectObserver()}
+    schedule();window.dispatchEvent(new CustomEvent('profi24:core-ui-ready'));
+  }
   const api={
-    registerNav(cfg){if(!cfg?.id||!cfg?.label)return()=>{};const item={group:groupFor(cfg.label),order:++state.seq,...cfg};state.registry.set(item.id,item);bindNav();schedule();return()=>{state.registry.delete(item.id);document.querySelector(`[data-core-nav-id="${item.id}"]`)?.remove();schedule()}},
+    registerNav(cfg){
+      if(!cfg?.id||!cfg?.label)return()=>{};
+      const item={group:groupFor(cfg.label),order:++state.seq,...cfg};state.registry.set(item.id,item);bindNav();schedule();
+      return()=>{if(state.registry.get(item.id)!==item)return;state.registry.delete(item.id);document.querySelector(`button[data-core-nav-id="${esc(item.id)}"]`)?.remove();schedule()}
+    },
     updateNav(id,patch={}){const x=state.registry.get(id);if(!x)return false;Object.assign(x,patch);schedule();return true},
-    unregisterNav(id){state.registry.delete(id);document.querySelector(`[data-core-nav-id="${id}"]`)?.remove();schedule()},
+    unregisterNav(id){state.registry.delete(id);document.querySelector(`button[data-core-nav-id="${esc(id)}"]`)?.remove();schedule()},
+    removeNav(id){this.unregisterNav(id)},
     refresh(){bindNav();schedule()},
-    getRegistry(){return [...state.registry.values()].map(x=>({...x,onClick:undefined}))},
-    version:'1.2.2'
+    getRegistry(){return[...state.registry.values()].map(x=>({...x,onClick:undefined}))},
+    version:'1.3.0'
   };
-  window.Profi24UI=api;if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',bindNav);else bindNav();window.addEventListener('storage',e=>{if(e.key==='user')setTimeout(bindNav,100)});window.addEventListener('profi24:ui-refresh',bindNav);
+  window.Profi24UI=api;
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',bindNav);else bindNav();
+  window.addEventListener('storage',e=>{if(e.key==='user')setTimeout(bindNav,50)});
+  window.addEventListener('profi24:ui-refresh',bindNav);
+  window.addEventListener('focus',schedule);
 })();
