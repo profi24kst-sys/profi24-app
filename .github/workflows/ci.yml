@@ -28,6 +28,8 @@ jobs:
         run: npm run build
       - name: Validate Docker Compose
         run: docker compose config >/dev/null
+      - name: Build all service images
+        run: docker compose build
 
   smoke:
     runs-on: ubuntu-latest
@@ -36,8 +38,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Prepare environment
         run: cp .env.example .env
-      - name: Build and start stack
-        run: docker compose up -d --build
+      - name: Start core CRM only
+        run: docker compose up -d --build db api ownercontrol web
       - name: Wait for core health
         run: |
           for i in $(seq 1 40); do
@@ -45,7 +47,7 @@ jobs:
             sleep 3
           done
           docker compose ps
-          docker compose logs api
+          docker compose logs api web
           exit 1
       - name: Verify authenticated core API
         run: |
