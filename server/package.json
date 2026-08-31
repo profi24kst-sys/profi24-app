@@ -5,7 +5,7 @@
   "scripts": {
     "migrate": "node src/migrate.js",
     "start": "node src/migrate.js && node src/index2.js",
-    "check": "node --check src/migrate.js && node --check src/index2.js && node --check src/set-password.js",
+    "check": "node src/check-all.js",
     "set-password": "node src/set-password.js"
   },
   "dependencies": {
