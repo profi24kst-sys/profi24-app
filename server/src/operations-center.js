@@ -1,10 +1,11 @@
 import Fastify from'fastify';import cors from'@fastify/cors';import helmet from'@fastify/helmet';import jwt from'@fastify/jwt';import pg from'pg';
 const app=Fastify({logger:true});await app.register(cors,{origin:true,credentials:true});await app.register(helmet,{contentSecurityPolicy:false});await app.register(jwt,{secret:process.env.JWT_SECRET||'dev-secret-change-me'});const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,max:Number(process.env.DB_POOL_MAX||10)}),q=(s,p=[])=>pool.query(s,p),fail=(r,c,m,s=422)=>r.code(s).send({data:null,error:{code:c,message:m}});const auth=async(req,r)=>{try{await req.jwtVerify()}catch{return fail(r,'UNAUTHORIZED','Требуется авторизация',401)}};const ops=async(req,r)=>{await auth(req,r);if(r.sent)return;if(!['OWNER','MANAGER'].includes(req.user.role))return fail(r,'FORBIDDEN','Доступно руководителю и менеджеру',403)};
 const stageSql=`CASE WHEN r.status='ACCEPTED' AND EXISTS(SELECT 1 FROM request_stage_events se WHERE se.request_id=r.id AND se.event='DEPART') AND NOT EXISTS(SELECT 1 FROM request_stage_events se WHERE se.request_id=r.id AND se.event='ARRIVE') THEN 'ON_ROUTE' ELSE r.status END`;
-app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'profi24-operations-center',version:'1.0.0'}});
+app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'profi24-operations-center',version:'1.1.0'}});
 app.get('/api/v1/operations/live',{preHandler:ops},async()=>{const now=new Date();
  const metrics=(await q(`SELECT
  count(*) FILTER(WHERE status NOT IN('CLOSED','CANCELLED'))::int active,
+ count(*) FILTER(WHERE created_at>=date_trunc('day',now()))::int created_today,
  count(*) FILTER(WHERE status='NEW')::int new,
  count(*) FILTER(WHERE engineer_id IS NULL AND status NOT IN('CLOSED','CANCELLED'))::int unassigned,
  count(*) FILTER(WHERE sla_deadline<now() AND status NOT IN('CLOSED','CANCELLED'))::int sla_overdue,
@@ -13,6 +14,8 @@ app.get('/api/v1/operations/live',{preHandler:ops},async()=>{const now=new Date(
  count(*) FILTER(WHERE status='WAITING_PART')::int waiting_parts,
  count(*) FILTER(WHERE status='CLOSED' AND closed_at>=date_trunc('day',now()))::int closed_today,
  COALESCE(sum(total) FILTER(WHERE status='CLOSED' AND closed_at>=date_trunc('day',now())),0)::numeric revenue_today,
+ COALESCE(sum(total) FILTER(WHERE status NOT IN('CLOSED','CANCELLED')),0)::numeric active_order_value,
+ COALESCE(sum(GREATEST(COALESCE(total,0)-COALESCE(paid,0),0)) FILTER(WHERE status NOT IN('CANCELLED')),0)::numeric receivable,
  COALESCE(sum(paid) FILTER(WHERE updated_at>=date_trunc('day',now())),0)::numeric request_paid_snapshot
  FROM requests`)).rows[0];
  const cash=(await q(`SELECT COALESCE(sum(CASE WHEN kind='PAYMENT' THEN amount ELSE -amount END),0)::numeric amount,count(*) FILTER(WHERE kind='PAYMENT')::int payments FROM payments WHERE created_at>=date_trunc('day',now())`)).rows[0];
