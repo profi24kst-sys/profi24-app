@@ -1,5 +1,5 @@
 // PROFI24 frontend resilience layer.
-// Prevents one non-critical module failure from blanking the entire Orders screen.
+// Critical order/auth APIs are never hidden. Optional dashboard modules degrade independently.
 const nativeFetch=window.fetch.bind(window);
 const fallbacks=[
   [/\/api\/v1\/customers(?:\?|$)/,{data:[]}],
@@ -10,17 +10,21 @@ const fallbacks=[
   [/\/api\/v1\/dashboard\/finance(?:\?|$)/,{data:{totals:{}}}],
   [/\/api\/v1\/dashboard(?:\?|$)/,{data:{}}]
 ];
+function target(input){return typeof input==='string'?input:(input?.url||'')}
+function fallbackFor(url){return fallbacks.find(([re])=>re.test(url))?.[1]}
+function synthetic(data,reason){return new Response(JSON.stringify(data),{status:200,headers:{'Content-Type':'application/json','X-Profi24-Fallback':'1','X-Profi24-Fallback-Reason':reason}})}
 window.fetch=async function(input,init){
-  const response=await nativeFetch(input,init);
-  if(response.status<500)return response;
-  const url=typeof input==='string'?input:(input?.url||'');
-  // Requests are critical: never hide an error from the orders API itself.
-  if(/\/api\/v1\/requests(?:\/|\?|$)/.test(url))return response;
-  const match=fallbacks.find(([re])=>re.test(url));
-  if(!match)return response;
-  console.error('[PROFI24] Non-critical API failed; using safe fallback',url,response.status);
-  return new Response(JSON.stringify(match[1]),{
-    status:200,
-    headers:{'Content-Type':'application/json','X-Profi24-Fallback':'1'}
-  });
+  const url=target(input),method=String(init?.method||'GET').toUpperCase();
+  const critical=/\/api\/v1\/(?:requests|auth|me)(?:\/|\?|$)/.test(url)||url.includes('/owner-api/');
+  const fb=method==='GET'&&!critical?fallbackFor(url):null;
+  try{
+    const response=await nativeFetch(input,init);
+    if(!fb||response.status<429||response.status===401||response.status===403||response.status===404)return response;
+    console.warn('[PROFI24] Optional API unavailable; fallback used',url,response.status);
+    return synthetic(fb,'http-'+response.status);
+  }catch(error){
+    if(!fb)throw error;
+    console.warn('[PROFI24] Optional API network failure; fallback used',url,error);
+    return synthetic(fb,'network');
+  }
 };
