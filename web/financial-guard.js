@@ -1,0 +1,8 @@
+// PROFI24 Financial Guard v1 — prevents accidental extreme prices in order works/parts.
+(function(){
+ const nativeFetch=window.fetch.bind(window),money=n=>Number(n||0).toLocaleString('ru-RU')+' ₸';
+ function role(){try{return JSON.parse(localStorage.user||'null')?.role||''}catch{return''}}
+ function check(url,opt){if(!opt||!['POST','PATCH'].includes(String(opt.method||'GET').toUpperCase()))return true;if(!/^\/api\/v1\/(requests\/\d+\/(works|parts)|works\/\d+|parts\/\d+)/.test(String(url)))return true;let b;try{b=JSON.parse(opt.body||'{}')}catch{return true}const vals=[];if(b.unit_price!=null)vals.push(['Цена работы',Number(b.unit_price)]);if(b.sale_price!=null)vals.push(['Цена запчасти',Number(b.sale_price)]);if(b.direct_cost!=null)vals.push(['Себестоимость',Number(b.direct_cost)]);if(b.purchase_price!=null)vals.push(['Закупочная цена',Number(b.purchase_price)]);const suspicious=vals.filter(([,v])=>Number.isFinite(v)&&v>=1000000);if(!suspicious.length)return true;const text=suspicious.map(([n,v])=>`${n}: ${money(v)}`).join('\n');if(role()!=='OWNER'){alert(`Финансовая защита PROFI24\n\n${text}\n\nСумма от 1 000 000 ₸ требует подтверждения владельца.`);return false}return confirm(`ВНИМАНИЕ: аномально высокая сумма\n\n${text}\n\nПроверьте количество нулей. Вы действительно хотите сохранить эту сумму?`)}
+ window.fetch=function(input,opt){const url=typeof input==='string'?input:input?.url||'';if(!check(url,opt))return Promise.reject(new Error('Сохранение отменено финансовой защитой'));return nativeFetch(input,opt)};
+ window.Profi24FinancialGuard={version:'1.0',threshold:1000000};
+})();
