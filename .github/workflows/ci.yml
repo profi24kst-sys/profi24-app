@@ -17,7 +17,7 @@ jobs:
       - name: Install API dependencies
         working-directory: server
         run: npm install
-      - name: Validate API syntax
+      - name: Validate every backend service syntax
         working-directory: server
         run: npm run check
       - name: Install web dependencies
@@ -38,23 +38,35 @@ jobs:
         run: cp .env.example .env
       - name: Build and start stack
         run: docker compose up -d --build
-      - name: Wait for web health
+      - name: Wait for core health
         run: |
-          for i in $(seq 1 30); do
+          for i in $(seq 1 40); do
             if curl -fsS http://localhost:5173/health >/dev/null; then exit 0; fi
             sleep 3
           done
           docker compose ps
           docker compose logs api
           exit 1
-      - name: Verify login API
+      - name: Verify authenticated core API
         run: |
-          curl -fsS -X POST http://localhost:5173/api/v1/auth/login \
+          LOGIN=$(curl -fsS -X POST http://localhost:5173/api/v1/auth/login \
             -H 'Content-Type: application/json' \
-            -d '{"email":"owner@profi24.kz","password":"profi24"}' | grep -q access_token
+            -d '{"email":"owner@profi24.kz","password":"profi24"}')
+          TOKEN=$(printf '%s' "$LOGIN" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);if(!j.data?.access_token)process.exit(1);process.stdout.write(j.data.access_token)})")
+          curl -fsS http://localhost:5173/api/v1/me -H "Authorization: Bearer $TOKEN" | grep -q OWNER
+          curl -fsS http://localhost:5173/api/v1/requests -H "Authorization: Bearer $TOKEN" | grep -q '"data"'
+          curl -fsS http://localhost:5173/owner-health | grep -q owner-control
+      - name: Verify database reachable
+        run: docker compose exec -T db psql -U profi24 -d profi24 -c 'SELECT count(*) FROM requests;'
       - name: Show service status
         if: always()
         run: docker compose ps
+      - name: Show failure logs
+        if: failure()
+        run: |
+          docker compose logs --tail=150 api
+          docker compose logs --tail=150 ownercontrol
+          docker compose logs --tail=100 web
       - name: Stop stack
         if: always()
         run: docker compose down -v
