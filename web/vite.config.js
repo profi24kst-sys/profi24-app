@@ -7,7 +7,8 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: 'index.html',
-        approve: 'approve.html'
+        approve: 'approve.html',
+        warranty: 'warranty.html'
       }
     }
   }
