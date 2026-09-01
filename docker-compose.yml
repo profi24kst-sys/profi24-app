@@ -34,6 +34,7 @@ services:
   warranty: {build: ./server, restart: unless-stopped, command: ["node","src/warranty.js"], environment: {<<: *env, PORT: 8101}, depends_on: {db: {condition: service_healthy}, communications: {condition: service_healthy}}, healthcheck: *hc}
   discipline: {build: ./server, restart: unless-stopped, command: ["node","src/discipline.js"], environment: {<<: *env, PORT: 8102}, depends_on: {db: {condition: service_healthy}}, healthcheck: *hc}
   ownercontrol: {build: ./server, restart: unless-stopped, command: ["node","src/owner-control.js"], environment: {<<: *env, PORT: 8103}, depends_on: {api: {condition: service_healthy}}, healthcheck: *hc}
+  directoryadmin: {build: ./server, restart: unless-stopped, command: ["node","src/directory-admin.js"], environment: {<<: *env, PORT: 8104}, depends_on: {api: {condition: service_healthy}}, healthcheck: *hc}
   backup:
     image: postgres:16-alpine
     restart: unless-stopped
