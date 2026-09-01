@@ -1,27 +1,19 @@
-// Stable HelloClient header/geometry fix. Keeps React order state untouched.
+// Guided order workspace: one order = one place for all service actions.
 (function(){
   const labels={NEW:'Новая',ASSIGNED:'Назначена',ACCEPTED:'Принята',DIAGNOSTICS:'Диагностика',APPROVAL_REQUIRED:'Согласование',WAITING_PART:'Ждёт деталь',REPAIR:'Ремонт',TESTING:'Проверка',PAYMENT_REQUIRED:'К оплате',CLOSED:'Закрыта',CANCELLED:'Отменена'};
+  const next={NEW:['Назначить инженера','Откройте блок назначения инженера в заказе'],ASSIGNED:['Принять заказ','Инженер должен принять назначенный заказ'],ACCEPTED:['Провести диагностику','Зафиксируйте симптомы, диагноз, работы и запчасти'],DIAGNOSTICS:['Подготовить смету','Проверьте работы, запчасти и итоговую стоимость'],APPROVAL_REQUIRED:['Получить согласование','Отправьте клиенту смету и дождитесь решения'],WAITING_PART:['Получить запчасть','Контролируйте закупку и поступление детали'],REPAIR:['Выполнить ремонт','После ремонта перейдите к завершению'],TESTING:['Провести проверку','Зафиксируйте контрольный тест после ремонта'],PAYMENT_REQUIRED:['Принять оплату','После полной оплаты закройте заказ'],CLOSED:['Заказ завершён','Работа, оплата и закрытие завершены'],CANCELLED:['Заказ отменён','Дополнительных действий не требуется']};
   function clickTab(name){[...document.querySelectorAll('.ordertabs button')].find(b=>b.textContent.includes(name))?.click()}
+  function fire(name,number){window.dispatchEvent(new CustomEvent(name,{detail:{number}}))}
   function mount(){
-    const main=document.querySelector('main.hcOrderMode');
-    const title=main?.querySelector('.ordertitle');
+    const main=document.querySelector('main.hcOrderMode'),title=main?.querySelector('.ordertitle');
     if(!main||!title){document.querySelector('.hcHeroHeader')?.remove();return}
-    const rawNumber=title.querySelector('h2')?.textContent?.replace(/^Заказ\s+/,'').trim();
-    if(!rawNumber)return;
-    const amount=title.querySelector('.total b')?.textContent?.trim()||'0 ₸';
-    const pill=title.querySelector('.pill');
-    const status=[...pill?.classList||[]].find(x=>labels[x])||'';
-    let hero=main.querySelector('.hcHeroHeader');
-    if(!hero){hero=document.createElement('section');hero.className='hcHeroHeader';title.parentElement.insertBefore(hero,title)}
-    hero.innerHTML=`<div class="hcHeroLeft"><strong>Заказ ${rawNumber}</strong><span>${amount}</span><em class="hcHeroStatus ${status}">${labels[status]||pill?.textContent?.trim()||'—'}</em></div><div class="hcHeroActions"><button type="button" data-hc-final="diagnostic">🩺 Диагностика</button><button type="button" data-hc-final="approval">🤝 Согласование</button><button type="button" data-hc-final="parts">📦 Запчасти</button><button type="button" data-hc-final="completion">✅ Завершить ремонт</button><button type="button" data-hc-final="print">▣ Печать</button><button type="button" data-hc-final="more">••• Еще</button></div>`;
-    hero.querySelector('[data-hc-final="diagnostic"]').onclick=()=>window.dispatchEvent(new CustomEvent('profi24:open-diagnostics',{detail:{number:rawNumber}}));
-    hero.querySelector('[data-hc-final="approval"]').onclick=()=>window.dispatchEvent(new CustomEvent('profi24:open-approval',{detail:{number:rawNumber}}));
-    hero.querySelector('[data-hc-final="parts"]').onclick=()=>window.dispatchEvent(new CustomEvent('profi24:open-parts-waiting',{detail:{number:rawNumber}}));
-    hero.querySelector('[data-hc-final="completion"]').onclick=()=>window.dispatchEvent(new CustomEvent('profi24:open-completion',{detail:{number:rawNumber}}));
-    hero.querySelector('[data-hc-final="print"]').onclick=()=>clickTab('Документы');
-    hero.querySelector('[data-hc-final="more"]').onclick=()=>clickTab('История');
+    const number=title.querySelector('h2')?.textContent?.replace(/^Заказ\s+/,'').trim();if(!number)return;
+    const amount=title.querySelector('.total b')?.textContent?.trim()||'0 ₸',pill=title.querySelector('.pill'),status=[...pill?.classList||[]].find(x=>labels[x])||'';
+    const [nextTitle,nextHint]=next[status]||['Продолжить работу','Проверьте состояние заказа'];
+    let hero=main.querySelector('.hcHeroHeader');if(!hero){hero=document.createElement('section');hero.className='hcHeroHeader';title.parentElement.insertBefore(hero,title)}
+    const diagDone=['DIAGNOSTICS','APPROVAL_REQUIRED','WAITING_PART','REPAIR','TESTING','PAYMENT_REQUIRED','CLOSED'].includes(status),approvalDone=['WAITING_PART','REPAIR','TESTING','PAYMENT_REQUIRED','CLOSED'].includes(status),partsActive=status==='WAITING_PART',completionReady=['REPAIR','TESTING','PAYMENT_REQUIRED','CLOSED'].includes(status),closed=status==='CLOSED';
+    hero.innerHTML=`<div class="hcHeroSummary"><div class="hcHeroLeft"><strong>Заказ ${number}</strong><span>${amount}</span><em class="hcHeroStatus ${status}">${labels[status]||pill?.textContent?.trim()||'—'}</em></div><div class="hcNextAction ${closed?'done':''}"><small>${closed?'ГОТОВО':'СЛЕДУЮЩЕЕ ДЕЙСТВИЕ'}</small><b>${nextTitle}</b><span>${nextHint}</span></div></div><div class="hcHeroActions hcWorkflowActions"><button class="${diagDone?'done':status==='ACCEPTED'?'next':''}" data-a="diagnostic">${diagDone?'✓':'🩺'} Диагностика</button><button class="${approvalDone?'done':status==='APPROVAL_REQUIRED'?'next':''}" data-a="approval">${approvalDone?'✓':'🤝'} Согласование</button><button class="${partsActive?'next':approvalDone?'done':''}" data-a="parts">📦 Запчасти${partsActive?' · ждём':''}</button><button class="${closed?'done':completionReady?'next':''}" data-a="completion">${closed?'✓':'✅'} Завершение</button><button data-a="docs">📎 Документы</button><button data-a="history">↺ История</button></div>`;
+    hero.querySelector('[data-a="diagnostic"]').onclick=()=>fire('profi24:open-diagnostics',number);hero.querySelector('[data-a="approval"]').onclick=()=>fire('profi24:open-approval',number);hero.querySelector('[data-a="parts"]').onclick=()=>fire('profi24:open-parts-waiting',number);hero.querySelector('[data-a="completion"]').onclick=()=>fire('profi24:open-completion',number);hero.querySelector('[data-a="docs"]').onclick=()=>clickTab('Документы');hero.querySelector('[data-a="history"]').onclick=()=>clickTab('История');
   }
-  const obs=new MutationObserver(()=>requestAnimationFrame(mount));
-  function start(){obs.observe(document.body,{childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:['class']});mount()}
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+  const obs=new MutationObserver(()=>requestAnimationFrame(mount));function start(){obs.observe(document.body,{childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:['class']});mount()}if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
 })();
