@@ -41,7 +41,7 @@ async function warrantyDays(requestId) {
 async function issue(requestId) {
   const r = (await q(`SELECT r.*,c.name customer_name,c.phone,c.address,e.category,e.brand,e.model,e.serial_number
     FROM requests r JOIN customers c ON c.id=r.customer_id
-    LEFT JOIN equipment e ON e.id=r.equipment_id WHERE r.id=$1`, [requestId])).rows[0];
+    LEFT JOIN equipment e ON e.id=r.equipment_id WHERE r.id=$1 AND r.deleted_at IS NULL`, [requestId])).rows[0];
   if (!r || Number(r.total) <= 0 || Number(r.paid) + 0.01 < Number(r.total)) return null;
 
   let card = (await q('SELECT * FROM warranty_cards WHERE request_id=$1', [requestId])).rows[0];
@@ -83,7 +83,7 @@ async function syncPayments() {
   await q('UPDATE warranty_state SET last_history_id=$1,updated_at=now() WHERE id=1', [maxAny]);
 }
 
-app.get('/health', async () => { await q('SELECT 1'); return { ok: true, service: 'profi24-warranty', version: '1.0.0' }; });
+app.get('/health', async () => { await q('SELECT 1'); return { ok: true, service: 'profi24-warranty', version: '1.0.1' }; });
 
 app.get('/public/warranty/:token', async (req, reply) => {
   const card = (await q('SELECT * FROM warranty_cards WHERE token=$1', [req.params.token])).rows[0];
@@ -92,7 +92,8 @@ app.get('/public/warranty/:token', async (req, reply) => {
       e.category,e.brand,e.model,e.serial_number,eng.name engineer_name
     FROM requests r JOIN customers c ON c.id=r.customer_id
     LEFT JOIN equipment e ON e.id=r.equipment_id LEFT JOIN users eng ON eng.id=r.engineer_id
-    WHERE r.id=$1`, [card.request_id])).rows[0];
+    WHERE r.id=$1 AND r.deleted_at IS NULL`, [card.request_id])).rows[0];
+  if (!r) return reply.code(404).send({ data: null, error: { code: 'WARRANTY_INACTIVE', message: 'Гарантийный талон недействителен' } });
   const [works, parts] = await Promise.all([
     q('SELECT name,qty,unit_price FROM request_works WHERE request_id=$1 ORDER BY id', [card.request_id]),
     q('SELECT name,qty,sale_price FROM parts WHERE request_id=$1 ORDER BY id', [card.request_id])
