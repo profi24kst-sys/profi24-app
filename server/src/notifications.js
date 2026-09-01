@@ -59,7 +59,7 @@ function alert(event_key,severity,type,title,subtitle,detail,{request_id=null,ta
 
 async function computeAlerts(){
  const now=Date.now(),out=[];
- const requests=(await q(`SELECT r.*,c.name customer_name,eng.name engineer_name FROM requests r JOIN customers c ON c.id=r.customer_id LEFT JOIN users eng ON eng.id=r.engineer_id WHERE r.status NOT IN ('CLOSED','CANCELLED')`)).rows;
+ const requests=(await q(`SELECT r.*,c.name customer_name,eng.name engineer_name FROM requests r JOIN customers c ON c.id=r.customer_id LEFT JOIN users eng ON eng.id=r.engineer_id WHERE r.deleted_at IS NULL AND r.status NOT IN ('CLOSED','CANCELLED')`)).rows;
  for(const x of requests){
   const sla=x.sla_deadline?new Date(x.sla_deadline).getTime():0,scheduled=x.scheduled_at?new Date(x.scheduled_at).getTime():0,created=new Date(x.created_at).getTime(),updated=new Date(x.updated_at||x.created_at).getTime();
   if(sla&&sla<now)out.push(alert(`sla:${x.id}:${x.sla_deadline}`,'critical','SLA_OVERDUE','SLA просрочен',`${x.number} · ${x.customer_name}`,`Срок SLA истёк ${dt(x.sla_deadline)}`,{request_id:x.id,source_at:x.sla_deadline}));
@@ -70,7 +70,7 @@ async function computeAlerts(){
   if(scheduled&&scheduled<now&&now-scheduled>20*60000&&!['PAYMENT_REQUIRED'].includes(x.status))out.push(alert(`visit-late:${x.id}:${x.scheduled_at}`,'critical','VISIT_LATE','Просрочка по расписанию',`${x.number} · ${x.customer_name}`,`Выезд был назначен на ${dt(x.scheduled_at)}`,{request_id:x.id,source_at:x.scheduled_at}));
   if(x.status==='APPROVAL_REQUIRED'&&now-updated>30*60000)out.push(alert(`approval:${x.id}`,'warning','APPROVAL_STUCK','Зависло согласование',`${x.number} · ${x.customer_name}`,'Стоимость/работы ожидают согласования более 30 минут',{request_id:x.id,source_at:x.updated_at}));
  }
- const tasks=(await q(`SELECT t.*,r.number request_number FROM tasks t LEFT JOIN requests r ON r.id=t.request_id WHERE t.status='OPEN' AND t.due_at IS NOT NULL AND t.due_at<now()`)).rows;
+ const tasks=(await q(`SELECT t.*,r.number request_number FROM tasks t LEFT JOIN requests r ON r.id=t.request_id WHERE t.status='OPEN' AND t.due_at IS NOT NULL AND t.due_at<now() AND (t.request_id IS NULL OR r.deleted_at IS NULL)`)).rows;
  for(const t of tasks)out.push(alert(`task:${t.id}:${t.due_at}`,'warning','TASK_OVERDUE','Просрочена задача',t.title,`Срок: ${dt(t.due_at)}${t.request_number?' · '+t.request_number:''}`,{request_id:t.request_id,task_id:t.id,audience:'USER',target_user_id:t.assigned_to,source_at:t.due_at}));
  return out;
 }
