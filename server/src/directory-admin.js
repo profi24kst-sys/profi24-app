@@ -11,6 +11,8 @@ class ApiError extends Error{constructor(code,message,status=422){super(message)
 const abort=(code,message,status)=>{throw new ApiError(code,message,status)};
 const tx=async fn=>{const c=await pool.connect();try{await c.query('BEGIN');const out=await fn(c);await c.query('COMMIT');return out}catch(e){try{await c.query('ROLLBACK')}catch{}throw e}finally{c.release()}};
 const owner=async(req,reply)=>{try{await req.jwtVerify()}catch{return fail(reply,'UNAUTHORIZED','Требуется авторизация',401)}if(req.user.role!=='OWNER')return fail(reply,'FORBIDDEN','Доступно только владельцу',403)};
+const auth=async(req,reply)=>{try{await req.jwtVerify()}catch{return fail(reply,'UNAUTHORIZED','Требуется авторизация',401)}};
+const phone=v=>String(v||'').replace(/\D/g,'').replace(/^8(?=7\d{9}$)/,'7');
 
 for(const s of[
  `ALTER TABLE customers ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`,
@@ -24,7 +26,9 @@ for(const s of[
 ])await q(s);
 
 app.setErrorHandler((e,req,reply)=>{if(e instanceof ApiError)return fail(reply,e.code,e.message,e.status);if(e.statusCode&&e.statusCode<500)return fail(reply,e.code||'REQUEST_ERROR',e.message,e.statusCode);req.log.error(e);return fail(reply,'INTERNAL_ERROR','Внутренняя ошибка сервера',500)});
-app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'directory-admin',version:'1.0.0'}});
+app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'directory-admin',version:'1.1.0'}});
+
+app.get('/api/v1/customers/deleted-by-phone',{preHandler:auth},async(req,reply)=>{const pn=phone(req.query?.phone);if(!pn)return fail(reply,'VALIDATION','Укажите телефон');const row=(await q(`SELECT id,name,phone,email,address,notes,deleted_at,delete_reason FROM customers WHERE phone_norm=$1 AND deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 1`,[pn])).rows[0];return{data:row||null}});
 
 app.get('/api/v1/deleted',{preHandler:owner},async()=>{const [customers,equipment]=await Promise.all([
  q(`SELECT c.id,c.name,c.phone,c.address,c.deleted_at,c.delete_reason,u.name deleted_by_name,(SELECT count(*) FROM requests r WHERE r.customer_id=c.id AND r.deleted_at IS NULL)::int request_count FROM customers c LEFT JOIN users u ON u.id=c.deleted_by WHERE c.deleted_at IS NOT NULL ORDER BY c.deleted_at DESC LIMIT 500`),
