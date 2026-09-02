@@ -1,28 +1,13 @@
-// Prevent stale data from a previous order from being displayed while another order is loading.
+// Canonical Order 360 current-request state. Never mutates React-owned children.
 (function(){
-  let lastId='';
-  function selectedId(){return document.querySelector('.o360List button.on')?.dataset?.id||''}
-  function clearStale(){
-    const id=selectedId();
-    if(!id||id===lastId)return;
-    lastId=id;
-    // Clear request-specific async blocks immediately. They will repopulate from the new request only.
-    document.querySelectorAll('.o360Event').forEach(x=>x.remove());
-    document.querySelectorAll('[data-o360-workflow-events]>*').forEach(x=>x.remove());
-    document.querySelectorAll('.o360Approval .o360Approved,.o360Files a,.o360ExpenseRow').forEach(x=>x.remove());
-    window.dispatchEvent(new CustomEvent('profi24:order360-switched',{detail:{id}}));
-  }
-  document.addEventListener('pointerdown',e=>{
-    const b=e.target.closest?.('.o360List button[data-id]');
-    if(!b)return;
-    const id=b.dataset.id||'';
-    if(id&&id!==lastId){
-      lastId='';
-      queueMicrotask(clearStale);
-      setTimeout(clearStale,0);
-    }
-  },true);
-  let t;
-  new MutationObserver(()=>{clearTimeout(t);t=setTimeout(clearStale,30)}).observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['class']});
-  setTimeout(clearStale,300);
+  const token=()=>localStorage.getItem('token')||'';
+  const state=window.Profi24O360State=window.Profi24O360State||{id:'',number:'',seq:0};
+  let resolving=false,lastSignature='';
+  async function api(path){const r=await fetch(path,{headers:{Authorization:`Bearer ${token()}`}});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j?.error?.message||`Ошибка ${r.status}`);return j.data}
+  function publish(id,number){id=String(id||'');number=String(number||'').trim();if(!id&&!number)return;const changed=id!==state.id||number!==state.number;if(id)state.id=id;if(number)state.number=number;if(!changed)return;state.seq=(state.seq||0)+1;const root=document.querySelector('.o360');if(root){root.dataset.currentRequestId=state.id;root.dataset.currentRequestNumber=state.number}window.dispatchEvent(new CustomEvent('profi24:o360-current',{detail:{id:state.id,number:state.number,seq:state.seq}}))}
+  async function sync(){const root=document.querySelector('.o360');if(!root)return;const heroNumber=document.querySelector('.o360Hero small')?.textContent?.trim()||'';const selected=document.querySelector('.o360List button.on[data-id]');const selectedId=selected?.dataset?.id||'';const selectedNumber=selected?.querySelector('b')?.textContent?.trim()||'';const number=heroNumber||selectedNumber||state.number;if(selectedId){publish(selectedId,number);return}if(!number||resolving)return;if(number===state.number&&state.id){root.dataset.currentRequestId=state.id;root.dataset.currentRequestNumber=state.number;return}resolving=true;try{const rows=await api('/api/v1/requests?search='+encodeURIComponent(number));const row=(rows||[]).find(x=>String(x.number)===String(number));if(row)publish(row.id,row.number)}catch(e){console.warn('Order360 state:',e.message)}finally{resolving=false}}
+  window.addEventListener('profi24:open-order360',e=>{const d=e.detail||{};if(d.id||d.request_id)publish(d.id||d.request_id,d.number||'');else if(d.number){state.number=String(d.number);state.id=''}setTimeout(sync,20)});
+  window.addEventListener('profi24:request-updated',e=>{const d=e.detail||{};if(d.id&&(!state.id||String(d.id)===String(state.id)))publish(d.id,state.number);setTimeout(sync,20)});
+  let timer;new MutationObserver(()=>{clearTimeout(timer);timer=setTimeout(()=>{const sig=[document.querySelector('.o360Hero small')?.textContent||'',document.querySelector('.o360List button.on')?.dataset?.id||''].join('|');if(sig!==lastSignature){lastSignature=sig;sync()}},40)}).observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['class','data-id']});
+  setInterval(()=>{if(document.querySelector('.o360'))sync()},2000);setTimeout(sync,250);
 })();
