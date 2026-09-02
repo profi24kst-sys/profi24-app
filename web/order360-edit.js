@@ -2,7 +2,7 @@
 (function(){
   const token=()=>localStorage.token||'';
   const role=()=>{try{return JSON.parse(localStorage.user||'null')?.role||''}catch{return''}};
-  const api=async(path,opt={})=>{const r=await fetch(path,{...opt,headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`,...(opt.headers||{})}});let j={};try{j=await r.json()}catch{}if(!r.ok)throw new Error(j?.error?.message||`Ошибка ${r.status}`);return j.data};
+  const api=async(path,opt={})=>{const headers={Authorization:`Bearer ${token()}`,...(opt.headers||{})};if(opt.body!=null&&!('Content-Type' in headers)&&!('content-type' in headers))headers['Content-Type']='application/json';const r=await fetch(path,{...opt,headers});let j={};try{j=await r.json()}catch{}if(!r.ok)throw new Error(j?.error?.message||`Ошибка ${r.status}`);return j.data};
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const current=()=>document.querySelector('.o360List button.on');
   const currentId=()=>current()?.dataset?.id||'';
