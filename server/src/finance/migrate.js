@@ -7,7 +7,7 @@ export async function migrateFinance(pool) {
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock(24090501)');
     await client.query('CREATE TABLE IF NOT EXISTS finance_schema_migrations(version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())');
-    const migrations=['001-auditable-accounts','002-part-returns-and-close-guard'];
+    const migrations=['001-auditable-accounts','002-part-returns-and-close-guard','003-payment-refunds-and-safe-cancellation'];
     for(const version of migrations){
       const applied=await client.query('SELECT version FROM finance_schema_migrations WHERE version=$1',[version]);
       if(applied.rows.length)continue;

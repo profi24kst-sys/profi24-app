@@ -14,3 +14,7 @@ export async function coreMoneyApi(path,body,key) {
   const r=await fetch('/api/v1'+path,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+localStorage.token,'Idempotency-Key':key},body:JSON.stringify(body)});
   const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error?.message||'Не удалось провести оплату');return data.data;
 }
+export async function coreOrderApi(path,{method='GET',body,key}={}) {
+  const r=await fetch('/api/v1'+path,{method,headers:{Authorization:'Bearer '+localStorage.token,...(body!==undefined?{'Content-Type':'application/json'}:{}),...(key?{'Idempotency-Key':key}:{})},...(body!==undefined?{body:JSON.stringify(body)}:{})});
+  const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error?.message||'Не удалось выполнить операцию с заказом');return data.data;
+}
