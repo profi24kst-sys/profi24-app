@@ -6,6 +6,7 @@
     "migrate": "node src/migrate.js",
     "start": "node src/migrate.js && node src/index2.js",
     "check": "node src/check-all.js",
+    "test:finance": "node --test test/finance.test.js",
     "set-password": "node src/set-password.js"
   },
   "dependencies": {
@@ -16,5 +17,8 @@
     "bcryptjs": "^2.4.3",
     "fastify": "^5.2.1",
     "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8"
   }
 }
