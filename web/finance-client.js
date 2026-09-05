@@ -9,7 +9,7 @@ export async function financeApi(path,{method='GET',body,key,signal}={}) {
   return json.data;
 }
 export const accountTypes={BANK:'Расчётный счёт',CARD:'Корпоративная карта',CASH:'Наличная касса',ADVANCE:'Подотчёт',OTHER:'Прочее'};
-export const operationNames={OPENING:'Стартовый остаток',MANUAL:'Операция',ORDER_EXPENSE:'Расход по заказу',PART_PURCHASE:'Покупка запчасти',PAYMENT:'Оплата клиента',REFUND:'Возврат клиенту',TRANSFER:'Перевод',ADJUSTMENT:'Корректировка',REVERSAL:'Сторно'};
+export const operationNames={OPENING:'Стартовый остаток',MANUAL:'Операция',ORDER_EXPENSE:'Расход по заказу',PART_PURCHASE:'Покупка запчасти',PART_RETURN:'Возврат покупки',PAYMENT:'Оплата клиента',REFUND:'Возврат клиенту',TRANSFER:'Перевод',ADJUSTMENT:'Корректировка',REVERSAL:'Сторно'};
 export async function coreMoneyApi(path,body,key) {
   const r=await fetch('/api/v1'+path,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+localStorage.token,'Idempotency-Key':key},body:JSON.stringify(body)});
   const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error?.message||'Не удалось провести оплату');return data.data;
