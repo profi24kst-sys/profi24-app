@@ -12,4 +12,6 @@
 .o360PartPayment{flex-basis:100%;margin:4px 0 0;padding:12px;background:#f4f8ff;border-radius:8px;font-size:13px}
 .o360PartPayment>div{display:grid;grid-template-columns:145px 1fr;gap:12px;margin:5px 0}
 .o360PartPayment dt{color:#64748b}.o360PartPayment dd{margin:0;color:#172b4d}
+.o360PartReturn{margin-top:4px;border:1px solid #b45309;border-radius:7px;background:#fff7ed;color:#92400e;padding:8px 12px;font-weight:600;cursor:pointer}
+.o360PartReturn:hover{background:#ffedd5}
 @media(max-width:650px){.o360PartActions{grid-template-columns:1fr}.o360PartPayment>div{grid-template-columns:1fr;gap:2px}}
