@@ -52,6 +52,39 @@ test('Сведения о покупке в заказе: источник, до
   }finally{await s.close();}
 });
 
+test('Документированный возврат покупки восстанавливает счёт и сохраняет аудит',async()=>{
+  const s=await setup();try{
+    const card=await s.create('Карта инженера','CARD',10000,2);
+    const purchase=await s.api('POST','/api/v1/requests/1/part-purchases',{account_id:card,name:'Насос',qty:2,purchase_price:1500,sale_price:2000,document_reference:'Чек 123'},2);
+    assert.equal(purchase.status,201);assert.equal(await s.balance(card),7000);
+    await assert.rejects(s.query("UPDATE parts SET status='CANCELLED' WHERE id=$1",[purchase.data.id]),/документированным возвратом/i);
+    const body={reason:'Поставщик принял неподошедшую деталь',document_reference:'Накладная возврата 17'};
+    assert.equal((await s.api('POST',`/api/v1/requests/1/part-purchases/${purchase.data.id}/return`,body,2)).status,403);
+    const returned=await s.api('POST',`/api/v1/requests/1/part-purchases/${purchase.data.id}/return`,body,1,'part-return-key-0001');
+    assert.equal(returned.status,201,JSON.stringify(returned));assert.equal(returned.data.kind,'PART_RETURN');assert.equal(await s.balance(card),10000);
+    const part=(await s.query('SELECT * FROM parts WHERE id=$1',[purchase.data.id])).rows[0];
+    assert.equal(part.status,'CANCELLED');assert.equal(part.return_reason,body.reason);assert.equal(part.return_document_reference,body.document_reference);assert.equal(part.returned_by,1);
+    const request=(await s.query('SELECT total,direct_cost FROM requests WHERE id=1')).rows[0];
+    assert.equal(Number(request.total),0);assert.equal(Number(request.direct_cost),0);
+    const movements=(await s.query("SELECT id,kind,type,reversal_of FROM finance_transactions WHERE part_id=$1 ORDER BY id",[purchase.data.id])).rows;
+    assert.deepEqual(movements.map(x=>x.kind),['PART_PURCHASE','PART_RETURN']);assert.equal(movements[1].type,'INCOME');assert.equal(movements[1].reversal_of,movements[0].id);
+    const details=(await s.api('GET','/api/v1/requests/1/part-purchases')).data[0];
+    assert.equal(details.return_transaction_id,returned.data.id);assert.equal(details.return_reason,body.reason);assert.equal(details.return_document_reference,body.document_reference);
+    const replay=await s.api('POST',`/api/v1/requests/1/part-purchases/${purchase.data.id}/return`,body,1,'part-return-key-0001');
+    assert.equal(replay.data.id,returned.data.id);assert.equal(await s.balance(card),10000);
+    assert.equal((await s.api('POST',`/api/v1/requests/1/part-purchases/${purchase.data.id}/return`,body)).status,409);
+    await assert.rejects(s.query('UPDATE parts SET return_reason=$1 WHERE id=$2',['Другая причина',purchase.data.id]));
+    await assert.rejects(s.query('DELETE FROM finance_transactions WHERE id=$1',[returned.data.id]));
+  }finally{await s.close();}
+});
+
+test('Статус CLOSED защищён на уровне базы данных',async()=>{
+  const s=await setup();try{
+    await assert.rejects(s.query("UPDATE requests SET status='CLOSED' WHERE id=1"),/Завершение ремонта|процедуру завершения/i);
+    assert.equal((await s.query('SELECT status FROM requests WHERE id=1')).rows[0].status,'REPAIR');
+  }finally{await s.close();}
+});
+
 test('Точный денежный ввод: не принимаем NaN, Infinity, третью цифру и отрицательный расход',()=>{
   assert.equal(money('2250.10'),'2250.10');assert.equal(money('-12.01',{signed:true}),'-12.01');
   for(const value of ['NaN','Infinity',NaN,Infinity,'1.001','-1',0,'1e3',null])assert.throws(()=>money(value));
