@@ -17,8 +17,7 @@
     else if(r.status==='ACCEPTED'||r.status==='DIAGNOSTICS')items.push({label:'Заполнить диагностику',run:()=>focusCard('Диагностика')});
     else if(r.status==='APPROVAL_REQUIRED'){items.push({label:'Открыть согласование',run:()=>nav('Согласования')});items.push({label:'Работы и стоимость',run:()=>tab('Работы')})}
     else if(r.status==='WAITING_PART')items.push({label:'Открыть запчасти',run:()=>tab('Запчасти')});
-    else if(r.status==='REPAIR'||r.status==='TESTING')items.push({label:'Контроль после ремонта',run:()=>focusCard('Контроль после ремонта')});
-    else if(r.status==='PAYMENT_REQUIRED')items.push({label:'Перейти к оплате',run:()=>tab('Оплаты')});
+    else if(['REPAIR','TESTING','PAYMENT_REQUIRED'].includes(r.status))items.push({label:'Открыть завершение ремонта',run:()=>window.dispatchEvent(new CustomEvent('profi24:open-completion',{detail:{id:r.id,number:r.number}}))});
     else if(r.status==='CLOSED')items.push({label:'Документы',run:()=>tab('Документы')});
     else items.push({label:'История заказа',run:()=>tab('История')});
     if(!items.some(x=>x.label==='История заказа'))items.push({label:'История заказа',run:()=>tab('История')});

@@ -97,6 +97,15 @@ export async function financeRoutes(app,pool) {
       WHERE f.request_id=$3 AND f.kind IN ('ORDER_EXPENSE','MANUAL') AND f.type='EXPENSE' AND ${allowedSql} ORDER BY f.id DESC`,[req.user.role,req.user.id,req.params.id])).rows;
   })}));
 
+  app.get('/api/v1/requests/:id/part-purchases',{preHandler:auth},async req=>({data:await transaction(pool,req.user,async c=>{
+    await requestAccess(c,req.params.id,req.user);
+    return (await c.query(`SELECT f.id,f.part_id,f.amount,f.created_at,f.document_reference,p.return_reason,a.name account_name,u.name created_by_name,
+      rev.id return_transaction_id,rev.created_at returned_at,rev.document_reference return_document_reference,ru.name returned_by_name
+      FROM finance_transactions f JOIN parts p ON p.id=f.part_id JOIN finance_accounts a ON a.id=f.account_id LEFT JOIN users u ON u.id=f.created_by
+      LEFT JOIN finance_transactions rev ON rev.reversal_of=f.id AND rev.kind='PART_RETURN' LEFT JOIN users ru ON ru.id=rev.created_by
+      WHERE f.request_id=$3 AND f.kind='PART_PURCHASE' AND ${allowedSql} ORDER BY f.id DESC`,[req.user.role,req.user.id,req.params.id])).rows;
+  })}));
+
   app.post('/api/v1/requests/:id/part-purchases',{preHandler:auth},async(req,reply)=>{
     const b=req.body||{},key=operationKey(req),digest=fingerprint({request:req.params.id,...b});
     const result=await transaction(pool,req.user,async c=>{
@@ -109,6 +118,29 @@ export async function financeRoutes(app,pool) {
         VALUES($1,$2,$3,$4,$5,$6,'RECEIVED',$7,$8,$9,$10,$11) RETURNING *`,[
         request.id,text(b.name,'Название запчасти',200),money(b.qty??1),money(b.purchase_price),money(b.sale_price??0,{zero:true}),b.supplier||null,req.user.id,id(b.account_id),text(b.document_reference,'Чек / документ покупки',200),key,digest])).rows[0];
       await recalcParts(c,request.id);return part;
+    });return reply.code(201).send({data:result});
+  });
+
+  app.post('/api/v1/requests/:requestId/part-purchases/:partId/return',{preHandler:owner},async(req,reply)=>{
+    const b=req.body||{},reason=text(b.reason,'Причина возврата',500),document=text(b.document_reference,'Документ возврата',200);
+    const key=operationKey(req),digest=fingerprint({request:req.params.requestId,part:req.params.partId,...b});
+    const result=await transaction(pool,req.user,async c=>{
+      const previous=await replay(c,key,digest);if(previous)return previous;
+      const request=await requestAccess(c,req.params.requestId,req.user,{write:true});
+      const row=(await c.query(`SELECT p.*,f.id purchase_transaction_id,f.amount purchase_amount,f.account_id
+        FROM parts p JOIN finance_transactions f ON f.part_id=p.id AND f.kind='PART_PURCHASE'
+        WHERE p.id=$1 AND p.request_id=$2 FOR UPDATE OF p,f`,[id(req.params.partId,'Запчасть'),request.id])).rows[0];
+      if(!row)reject('Оплаченная покупка не найдена','NOT_FOUND',404);
+      if(row.returned_at)reject('Покупка уже возвращена','ALREADY_RETURNED',409);
+      if(['ISSUED','INSTALLED'].includes(row.status))reject('Установленную или выданную деталь сначала нужно снять с ремонта','PART_IN_USE',409);
+      await lockAccounts(c,[row.account_id],req.user,{active:false});
+      const entry=await insertEntry(c,req.user,{account_id:row.account_id,type:'INCOME',kind:'PART_RETURN',category:'PARTS',amount:row.purchase_amount,
+        request_id:request.id,part_id:row.id,reversal_of:row.purchase_transaction_id,comment:'Возврат покупки «'+row.name+'»: '+reason,
+        document_reference:document,idempotency_key:key,metadata:{fingerprint:digest,reason}});
+      await c.query(`UPDATE parts SET status='CANCELLED',returned_at=now(),return_reason=$1,return_document_reference=$2,returned_by=$3 WHERE id=$4`,[reason,document,req.user.id,row.id]);
+      await recalcParts(c,request.id);
+      await c.query(`INSERT INTO request_history(request_id,user_id,action,details) VALUES($1,$2,'PART_PURCHASE_RETURNED',$3)`,[request.id,req.user.id,{part_id:row.id,purchase_transaction_id:row.purchase_transaction_id,return_transaction_id:entry.id,amount:row.purchase_amount,reason,document_reference:document}]);
+      return entry;
     });return reply.code(201).send({data:result});
   });
 

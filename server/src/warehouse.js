@@ -65,7 +65,7 @@ async function engineerBalance(c,itemId,engineerId){
 }
 async function recalcRequest(c,requestId){
  const works=(await c.query('SELECT COALESCE(sum(qty*unit_price),0) sale,COALESCE(sum(qty*direct_cost),0) cost FROM request_works WHERE request_id=$1',[requestId])).rows[0];
- const parts=(await c.query('SELECT COALESCE(sum(qty*sale_price),0) sale,COALESCE(sum(qty*purchase_price),0) cost FROM parts WHERE request_id=$1',[requestId])).rows[0];
+ const parts=(await c.query(`SELECT COALESCE(sum(qty*sale_price),0) sale,COALESCE(sum(qty*purchase_price),0) cost FROM parts WHERE request_id=$1 AND status<>'CANCELLED'`,[requestId])).rows[0];
  const req=(await c.query('SELECT discount_amount FROM requests WHERE id=$1',[requestId])).rows[0];
  if(!req)throw new Error('Заказ не найден');
  const total=Math.max(0,n(works.sale)+n(parts.sale)-n(req.discount_amount));

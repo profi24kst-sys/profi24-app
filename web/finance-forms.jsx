@@ -17,8 +17,8 @@ export function useFinanceForm(initial) {
   const reset=()=>{setForm(initial);key.current=financeKey();};
   return {form,change,error,busy,submit,reset};
 }
-export function FormActions({busy,error,close,label='Провести'}) {
-  return <>{error&&<p className="finError" role="alert">{error}</p>}<footer>{close&&<button type="button" disabled={busy} onClick={close}>Отмена</button>}<button className="finPrimary" type="submit" disabled={busy}>{busy?'Сохраняю…':label}</button></footer></>;
+export function FormActions({busy,error,close,label='Провести',disabled=false,danger=false}) {
+  return <>{error&&<p className="finError" role="alert">{error}</p>}<footer>{close&&<button type="button" disabled={busy} onClick={close}>Отмена</button>}<button className={danger?'finDanger':'finPrimary'} type="submit" disabled={busy||disabled}>{busy?'Сохраняю…':label}</button></footer></>;
 }
 export function AccountForm({account,users,close,done}) {
   const f=useFinanceForm({name:account?.name||'',type:account?.type||'BANK',responsible_id:account?.responsible_id||'',comment:account?.comment||'',is_active:account?.is_active??true,initial_amount:'0',initial_reason:'',document_reference:''}),{form:b}=f;

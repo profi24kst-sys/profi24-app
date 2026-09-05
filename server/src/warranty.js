@@ -96,7 +96,7 @@ app.get('/public/warranty/:token', async (req, reply) => {
   if (!r) return reply.code(404).send({ data: null, error: { code: 'WARRANTY_INACTIVE', message: 'Гарантийный талон недействителен' } });
   const [works, parts] = await Promise.all([
     q('SELECT name,qty,unit_price FROM request_works WHERE request_id=$1 ORDER BY id', [card.request_id]),
-    q('SELECT name,qty,sale_price FROM parts WHERE request_id=$1 ORDER BY id', [card.request_id])
+    q("SELECT name,qty,sale_price FROM parts WHERE request_id=$1 AND status<>'CANCELLED' ORDER BY id", [card.request_id])
   ]);
   return { data: { ...card, ...r, works: works.rows, parts: parts.rows } };
 });

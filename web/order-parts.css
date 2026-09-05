@@ -1,0 +1,17 @@
+.o360PartActions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:16px;align-items:start}
+.o360PartActions>button{min-height:44px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#172b4d;cursor:pointer}
+.o360PartActions>button[aria-expanded="true"]{background:#eaf1ff;border-color:#2457bb}
+.o360PartActions>.finOrderForm{grid-column:1/-1;margin:0}
+.o360PartPlan{padding:12px;border:1px dashed #cbd5e1;border-radius:8px;margin:12px 0}
+.o360PartPlan>summary{cursor:pointer;font-weight:600;color:#475569}
+.o360PartPlan .o360Inline{margin-top:12px}
+.o360 .o360PartRow{align-items:flex-start;padding:16px 0;gap:12px}
+.o360PartMain{flex:1;min-width:0;display:flex;align-items:flex-start;flex-wrap:wrap;gap:8px;overflow-wrap:anywhere}
+.o360PartMain>strong{font-size:15px}.o360PartMain>small{flex-basis:100%}
+.o360PartStatus{font-size:12px;background:#eef2f6;border-radius:6px;padding:3px 8px;color:#334155}
+.o360PartPayment{flex-basis:100%;margin:4px 0 0;padding:12px;background:#f4f8ff;border-radius:8px;font-size:13px}
+.o360PartPayment>div{display:grid;grid-template-columns:145px 1fr;gap:12px;margin:5px 0}
+.o360PartPayment dt{color:#64748b}.o360PartPayment dd{margin:0;color:#172b4d}
+.o360PartReturn{margin-top:4px;border:1px solid #b45309;border-radius:7px;background:#fff7ed;color:#92400e;padding:8px 12px;font-weight:600;cursor:pointer}
+.o360PartReturn:hover{background:#ffedd5}
+@media(max-width:650px){.o360PartActions{grid-template-columns:1fr}.o360PartPayment>div{grid-template-columns:1fr;gap:2px}}
