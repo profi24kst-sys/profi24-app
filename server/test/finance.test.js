@@ -33,6 +33,25 @@ async function setup(legacy=''){
   return {db,pool,app,api,create,balance,query,close:async()=>{await app.close();await db.close();}};
 }
 
+test('Сведения о покупке в заказе: источник, документ, автор и права доступа',async()=>{
+  const s=await setup();try{
+    const cash=await s.create('Касса офиса','CASH',10000),card=await s.create('Карта инженера','CARD',10000,2);
+    const body={account_id:card,name:'Насос',qty:2,purchase_price:1500,sale_price:2000,document_reference:'Чек 123'};
+    const first=await s.api('POST','/api/v1/requests/1/part-purchases',body,2,'purchase-details-key-001');
+    assert.equal(first.status,201);
+    assert.equal((await s.api('POST','/api/v1/requests/1/part-purchases',body,2,'purchase-details-key-001')).data.id,first.data.id);
+    await s.api('POST','/api/v1/requests/1/part-purchases',{...body,account_id:cash,name:'Фильтр'});
+    const owner=await s.api('GET','/api/v1/requests/1/part-purchases');
+    assert.equal(owner.status,200);assert.equal(owner.data.length,2);
+    const own=await s.api('GET','/api/v1/requests/1/part-purchases',undefined,2);
+    assert.equal(own.data.length,1);assert.equal(own.data[0].part_id,first.data.id);
+    assert.equal(own.data[0].account_name,'Карта инженера');assert.equal(own.data[0].document_reference,'Чек 123');
+    assert.ok(own.data[0].created_by_name);assert.equal(Number(own.data[0].amount),3000);
+    assert.equal(await s.balance(card),7000);
+    assert.equal((await s.api('GET','/api/v1/requests/2/part-purchases',undefined,2)).status,403);
+  }finally{await s.close();}
+});
+
 test('Точный денежный ввод: не принимаем NaN, Infinity, третью цифру и отрицательный расход',()=>{
   assert.equal(money('2250.10'),'2250.10');assert.equal(money('-12.01',{signed:true}),'-12.01');
   for(const value of ['NaN','Infinity',NaN,Infinity,'1.001','-1',0,'1e3',null])assert.throws(()=>money(value));
