@@ -97,6 +97,13 @@ export async function financeRoutes(app,pool) {
       WHERE f.request_id=$3 AND f.kind IN ('ORDER_EXPENSE','MANUAL') AND f.type='EXPENSE' AND ${allowedSql} ORDER BY f.id DESC`,[req.user.role,req.user.id,req.params.id])).rows;
   })}));
 
+  app.get('/api/v1/requests/:id/part-purchases',{preHandler:auth},async req=>({data:await transaction(pool,req.user,async c=>{
+    await requestAccess(c,req.params.id,req.user);
+    return (await c.query(`SELECT f.id,f.part_id,f.amount,f.created_at,f.document_reference,a.name account_name,u.name created_by_name
+      FROM finance_transactions f JOIN finance_accounts a ON a.id=f.account_id LEFT JOIN users u ON u.id=f.created_by
+      WHERE f.request_id=$3 AND f.kind='PART_PURCHASE' AND ${allowedSql} ORDER BY f.id DESC`,[req.user.role,req.user.id,req.params.id])).rows;
+  })}));
+
   app.post('/api/v1/requests/:id/part-purchases',{preHandler:auth},async(req,reply)=>{
     const b=req.body||{},key=operationKey(req),digest=fingerprint({request:req.params.id,...b});
     const result=await transaction(pool,req.user,async c=>{
