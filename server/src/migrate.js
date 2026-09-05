@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { migrateFinance } from './finance/migrate.js';
 
 const pool=new pg.Pool({connectionString:process.env.DATABASE_URL});
 const statements=[
@@ -55,6 +56,7 @@ const statements=[
 
 try{
   for(const sql of statements) await pool.query(sql);
+  await migrateFinance(pool);
   console.log(`Applied ${statements.length} database migration statements`);
 }catch(error){
   console.error('Migration failed:',error);

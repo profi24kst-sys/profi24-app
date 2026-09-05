@@ -20,6 +20,9 @@ jobs:
       - name: Validate every backend service syntax
         working-directory: server
         run: npm run check
+      - name: Run auditable finance tests
+        working-directory: server
+        run: npm run test:finance
       - name: Install web dependencies
         working-directory: web
         run: npm install
