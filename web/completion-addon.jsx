@@ -22,7 +22,8 @@ async function resolveOrderId(number){
 }
 function currentOrderNumber(){
   return document.querySelector('.hcHeroLeft strong')?.textContent?.replace(/^Заказ\s+/,'').trim()
-    || document.querySelector('.ordertitle h2')?.textContent?.replace(/^Заказ\s+/,'').trim()||'';
+    || document.querySelector('.ordertitle h2')?.textContent?.replace(/^Заказ\s+/,'').trim()
+    || document.querySelector('.engScreen header h1')?.textContent?.replace(/^Заказ\s+/,'').trim()||'';
 }
 
 function App(){
@@ -36,10 +37,12 @@ function App(){
     setData(value);setRepair(value.completion?.repair_result||'');setTest(value.completion?.test_result||'');
     setAmount(String(Math.max(0,Number(value.request.total)-Number(value.request.paid))));setMessage('');
   }
-  async function openCurrent(){
+  async function openCurrent(detail={}){
     try{
-      setMessage('');const number=currentOrderNumber();if(!number)throw new Error('Сначала откройте заказ');
-      const requestId=await resolveOrderId(number),sources=await financeApi('/accounts');
+      setMessage('');const number=detail.number||currentOrderNumber();
+      const requestId=detail.id||detail.request_id||(number?await resolveOrderId(number):null);
+      if(!requestId)throw new Error('Сначала откройте заказ');
+      const sources=await financeApi('/accounts');
       setId(requestId);setAccounts((sources||[]).filter(value=>value.is_active));setAccountId('');setOpen(true);await load(requestId);
     }catch(error){setMessage(error.message);setOpen(true);}
   }
@@ -55,18 +58,22 @@ function App(){
       setMessage('Готово');await load();window.dispatchEvent(new CustomEvent('profi24:request-updated',{detail:{id}}));return result;
     }catch(error){setMessage(error.message);}
   }
-  useEffect(()=>{const handler=()=>openCurrent();window.addEventListener('profi24:open-completion',handler);return()=>window.removeEventListener('profi24:open-completion',handler);},[]);
+  useEffect(()=>{const handler=event=>openCurrent(event.detail||{});window.addEventListener('profi24:open-completion',handler);return()=>window.removeEventListener('profi24:open-completion',handler);},[]);
   if(!open)return null;
   const request=data?.request,balance=request?Math.max(0,Number(request.total)-Number(request.paid)):0;
+  const overpayment=request?Math.max(0,Number(request.paid)-Number(request.total)):0;
   const after=data?.files?.filter(value=>['AFTER','PHOTO_AFTER'].includes(value.kind)).length||0;
   const clientSignature=data?.signatures?.some(value=>value.signer_type==='CLIENT');
+  const repairReady=!!data?.completion?.repair_result?.trim()&&!!data?.completion?.parts_posted;
+  const testReady=!!data?.completion?.test_result?.trim();
+  const closeReady=request?.status==='PAYMENT_REQUIRED'&&repairReady&&testReady&&after>0&&clientSignature&&balance<=0&&overpayment<=0.01;
   return <div className="co"><header><div><h1>Завершение ремонта</h1><p>{request?'Заказ '+request.number+' · списание → проверка → оплата → гарантия':'Открытие заказа...'}</p></div><button onClick={()=>setOpen(false)}>×</button></header>
     {message&&<div className="coMsg">{message}</div>}
     {data&&<main><section className="coCard"><h2>Заказ {request.number}</h2><div className="coState"><span>Статус <b>{request.status}</b></span><span>Сумма <b>{financeMoney(request.total)}</b></span><span>Оплачено <b>{financeMoney(request.paid)}</b></span><span>Остаток <b>{financeMoney(balance)}</b></span></div>
       <h3><PackageCheck/> 1. Ремонт выполнен</h3><textarea placeholder="Что выполнено" value={repair} onChange={e=>setRepair(e.target.value)}/><button onClick={()=>act('repair-done',{repair_result:repair})}>Зафиксировать ремонт и списать резерв</button><p className="hint">Зарезервированные запчасти списываются со склада и входят в фактическую себестоимость заказа.</p>
       <h3><Camera/> 2. Контрольная проверка</h3><textarea placeholder="Результат проверки" value={test} onChange={e=>setTest(e.target.value)}/><div className={after?'ok':'warn'}>Фото после ремонта: {after}</div><button onClick={()=>act('test',{test_result:test})}>Проверка пройдена</button></section>
       <section className="coCard"><h3><Wallet/> 3. Оплата</h3>{user?.role==='ENGINEER'?<p className="hint">Оплату клиента проводит менеджер или OWNER.</p>:<><div className="payRow"><input type="number" min="0.01" step="0.01" value={amount} onChange={e=>{setAmount(e.target.value);paymentKey.current=financeKey();}}/><select required value={accountId} onChange={e=>{setAccountId(e.target.value);paymentKey.current=financeKey();}}><option value="">Выберите денежный счёт</option>{accounts.map(value=><option key={value.id} value={value.id}>{value.name} · {financeMoney(value.balance)}</option>)}</select></div>{!accounts.length&&<p className="warn">Нет доступного активного счёта. OWNER должен назначить счёт ответственному сотруднику.</p>}<button disabled={!balance||!accountId} onClick={()=>act('payment',{amount:Number(amount),account_id:accountId})}>Принять оплату</button></>}
-        <h3><ShieldCheck/> 4. Закрытие и гарантия</h3><div className={clientSignature?'ok':'warn'}>Подпись клиента: {clientSignature?'есть':'нет'}</div><div className={after?'ok':'warn'}>Фото после ремонта: {after?'есть':'нет'}</div><div className={balance<=0?'ok':'warn'}>Оплата: {balance<=0?'полная':'осталось '+financeMoney(balance)}</div>{user?.role!=='ENGINEER'&&<button className="closeOrder" onClick={()=>act('close')}>Закрыть заказ и выпустить документы</button>}{request.warranty_until&&<div className="warranty"><ShieldCheck/><span>Гарантия до <b>{new Date(request.warranty_until).toLocaleDateString('ru-RU')}</b></span></div>}</section></main>}
+        <h3><ShieldCheck/> 4. Закрытие и гарантия</h3><div className={repairReady?'ok':'warn'}>Ремонт и списание деталей: {repairReady?'зафиксированы':'не завершены'}</div><div className={testReady?'ok':'warn'}>Контрольная проверка: {testReady?'зафиксирована':'не завершена'}</div><div className={clientSignature?'ok':'warn'}>Подпись клиента: {clientSignature?'есть':'нет'}</div><div className={after?'ok':'warn'}>Фото после ремонта: {after?'есть':'нет'}</div><div className={balance<=0&&overpayment<=0.01?'ok':'warn'}>Оплата: {overpayment>0.01?'переплата '+financeMoney(overpayment):balance<=0?'полная':'осталось '+financeMoney(balance)}</div>{user?.role!=='ENGINEER'&&<button className="closeOrder" disabled={!closeReady} onClick={()=>act('close')}>{request.status==='CLOSED'?'Заказ закрыт':'Закрыть заказ и выпустить документы'}</button>}{request.warranty_until&&<div className="warranty"><ShieldCheck/><span>Гарантия до <b>{new Date(request.warranty_until).toLocaleDateString('ru-RU')}</b></span></div>}</section></main>}
   </div>;
 }
 const host=document.createElement('div');document.body.appendChild(host);createRoot(host).render(<App/>);
