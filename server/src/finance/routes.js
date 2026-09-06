@@ -13,10 +13,22 @@ export async function financeRoutes(app,pool) {
   };
   const owner=async req=>{await auth(req);if(!canAdminFinance(req.user.role))reject('Доступно собственнику или бухгалтеру','FORBIDDEN',403);};
   const allowedSql=`($1::text IN ('OWNER','SUPERVISOR','ACCOUNTANT') OR a.responsible_id=$2)`;
-  app.get('/health',async()=>{await q('SELECT 1');return {ok:true,service:'profi24-finance',version:'2.1-rbac'};});
-  app.get('/api/v1/accounts',{preHandler:auth},async req=>({data:(await q(`SELECT a.*,u.name responsible_name FROM finance_account_balances a LEFT JOIN users u ON u.id=a.responsible_id WHERE ${allowedSql} ORDER BY a.is_active DESC,a.id`,[req.user.role,req.user.id])).rows}));
+  const resolveBranch=async(c,value)=>{
+    if(value!=null&&value!==''){
+      const branch=id(value,'Филиал');
+      if(!(await c.query('SELECT id FROM branches WHERE id=$1 AND active=true',[branch])).rows[0])reject('Филиал денежного счёта не найден или отключён','BRANCH_NOT_FOUND',422);
+      return branch;
+    }
+    const active=(await c.query('SELECT id FROM branches WHERE active=true ORDER BY id LIMIT 2')).rows;
+    if(active.length===1)return Number(active[0].id);
+    if(active.length>1)reject('Выберите филиал денежного счёта','BRANCH_REQUIRED',422);
+    reject('Нет активного филиала для денежного счёта','BRANCH_NOT_FOUND',422);
+  };
+  app.get('/health',async()=>{await q('SELECT 1');return {ok:true,service:'profi24-finance',version:'2.2-branches'};});
+  app.get('/api/v1/accounts',{preHandler:auth},async req=>({data:(await q(`SELECT a.*,u.name responsible_name,b.code branch_code,b.name branch_name FROM finance_account_balances a LEFT JOIN users u ON u.id=a.responsible_id JOIN branches b ON b.id=a.branch_id WHERE ${allowedSql} ORDER BY a.is_active DESC,b.name,a.id`,[req.user.role,req.user.id])).rows}));
   app.get('/api/v1/categories',{preHandler:auth},async()=>({data:(await q('SELECT * FROM finance_categories ORDER BY type,name')).rows}));
-  app.get('/api/v1/responsibles',{preHandler:owner},async()=>({data:(await q('SELECT id,name,role,active FROM users ORDER BY active DESC,name')).rows}));
+  app.get('/api/v1/responsibles',{preHandler:owner},async()=>({data:(await q('SELECT id,name,role,active,primary_branch_id FROM users ORDER BY active DESC,name')).rows}));
+  app.get('/api/v1/branches',{preHandler:owner},async()=>({data:(await q('SELECT id,code,name,address,timezone FROM branches WHERE active=true ORDER BY name')).rows}));
 
   app.post('/api/v1/accounts',{preHandler:owner},async(req,reply)=>{
     const b=req.body||{},name=text(b.name,'Название',120),type=text(b.type,'Тип'),responsible=b.responsible_id?id(b.responsible_id,'Ответственный'):null;
@@ -26,21 +38,26 @@ export async function financeRoutes(app,pool) {
       await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[key]);
       const previous=(await c.query('SELECT * FROM finance_accounts WHERE creation_key=$1',[key])).rows[0];
       if(previous){if(previous.creation_fingerprint!==digest)reject('Номер создания счёта уже использован','IDEMPOTENCY_CONFLICT',409);return previous;}
-      const a=(await c.query(`INSERT INTO finance_accounts(name,type,responsible_id,comment,created_by,creation_key,creation_fingerprint) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`,[name,type,responsible,String(b.comment||'').slice(0,1000),req.user.id,key,digest])).rows[0];
+      const branch=await resolveBranch(c,b.branch_id);
+      if(responsible&&!(await c.query('SELECT 1 FROM user_branches WHERE user_id=$1 AND branch_id=$2',[responsible,branch])).rows[0])reject('Ответственный сотрудник не относится к выбранному филиалу','RESPONSIBLE_BRANCH_MISMATCH',422);
+      const a=(await c.query(`INSERT INTO finance_accounts(name,type,branch_id,responsible_id,comment,created_by,creation_key,creation_fingerprint) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,[name,type,branch,responsible,String(b.comment||'').slice(0,1000),req.user.id,key,digest])).rows[0];
       if(Number(initial)!==0)await insertEntry(c,req.user,{account_id:a.id,type:initial.startsWith('-')?'EXPENSE':'INCOME',kind:'OPENING',category:'OPENING',amount:initial.replace('-',''),comment:text(b.initial_reason,'Основание начального остатка'),document_reference:b.document_reference||null,idempotency_key:key,metadata:{fingerprint:digest}});
       return a;
     });return reply.code(201).send({data:result});
   });
   app.patch('/api/v1/accounts/:id',{preHandler:owner},async req=>{
     const b=req.body||{};
-    const allowed=new Set(['name','type','responsible_id','comment','is_active']);
+    const allowed=new Set(['name','type','branch_id','responsible_id','comment','is_active']);
     if(Object.keys(b).some(k=>!allowed.has(k)))reject('В настройках счёта нельзя изменять остаток. Используйте корректировку.');
     return {data:await transaction(pool,req.user,async c=>{
       const [a]=await lockAccounts(c,[req.params.id],req.user,{active:false});
       const merged={...a,...b};
       if(typeof merged.is_active!=='boolean')reject('Некорректная активность счёта');
-      return (await c.query(`UPDATE finance_accounts SET name=$1,type=$2,responsible_id=$3,comment=$4,is_active=$5,updated_at=now() WHERE id=$6 RETURNING *`,[
-        text(merged.name,'Название',120),text(merged.type,'Тип'),merged.responsible_id?id(merged.responsible_id,'Ответственный'):null,String(merged.comment||'').slice(0,1000),merged.is_active,a.id])).rows[0];
+      const branch=await resolveBranch(c,merged.branch_id);
+      const responsible=merged.responsible_id?id(merged.responsible_id,'Ответственный'):null;
+      if(responsible&&!(await c.query('SELECT 1 FROM user_branches WHERE user_id=$1 AND branch_id=$2',[responsible,branch])).rows[0])reject('Ответственный сотрудник не относится к выбранному филиалу','RESPONSIBLE_BRANCH_MISMATCH',422);
+      return (await c.query(`UPDATE finance_accounts SET name=$1,type=$2,branch_id=$3,responsible_id=$4,comment=$5,is_active=$6,updated_at=now() WHERE id=$7 RETURNING *`,[
+        text(merged.name,'Название',120),text(merged.type,'Тип'),branch,responsible,String(merged.comment||'').slice(0,1000),merged.is_active,a.id])).rows[0];
     })};
   });
   app.post('/api/v1/accounts/:id/adjustments',{preHandler:owner},async(req,reply)=>{
