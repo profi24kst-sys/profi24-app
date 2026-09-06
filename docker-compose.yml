@@ -36,6 +36,7 @@ services:
   ownercontrol: {build: ./server, restart: unless-stopped, command: ["node","src/owner-control.js"], environment: {<<: *env, PORT: 8103}, depends_on: {api: {condition: service_healthy}}, healthcheck: *hc}
   directoryadmin: {build: ./server, restart: unless-stopped, command: ["node","src/directory-admin.js"], environment: {<<: *env, PORT: 8104}, depends_on: {api: {condition: service_healthy}}, healthcheck: *hc}
   ordertasks: {build: ./server, restart: unless-stopped, command: ["node","src/order-tasks.js"], environment: {<<: *env, PORT: 8105}, depends_on: {api: {condition: service_healthy}}, healthcheck: *hc}
+  branchadmin: {build: ./server, restart: unless-stopped, command: ["node","src/branch-admin.js"], environment: {<<: *env, PORT: 8106}, depends_on: {api: {condition: service_healthy}}, healthcheck: *hc}
   backup:
     image: postgres:16-alpine
     restart: unless-stopped
