@@ -6,7 +6,7 @@
     "migrate": "node src/migrate.js",
     "start": "node src/migrate.js && node src/index2.js",
     "check": "node src/check-all.js",
-    "test:finance": "node --test test/finance.test.js",
+    "test:finance": "node --test test/finance.test.js test/finance-branches.test.js",
     "test:orders": "node --test test/order-close.test.js",
     "test:crm": "node --import ./test/test-env.js --test test/crm-regression.test.js test/rbac.test.js test/branches.test.js test/warehouse-branches.test.js",
     "test:rbac": "node --test test/rbac.test.js",
