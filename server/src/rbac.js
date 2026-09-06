@@ -115,7 +115,10 @@ export function canMutateOrder(role,{service='',route='',method='GET'}={}){
     return can(role,P.ORDERS_TECHNICAL)||can(role,P.ORDERS_NOTES)||can(role,P.ORDERS_FILES);
   }
   if(role==='ACCOUNTANT'){
-    return service==='index2'&&/\/payment$/.test(route)&&can(role,P.FINANCE_RECEIVE_PAYMENT);
+    if(service!=='index2')return false;
+    if(/\/payment$/.test(route))return can(role,P.FINANCE_RECEIVE_PAYMENT);
+    if(/\/refund$/.test(route))return can(role,P.FINANCE_REFUND);
+    return false;
   }
   if(role==='TRAINEE'){
     return (/\/(notes|comment)$/.test(route)&&can(role,P.ORDERS_NOTES))||(service==='documents'&&/\/files(?:\/|$)/.test(route)&&can(role,P.ORDERS_FILES));
