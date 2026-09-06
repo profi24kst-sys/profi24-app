@@ -88,3 +88,105 @@ jobs:
             echo 'corrupted backup unexpectedly passed integrity check'
             exit 1
           fi
+
+  attachment_security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare attachment-security environment
+        run: |
+          cat > .env <<'EOF'
+          POSTGRES_DB=profi24
+          POSTGRES_USER=profi24
+          POSTGRES_PASSWORD=AttachmentDb2026Kst9
+          JWT_SECRET=AttachmentJwt2026Kst9SafeSecretValue42
+          NODE_ENV=production
+          CORS_ORIGIN=http://localhost:5173
+          PUBLIC_BASE_URL=http://localhost:5173
+          DB_POOL_MAX=10
+          WEB_PORT=5173
+          BACKUP_RETENTION_DAYS=14
+          EOF
+      - name: Start core and documents service
+        run: docker compose up -d --build db api documents web
+      - name: Wait for documents health
+        run: |
+          for i in $(seq 1 50); do
+            if curl -fsS http://localhost:5173/health >/dev/null && curl -fsS http://localhost:5173/documents-health >/dev/null; then exit 0; fi
+            sleep 3
+          done
+          docker compose ps
+          docker compose logs api documents web
+          exit 1
+      - name: Seed owner, mentor engineer, trainee and participant order
+        run: |
+          docker compose exec -T api node --input-type=module <<'NODE'
+          import bcrypt from 'bcryptjs';
+          import pg from 'pg';
+          const p=new pg.Pool({connectionString:process.env.DATABASE_URL});
+          const users=[
+            ['Attachment Owner','attachment-owner@test.invalid','AttachmentOwner2026Kst9','OWNER'],
+            ['Attachment Engineer','attachment-engineer@test.invalid','AttachmentEngineer2026Kst9','ENGINEER'],
+            ['Attachment Trainee','attachment-trainee@test.invalid','AttachmentTrainee2026Kst9','TRAINEE']
+          ];
+          for(const [name,email,password,role] of users){
+            const hash=await bcrypt.hash(password,10);
+            await p.query('INSERT INTO users(name,email,password_hash,role,active) VALUES($1,$2,$3,$4,true)',[name,email,hash,role]);
+          }
+          const owner=(await p.query("SELECT id FROM users WHERE email='attachment-owner@test.invalid'")).rows[0].id;
+          const engineer=(await p.query("SELECT id FROM users WHERE email='attachment-engineer@test.invalid'")).rows[0].id;
+          const trainee=(await p.query("SELECT id FROM users WHERE email='attachment-trainee@test.invalid'")).rows[0].id;
+          const customer=(await p.query("INSERT INTO customers(name,phone,phone_norm) VALUES('Attachment Client','70000000077','70000000077') RETURNING id")).rows[0].id;
+          const request=(await p.query("INSERT INTO requests(number,customer_id,engineer_id,status,complaint,total) VALUES('FILE-SEC-1',$1,$2,'REPAIR','Attachment security',0) RETURNING id",[customer,engineer])).rows[0].id;
+          await p.query('INSERT INTO user_mentors(trainee_id,mentor_id,assigned_by) VALUES($1,$2,$3)',[trainee,engineer,owner]);
+          await p.query("INSERT INTO request_participants(request_id,user_id,participant_role,mentor_id,added_by) VALUES($1,$2,'TRAINEE',$3,$4)",[request,trainee,engineer,owner]);
+          await p.end();
+          NODE
+      - name: Login test users
+        run: |
+          login(){ curl -fsS -X POST http://localhost:5173/api/v1/auth/login -H 'Content-Type: application/json' -d "$1" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(JSON.parse(s).data.access_token))"; }
+          echo "OWNER_TOKEN=$(login '{\"email\":\"attachment-owner@test.invalid\",\"password\":\"AttachmentOwner2026Kst9\"}')" >> "$GITHUB_ENV"
+          echo "TRAINEE_TOKEN=$(login '{\"email\":\"attachment-trainee@test.invalid\",\"password\":\"AttachmentTrainee2026Kst9\"}')" >> "$GITHUB_ENV"
+          echo "ORDER_ID=$(docker compose exec -T db psql -U profi24 -d profi24 -Atqc \"SELECT id FROM requests WHERE number='FILE-SEC-1'\")" >> "$GITHUB_ENV"
+      - name: Accept a real JPEG and return hardened download headers
+        run: |
+          JPEG_B64=$(printf '\377\330\377\340\000\000\000\000' | base64 -w0)
+          RESPONSE=$(curl -fsS -X POST "http://localhost:5173/documents-api/v1/requests/$ORDER_ID/files" \
+            -H "Authorization: Bearer $OWNER_TOKEN" -H 'Content-Type: application/json' \
+            -d "{\"name\":\"defect.jpg\",\"kind\":\"DEFECT_PHOTO\",\"data\":\"data:image/jpeg;base64,$JPEG_B64\"}")
+          FILE_ID=$(printf '%s' "$RESPONSE" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(String(JSON.parse(s).data.id)))")
+          echo "FILE_ID=$FILE_ID" >> "$GITHUB_ENV"
+          curl -fsS -D /tmp/file-headers -o /tmp/file-body "http://localhost:5173/documents-api/v1/files/$FILE_ID" -H "Authorization: Bearer $OWNER_TOKEN"
+          grep -Eqi '^content-type: image/jpeg' /tmp/file-headers
+          grep -Eqi '^x-content-type-options: nosniff' /tmp/file-headers
+          grep -Eqi '^content-disposition: attachment;' /tmp/file-headers
+      - name: Reject HTML, SVG and MIME spoofing
+        run: |
+          expect_reject(){
+            CODE=$(curl -sS -o /tmp/reject.json -w '%{http_code}' -X POST "http://localhost:5173/documents-api/v1/requests/$ORDER_ID/files" -H "Authorization: Bearer $OWNER_TOKEN" -H 'Content-Type: application/json' -d "$1")
+            test "$CODE" = '422'
+          }
+          HTML=$(printf '<html><script>alert(1)</script></html>' | base64 -w0)
+          SVG=$(printf '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>' | base64 -w0)
+          JPEG=$(printf '\377\330\377\340\000\000\000\000' | base64 -w0)
+          expect_reject "{\"name\":\"payload.html\",\"kind\":\"OTHER\",\"data\":\"data:text/html;base64,$HTML\"}"
+          expect_reject "{\"name\":\"payload.svg\",\"kind\":\"OTHER\",\"data\":\"data:image/svg+xml;base64,$SVG\"}"
+          expect_reject "{\"name\":\"spoof.jpg\",\"kind\":\"OTHER\",\"data\":\"data:text/html;base64,$JPEG\"}"
+      - name: Prove trainee attachment access is append-only
+        run: |
+          JPEG_B64=$(printf '\377\330\377\340\000\000\000\000' | base64 -w0)
+          curl -fsS -X POST "http://localhost:5173/documents-api/v1/requests/$ORDER_ID/files" \
+            -H "Authorization: Bearer $TRAINEE_TOKEN" -H 'Content-Type: application/json' \
+            -d "{\"name\":\"trainee.jpg\",\"kind\":\"DEFECT_PHOTO\",\"data\":\"data:image/jpeg;base64,$JPEG_B64\"}" >/dev/null
+          CODE=$(curl -sS -o /tmp/delete.json -w '%{http_code}' -X DELETE "http://localhost:5173/documents-api/v1/files/$FILE_ID" -H "Authorization: Bearer $TRAINEE_TOKEN")
+          test "$CODE" = '403'
+          CODE=$(curl -sS -o /tmp/signature.json -w '%{http_code}' -X POST "http://localhost:5173/documents-api/v1/requests/$ORDER_ID/signatures" -H "Authorization: Bearer $TRAINEE_TOKEN" -H 'Content-Type: application/json' -d "{\"signer_type\":\"CLIENT\",\"signature_data\":\"data:image/jpeg;base64,$JPEG_B64\"}")
+          test "$CODE" = '403'
+      - name: Show attachment failure logs
+        if: failure()
+        run: |
+          docker compose ps
+          docker compose logs --tail=180 api documents web
+      - name: Stop attachment stack
+        if: always()
+        run: docker compose down -v
