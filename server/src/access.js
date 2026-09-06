@@ -9,7 +9,7 @@ export async function authenticate(req, reply, db) {
   if (req[authenticated]) return true;
   try { await req.jwtVerify(); }
   catch { reply.code(401).send({data:null,error:{code:'UNAUTHORIZED',message:'Требуется авторизация'}}); return false; }
-  const user = (await db.query('SELECT id,name,email,role FROM users WHERE id=$1 AND active=true', [req.user.id])).rows[0];
+  const user = (await db.query('SELECT id,name,email,role,primary_branch_id FROM users WHERE id=$1 AND active=true', [req.user.id])).rows[0];
   if (!user) { reply.code(403).send({data:null,error:{code:'FORBIDDEN',message:'Пользователь неактивен'}}); return false; }
   if (!isKnownRole(user.role)) { reply.code(403).send({data:null,error:{code:'FORBIDDEN',message:'Роль пользователя не поддерживается'}}); return false; }
   req.user = user;
@@ -29,10 +29,28 @@ async function hasTechnicalOrderAccess(db,user,order){
     return Boolean(member);
   }
   if(user.role==='TRAINEE'){
-    const member=(await db.query(`SELECT 1 FROM request_participants rp JOIN user_mentors um ON um.trainee_id=rp.user_id AND um.mentor_id=rp.mentor_id WHERE rp.request_id=$1 AND rp.user_id=$2 AND rp.participant_role='TRAINEE' AND rp.removed_at IS NULL LIMIT 1`,[order.id,user.id])).rows[0];
+    const member=(await db.query(`
+      SELECT 1
+      FROM request_participants rp
+      JOIN user_mentors um ON um.trainee_id=rp.user_id AND um.mentor_id=rp.mentor_id
+      JOIN users mentor ON mentor.id=um.mentor_id AND mentor.role='ENGINEER' AND mentor.active=true
+      WHERE rp.request_id=$1
+        AND rp.user_id=$2
+        AND rp.participant_role='TRAINEE'
+        AND rp.removed_at IS NULL
+        AND rp.mentor_id=rp.mentor_id
+        AND $3::int=um.mentor_id
+      LIMIT 1`,[order.id,user.id,order.engineer_id])).rows[0];
     return Boolean(member);
   }
   return false;
+}
+
+async function hasManagerBranchAccess(db,user,order){
+  if(user.role!=='MANAGER')return true;
+  if(!order.branch_id)return false;
+  const row=(await db.query('SELECT 1 FROM user_branches WHERE user_id=$1 AND branch_id=$2 LIMIT 1',[user.id,order.branch_id])).rows[0];
+  return Boolean(row);
 }
 
 export async function requireOrder(db, user, requestId, {mutable=false, lock=false}={}) {
@@ -47,6 +65,9 @@ export async function requireOrder(db, user, requestId, {mutable=false, lock=fal
     }
     if (!isAssignedOnly(user.role) && !canAccessAllOrders(user.role)) {
       throw accessError('FORBIDDEN','Нет доступа к заказам',403);
+    }
+    if (!await hasManagerBranchAccess(db,user,order)) {
+      throw accessError('FORBIDDEN','Заказ относится к другому филиалу',403);
     }
   }
   if (mutable) assertOrderMutable(order);
