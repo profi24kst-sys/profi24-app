@@ -47,10 +47,22 @@ BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-14}
 case "$BACKUP_RETENTION_DAYS" in ''|*[!0-9]*) fail "BACKUP_RETENTION_DAYS должен быть числом";; esac
 [ "$BACKUP_RETENTION_DAYS" -ge 7 ] || fail "храните production backup минимум 7 дней"
 
+AUTH_RATE_LIMIT_PER_MINUTE=${AUTH_RATE_LIMIT_PER_MINUTE:-30}
+case "$AUTH_RATE_LIMIT_PER_MINUTE" in ''|*[!0-9]*) fail "AUTH_RATE_LIMIT_PER_MINUTE должен быть числом";; esac
+[ "$AUTH_RATE_LIMIT_PER_MINUTE" -ge 10 ] && [ "$AUTH_RATE_LIMIT_PER_MINUTE" -le 120 ] || fail "AUTH_RATE_LIMIT_PER_MINUTE должен быть в диапазоне 10..120"
+
+AUTH_TOKEN_TTL=${AUTH_TOKEN_TTL:-12h}
+case "$AUTH_TOKEN_TTL" in
+  *h) AUTH_TOKEN_HOURS=${AUTH_TOKEN_TTL%h} ;;
+  *) fail "AUTH_TOKEN_TTL задаётся в часах, например 8h или 12h" ;;
+esac
+case "$AUTH_TOKEN_HOURS" in ''|*[!0-9]*) fail "AUTH_TOKEN_TTL должен содержать целое число часов";; esac
+[ "$AUTH_TOKEN_HOURS" -ge 1 ] && [ "$AUTH_TOKEN_HOURS" -le 24 ] || fail "AUTH_TOKEN_TTL должен быть от 1h до 24h"
+
 if [ -n "${WHATSAPP_TOKEN:-}" ] || [ -n "${WHATSAPP_PHONE_NUMBER_ID:-}" ]; then
   [ -n "${WHATSAPP_TOKEN:-}" ] && [ -n "${WHATSAPP_PHONE_NUMBER_ID:-}" ] || fail "WHATSAPP_TOKEN и WHATSAPP_PHONE_NUMBER_ID задаются вместе"
 fi
 
 case "$JWT_SECRET" in *profi24*|*password*|*qwerty*) fail "JWT_SECRET выглядит предсказуемым";; esac
 
-echo "preflight_ok node_env=$NODE_ENV public_base_url=$PUBLIC_BASE_URL backup_retention_days=$BACKUP_RETENTION_DAYS"
+echo "preflight_ok node_env=$NODE_ENV public_base_url=$PUBLIC_BASE_URL backup_retention_days=$BACKUP_RETENTION_DAYS auth_token_ttl=$AUTH_TOKEN_TTL"
