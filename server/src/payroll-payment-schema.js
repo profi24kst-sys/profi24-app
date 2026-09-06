@@ -1,4 +1,7 @@
 export const payrollPaymentStatements=[
+`ALTER TABLE finance_transactions DROP CONSTRAINT IF EXISTS finance_kind_check`,
+`ALTER TABLE finance_transactions ADD CONSTRAINT finance_kind_check CHECK(kind IN
+  ('MANUAL','ORDER_EXPENSE','PART_PURCHASE','PART_RETURN','PAYMENT','REFUND','OPENING','ADJUSTMENT','TRANSFER','REVERSAL','PAYROLL_PAYMENT'))`,
 `CREATE TABLE IF NOT EXISTS payroll_payments(
   id BIGSERIAL PRIMARY KEY,
   period_id BIGINT NOT NULL REFERENCES payroll_periods(id),
