@@ -16,22 +16,45 @@ VALUES('KST','Костанай','ул. Орджоникидзе 25','Asia/Qostan
 ON CONFLICT(code) DO NOTHING;
 
 ALTER TABLE finance_accounts ADD COLUMN IF NOT EXISTS branch_id INT REFERENCES branches(id);
+-- This is a system backfill, not an account edit. Legacy finance_account_guard/audit must not
+-- interpret it as a user changing an already-posted account.
+ALTER TABLE finance_accounts DISABLE TRIGGER finance_account_guard;
+ALTER TABLE finance_accounts DISABLE TRIGGER finance_account_audit;
 UPDATE finance_accounts SET branch_id=(SELECT id FROM branches WHERE code='KST') WHERE branch_id IS NULL;
+ALTER TABLE finance_accounts ENABLE TRIGGER finance_account_audit;
+ALTER TABLE finance_accounts ENABLE TRIGGER finance_account_guard;
 ALTER TABLE finance_accounts ALTER COLUMN branch_id SET NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_finance_accounts_branch ON finance_accounts(branch_id,is_active,id);
 
 CREATE OR REPLACE FUNCTION finance_account_branch_guard() RETURNS trigger AS $$
+DECLARE inferred INT; membership_table regclass;
 BEGIN
-  IF NEW.branch_id IS NULL THEN
-    SELECT id INTO NEW.branch_id FROM branches WHERE code='KST' LIMIT 1;
+  membership_table:=to_regclass('public.user_branches');
+  IF NEW.branch_id IS NULL AND NEW.responsible_id IS NOT NULL AND to_regclass('public.users') IS NOT NULL THEN
+    BEGIN
+      SELECT primary_branch_id INTO inferred FROM users WHERE id=NEW.responsible_id AND active=true;
+    EXCEPTION WHEN undefined_column THEN inferred:=NULL;
+    END;
+    NEW.branch_id:=inferred;
   END IF;
-  IF NOT EXISTS(SELECT 1 FROM branches WHERE id=NEW.branch_id) THEN
-    RAISE EXCEPTION 'Филиал денежного счёта не найден' USING ERRCODE='P2403';
+  IF NEW.branch_id IS NULL THEN
+    SELECT id INTO NEW.branch_id FROM branches WHERE code='KST' AND active=true LIMIT 1;
+  END IF;
+  IF NOT EXISTS(SELECT 1 FROM branches WHERE id=NEW.branch_id AND active=true) THEN
+    RAISE EXCEPTION 'Филиал денежного счёта не найден или отключён' USING ERRCODE='P2403';
+  END IF;
+  IF NEW.responsible_id IS NOT NULL AND membership_table IS NOT NULL AND NOT EXISTS(
+    SELECT 1 FROM user_branches WHERE user_id=NEW.responsible_id AND branch_id=NEW.branch_id
+  ) THEN
+    RAISE EXCEPTION 'Ответственный сотрудник не относится к филиалу денежного счёта' USING ERRCODE='P2403';
+  END IF;
+  IF TG_OP='UPDATE' AND NEW.branch_id IS DISTINCT FROM OLD.branch_id AND COALESCE((SELECT balance FROM finance_account_balances WHERE id=OLD.id),0)<>0 THEN
+    RAISE EXCEPTION 'Счёт с движениями нельзя переносить между филиалами. Создайте новый счёт и оформите перевод.' USING ERRCODE='P2401';
   END IF;
   RETURN NEW;
 END; $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS trg_finance_account_branch_guard ON finance_accounts;
-CREATE TRIGGER trg_finance_account_branch_guard BEFORE INSERT OR UPDATE OF branch_id ON finance_accounts
+CREATE TRIGGER trg_finance_account_branch_guard BEFORE INSERT OR UPDATE OF branch_id,responsible_id ON finance_accounts
 FOR EACH ROW EXECUTE FUNCTION finance_account_branch_guard();
 
 CREATE TABLE IF NOT EXISTS finance_cash_shifts(
