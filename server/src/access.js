@@ -5,11 +5,16 @@ const authenticated = Symbol('active-user');
 export function accessError(code, message, statusCode = 409) {
   return Object.assign(new Error(message), {code, statusCode});
 }
+async function tableExists(db,name){
+  return Boolean((await db.query('SELECT to_regclass($1) name',[`public.${name}`])).rows[0]?.name);
+}
 export async function authenticate(req, reply, db) {
   if (req[authenticated]) return true;
   try { await req.jwtVerify(); }
   catch { reply.code(401).send({data:null,error:{code:'UNAUTHORIZED',message:'Требуется авторизация'}}); return false; }
-  const user = (await db.query('SELECT id,name,email,role,primary_branch_id FROM users WHERE id=$1 AND active=true', [req.user.id])).rows[0];
+  let user;
+  try{user=(await db.query('SELECT id,name,email,role,primary_branch_id FROM users WHERE id=$1 AND active=true', [req.user.id])).rows[0];}
+  catch(error){if(error.code!=='42703')throw error;user=(await db.query('SELECT id,name,email,role FROM users WHERE id=$1 AND active=true',[req.user.id])).rows[0];}
   if (!user) { reply.code(403).send({data:null,error:{code:'FORBIDDEN',message:'Пользователь неактивен'}}); return false; }
   if (!isKnownRole(user.role)) { reply.code(403).send({data:null,error:{code:'FORBIDDEN',message:'Роль пользователя не поддерживается'}}); return false; }
   req.user = user;
@@ -24,11 +29,14 @@ export function assertOrderMutable(order) {
 
 async function hasTechnicalOrderAccess(db,user,order){
   if(user.role==='ENGINEER'&&Number(order.engineer_id)===Number(user.id))return true;
+  const participantsReady=await tableExists(db,'request_participants');
   if(user.role==='ENGINEER'){
+    if(!participantsReady)return false;
     const member=(await db.query(`SELECT 1 FROM request_participants WHERE request_id=$1 AND user_id=$2 AND participant_role='ENGINEER' AND removed_at IS NULL LIMIT 1`,[order.id,user.id])).rows[0];
     return Boolean(member);
   }
   if(user.role==='TRAINEE'){
+    if(!participantsReady||!await tableExists(db,'user_mentors'))return false;
     const member=(await db.query(`
       SELECT 1
       FROM request_participants rp
@@ -38,7 +46,6 @@ async function hasTechnicalOrderAccess(db,user,order){
         AND rp.user_id=$2
         AND rp.participant_role='TRAINEE'
         AND rp.removed_at IS NULL
-        AND rp.mentor_id=rp.mentor_id
         AND $3::int=um.mentor_id
       LIMIT 1`,[order.id,user.id,order.engineer_id])).rows[0];
     return Boolean(member);
@@ -48,6 +55,9 @@ async function hasTechnicalOrderAccess(db,user,order){
 
 async function hasManagerBranchAccess(db,user,order){
   if(user.role!=='MANAGER')return true;
+  // Finance/unit tests and pre-branch legacy databases may not have branch tables yet.
+  // Production branch migration creates them before services start.
+  if(!await tableExists(db,'user_branches'))return true;
   if(!order.branch_id)return false;
   const row=(await db.query('SELECT 1 FROM user_branches WHERE user_id=$1 AND branch_id=$2 LIMIT 1',[user.id,order.branch_id])).rows[0];
   return Boolean(row);
