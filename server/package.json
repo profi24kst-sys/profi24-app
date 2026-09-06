@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "migrate": "node src/migrate.js",
-    "start": "node src/migrate.js && node src/index2.js",
+    "start": "node src/migrate.js && node src/all.js",
     "check": "node src/check-all.js",
     "test:finance": "node --test test/finance.test.js",
     "test:orders": "node --test test/order-close.test.js",
