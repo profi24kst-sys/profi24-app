@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import {canAdminFinance,isKnownRole} from '../rbac.js';
 import { reject,money,text,id,date,today,monthRange,fingerprint,operationKey,transaction,lockAccounts,requestAccess,insertEntry,replay,createTransfer,recalcParts } from './service.js';
 
 export async function financeRoutes(app,pool) {
@@ -7,11 +8,12 @@ export async function financeRoutes(app,pool) {
     try{await req.jwtVerify();}catch{reject('Требуется авторизация','UNAUTHORIZED',401);}
     const user=(await q('SELECT id,name,role FROM users WHERE id=$1 AND active=true',[req.user.id])).rows[0];
     if(!user)reject('Пользователь неактивен','FORBIDDEN',403);
+    if(!isKnownRole(user.role))reject('Роль пользователя не поддерживается','FORBIDDEN',403);
     req.user=user;
   };
-  const owner=async req=>{await auth(req);if(req.user.role!=='OWNER')reject('Доступно только OWNER','FORBIDDEN',403);};
-  const allowedSql=`($1::text='OWNER' OR a.responsible_id=$2)`;
-  app.get('/health',async()=>{await q('SELECT 1');return {ok:true,service:'profi24-finance',version:'2.0-audit'};});
+  const owner=async req=>{await auth(req);if(!canAdminFinance(req.user.role))reject('Доступно собственнику или бухгалтеру','FORBIDDEN',403);};
+  const allowedSql=`($1::text IN ('OWNER','SUPERVISOR','ACCOUNTANT') OR a.responsible_id=$2)`;
+  app.get('/health',async()=>{await q('SELECT 1');return {ok:true,service:'profi24-finance',version:'2.1-rbac'};});
   app.get('/api/v1/accounts',{preHandler:auth},async req=>({data:(await q(`SELECT a.*,u.name responsible_name FROM finance_account_balances a LEFT JOIN users u ON u.id=a.responsible_id WHERE ${allowedSql} ORDER BY a.is_active DESC,a.id`,[req.user.role,req.user.id])).rows}));
   app.get('/api/v1/categories',{preHandler:auth},async()=>({data:(await q('SELECT * FROM finance_categories ORDER BY type,name')).rows}));
   app.get('/api/v1/responsibles',{preHandler:owner},async()=>({data:(await q('SELECT id,name,role,active FROM users ORDER BY active DESC,name')).rows}));
@@ -171,7 +173,7 @@ export async function financeRoutes(app,pool) {
       return outputs[0];
     });return reply.code(201).send({data:result});
   });
-  const noDelete=()=>reject('Удаление денежных операций запрещено. OWNER может оформить сторно с причиной.','IMMUTABLE',409);
+  const noDelete=()=>reject('Удаление денежных операций запрещено. Собственник или бухгалтер может оформить сторно с причиной.','IMMUTABLE',409);
   app.delete('/api/v1/transactions/:id',{preHandler:owner},noDelete);
   app.delete('/api/v1/requests/:requestId/expenses/:id',{preHandler:auth},noDelete);
   app.get('/api/v1/audit',{preHandler:owner},async req=>{
