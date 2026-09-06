@@ -44,11 +44,23 @@ export async function transaction(pool,user,fn) {
   try { await c.query('BEGIN');await c.query("SELECT set_config('app.finance_actor',$1,true)",[String(user.id)]);const result=await fn(c);await c.query('COMMIT');return result; }
   catch(error){await c.query('ROLLBACK');throw error;}finally{c.release();}
 }
+async function hasBranchMembership(c,userId,branchId){
+  if(!branchId)return true;
+  const table=(await c.query("SELECT to_regclass('public.user_branches') name")).rows[0]?.name;
+  if(!table)return true; // Isolated finance tests / legacy bootstrap before branch migration.
+  return Boolean((await c.query('SELECT 1 FROM user_branches WHERE user_id=$1 AND branch_id=$2 LIMIT 1',[userId,branchId])).rows[0]);
+}
 export async function lockAccounts(c,ids,user,{active=true}={}) {
   const unique=[...new Set(ids.map(v=>id(v)))].sort((a,b)=>a-b);
   const accounts=(await c.query('SELECT * FROM finance_accounts WHERE id=ANY($1::int[]) ORDER BY id FOR UPDATE',[unique])).rows;
   if(accounts.length!==unique.length) reject('Денежный счёт не найден','NOT_FOUND',404);
-  for(const a of accounts){if(!canAdminFinance(user.role)&&Number(a.responsible_id)!==Number(user.id))reject('Нет доступа к этому источнику денег','FORBIDDEN',403);if(active&&!a.is_active)reject('Счёт отключён. Выберите активный источник денег');}
+  for(const a of accounts){
+    if(!canAdminFinance(user.role)){
+      if(Number(a.responsible_id)!==Number(user.id))reject('Нет доступа к этому источнику денег','FORBIDDEN',403);
+      if(!await hasBranchMembership(c,user.id,a.branch_id))reject('Касса или счёт относятся к другому филиалу','FORBIDDEN',403);
+    }
+    if(active&&!a.is_active)reject('Счёт отключён. Выберите активный источник денег');
+  }
   return accounts;
 }
 export async function requestAccess(c,requestId,user,{write=false}={}) {
