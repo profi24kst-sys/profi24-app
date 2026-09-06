@@ -53,6 +53,39 @@ test('permission layer разделяет операционные, финанс
   assert.deepEqual(permissionsForRole('UNKNOWN'),[]);
 });
 
+test('Stage D разделяет зарплату, сводку ФОТ, self-view и управление KPI',()=>{
+  const P=PERMISSIONS;
+  assert.equal(can('OWNER',P.PAYROLL_VIEW),true);
+  assert.equal(can('OWNER',P.PAYROLL_MANAGE),true);
+  assert.equal(can('OWNER',P.PAYROLL_SUMMARY_VIEW),true);
+  assert.equal(can('OWNER',P.KPI_VIEW_ALL),true);
+  assert.equal(can('OWNER',P.KPI_MANAGE),true);
+
+  assert.equal(can('SUPERVISOR',P.PAYROLL_VIEW),false);
+  assert.equal(can('SUPERVISOR',P.PAYROLL_MANAGE),false);
+  assert.equal(can('SUPERVISOR',P.PAYROLL_SUMMARY_VIEW),true);
+  assert.equal(can('SUPERVISOR',P.KPI_VIEW_ALL),true);
+  assert.equal(can('SUPERVISOR',P.KPI_MANAGE),true);
+
+  assert.equal(can('ACCOUNTANT',P.PAYROLL_VIEW),true);
+  assert.equal(can('ACCOUNTANT',P.PAYROLL_MANAGE),true);
+  assert.equal(can('ACCOUNTANT',P.PAYROLL_SUMMARY_VIEW),true);
+  assert.equal(can('ACCOUNTANT',P.KPI_VIEW_ALL),true);
+  assert.equal(can('ACCOUNTANT',P.KPI_MANAGE),false);
+
+  assert.equal(can('MANAGER',P.PAYROLL_VIEW),false);
+  assert.equal(can('MANAGER',P.PAYROLL_SELF_VIEW),true);
+  assert.equal(can('MANAGER',P.KPI_VIEW_SELF),true);
+  assert.equal(can('MANAGER',P.KPI_VIEW_ALL),false);
+  assert.equal(can('MANAGER',P.KPI_MANAGE),false);
+
+  assert.equal(can('ENGINEER',P.PAYROLL_SELF_VIEW),true);
+  assert.equal(can('ENGINEER',P.KPI_VIEW_SELF),true);
+  assert.equal(can('ENGINEER',P.KPI_VIEW_ALL),false);
+  assert.equal(can('TRAINEE',P.PAYROLL_SELF_VIEW),true);
+  assert.equal(can('TRAINEE',P.KPI_VIEW_SELF),false);
+});
+
 test('операционные изменения разделены между бухгалтером, инженером и стажёром',()=>{
   assert.equal(canMutateOrder('ACCOUNTANT',{service:'index2',route:'/api/v1/requests/:id/payment',method:'POST'}),true);
   assert.equal(canMutateOrder('ACCOUNTANT',{service:'index2',route:'/api/v1/requests/:id/diagnosis',method:'POST'}),false);
