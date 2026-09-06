@@ -30,6 +30,11 @@ jobs:
           docker compose ps
           docker compose logs --tail=120
           exit 1
+      - name: Verify backend containers are non-root and documents remain writable
+        run: |
+          test "$(docker compose exec -T api id -u)" != '0'
+          test "$(docker compose exec -T documents id -u)" != '0'
+          docker compose exec -T documents sh -c 'touch /data/uploads/.production-acceptance-write && rm /data/uploads/.production-acceptance-write'
       - name: Show full-stack status
         if: always()
         run: docker compose ps
