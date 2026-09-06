@@ -1,0 +1,41 @@
+name: Production Acceptance
+
+on:
+  push:
+    branches: [main, 'feature/**', 'fix/**']
+  pull_request:
+    branches: [main, 'feature/**', 'fix/**']
+
+jobs:
+  full_stack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare acceptance environment
+        run: cp .env.example .env
+      - name: Start every CRM service except backup worker
+        run: |
+          SERVICES=$(docker compose config --services | grep -v '^backup$' | tr '\n' ' ')
+          docker compose up -d --build $SERVICES
+      - name: Wait for every service through nginx
+        run: |
+          for i in $(seq 1 70); do
+            if BASE_URL=http://localhost:5173 CURL_TIMEOUT=2 sh ops/acceptance.sh >/tmp/acceptance.log 2>&1; then
+              cat /tmp/acceptance.log
+              exit 0
+            fi
+            sleep 3
+          done
+          cat /tmp/acceptance.log || true
+          docker compose ps
+          docker compose logs --tail=120
+          exit 1
+      - name: Show full-stack status
+        if: always()
+        run: docker compose ps
+      - name: Show failure logs
+        if: failure()
+        run: docker compose logs --tail=150
+      - name: Stop full stack
+        if: always()
+        run: docker compose down -v
