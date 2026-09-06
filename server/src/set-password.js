@@ -1,9 +1,11 @@
 import bcrypt from 'bcryptjs';
 import pg from 'pg';
+import {passwordPolicyError} from './access.js';
 
 const [email,password]=process.argv.slice(2);
-if(!email||!password||password.length<10){
-  console.error('Usage: node src/set-password.js <email> <password>=10chars');
+const policyError=passwordPolicyError(password);
+if(!email||policyError){
+  console.error(policyError||'Usage: node src/set-password.js <email> <password>');
   process.exit(1);
 }
 const pool=new pg.Pool({connectionString:process.env.DATABASE_URL});
