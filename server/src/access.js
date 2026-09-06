@@ -5,6 +5,14 @@ const authenticated = Symbol('active-user');
 export function accessError(code, message, statusCode = 409) {
   return Object.assign(new Error(message), {code, statusCode});
 }
+export function passwordPolicyError(value){
+  const password=String(value||'');
+  if(password.length<10)return 'Пароль должен содержать минимум 10 символов';
+  if(!/[A-Za-zА-Яа-яЁё]/.test(password)||!/\d/.test(password))return 'Пароль должен содержать буквы и цифры';
+  const weak=password.toLowerCase().replace(/\s+/g,'');
+  if(['profi24','password','password1','qwerty','qwerty123','1234567890','admin12345','welcome123'].includes(weak))return 'Выберите более сложный пароль';
+  return null;
+}
 async function tableExists(db,name){
   return Boolean((await db.query('SELECT to_regclass($1) name',[`public.${name}`])).rows[0]?.name);
 }
@@ -167,6 +175,10 @@ export function installOrderAccess(app, db, service) {
     const route = req.routeOptions.url;
     if (!route?.startsWith('/api/') || route === '/api/v1/auth/login') return;
     if (!await authenticate(req, reply, db)) return reply;
+    if(service==='index2'&&req.method==='POST'&&(route==='/api/v1/users'||route==='/api/v1/users/:id/password')){
+      const policyError=passwordPolicyError(req.body?.password);
+      if(policyError)throw accessError('WEAK_PASSWORD',policyError,422);
+    }
     let requestId;
     if (/\/(requests|request)\/:/.test(route)) requestId = req.params.requestId ?? req.params.id;
     if (requestId == null && req.body?.request_id != null) requestId = req.body.request_id;
