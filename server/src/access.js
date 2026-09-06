@@ -39,6 +39,14 @@ export function assertOrderMutable(order) {
     throw accessError('ORDER_FINISHED','Заказ закрыт или отменён. Используйте документированную процедуру исправления.');
   }
 }
+async function assertNoActiveHold(db,order){
+  if(!await tableExists(db,'request_holds'))return;
+  const hold=(await db.query('SELECT id,hold_type,reason,expected_until FROM request_holds WHERE request_id=$1 AND resumed_at IS NULL LIMIT 1',[order.id])).rows[0];
+  if(hold){
+    const until=hold.expected_until?` до ${new Date(hold.expected_until).toLocaleString('ru-RU')}`:'';
+    throw accessError('ORDER_ON_HOLD',`Заказ на документированной паузе (${hold.hold_type})${until}: ${hold.reason}`);
+  }
+}
 
 async function hasTechnicalOrderAccess(db,user,order){
   if(user.role==='ENGINEER'&&Number(order.engineer_id)===Number(user.id))return true;
@@ -93,7 +101,10 @@ export async function requireOrder(db, user, requestId, {mutable=false, lock=fal
       throw accessError('FORBIDDEN','Заказ относится к другому филиалу',403);
     }
   }
-  if (mutable) assertOrderMutable(order);
+  if (mutable) {
+    assertOrderMutable(order);
+    await assertNoActiveHold(db,order);
+  }
   return order;
 }
 
@@ -175,8 +186,8 @@ export function installOrderAccess(app, db, service) {
     if (!readOnly && !canMutateOrder(req.user.role,{service,route,method:req.method})) {
       throw accessError('FORBIDDEN','Эта роль не может изменять ремонт или его операционные данные',403);
     }
-    // These routes have their own documented correction/replay checks. Comments remain append-only.
-    const documented = service==='communications' || /\/(refund|cancel|cancellation-readiness|notes|comment|documents)$/.test(route);
+    // Documented corrections and append-only evidence may run while the order is terminal or paused.
+    const documented = service==='communications' || /\/(refund|payment|cancel|cancellation-readiness|notes|comment|documents|resume|rework)$/.test(route);
     const order = await requireOrder(db, req.user, requestId, {mutable:!readOnly && !documented});
     req.order = order;
   });
