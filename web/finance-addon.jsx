@@ -26,7 +26,7 @@ function App(){
     const controller=new AbortController(),opts={signal:controller.signal};let current=true;
     setBusy(true);setError('');
     const suffix='?month='+month+(accountFilter?'&account_id='+accountFilter:'')+'&page='+page+(tab==='transfers'?'&transfers=true':'');
-    Promise.all([financeApi('/accounts',opts),admin?financeApi('/responsibles',opts):Promise.resolve([]),admin?financeApi('/branches',opts):Promise.resolve([]),financeApi('/transactions'+suffix,opts),admin?financeApi('/pnl?month='+month,opts):Promise.resolve(null),auditView&&tab==='audit'?financeApi('/audit?'+(accountFilter?'account_id='+accountFilter+'&':'')+(auditBefore?'before='+auditBefore:''),opts):Promise.resolve([])])
+    Promise.all([financeApi('/accounts',opts),admin?financeApi('/responsibles',opts):Promise.resolve([]),admin?financeApi('/branches',opts):Promise.resolve([]),financeApi('/transactions'+suffix,opts),admin?financeApi('/pnl?month='+month,opts):Promise.resolve(null),auditView&&tab==='audit'?financeApi('/audit-view?'+(accountFilter?'account_id='+accountFilter+'&':'')+(auditBefore?'before='+auditBefore:''),opts):Promise.resolve([])])
       .then(([a,u,b,l,p,h])=>{if(current){setAccounts(a);setUsers(u);setBranches(b);setLedger(l);setPnl(p);setAudit(h);}})
       .catch(e=>{if(current&&e.name!=='AbortError')setError(e.message);}).finally(()=>{if(current)setBusy(false);});
     return()=>{current=false;controller.abort();};
