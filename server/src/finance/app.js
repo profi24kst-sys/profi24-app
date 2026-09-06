@@ -5,8 +5,9 @@ import rateLimit from '@fastify/rate-limit';
 import jwt from '@fastify/jwt';
 import { financeRoutes } from './routes.js';
 import { pnlRoute } from './pnl.js';
+import {JWT_SECRET} from '../env.js';
 
-export async function buildFinanceApp(pool,{logger=true,secret=process.env.JWT_SECRET||'dev-secret-change-me'}={}) {
+export async function buildFinanceApp(pool,{logger=true,secret=JWT_SECRET}={}) {
   const app=Fastify({logger});
   await app.register(cors,{origin:(process.env.CORS_ORIGIN||'http://localhost:5173').split(',').map(x=>x.trim()),credentials:true});
   await app.register(helmet,{contentSecurityPolicy:false});

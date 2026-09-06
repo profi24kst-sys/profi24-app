@@ -5,10 +5,10 @@ import pg from 'pg';
 import crypto from 'crypto';
 
 const app = Fastify({ logger: true });
-await app.register(cors, { origin: true });
+await app.register(cors, { origin:(process.env.CORS_ORIGIN||'http://localhost:5173').split(',').map(x=>x.trim()) });
 await app.register(helmet, { contentSecurityPolicy: false });
 
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+const pool = new pg.Pool({connectionString:process.env.DATABASE_URL,max:Number(process.env.DB_POOL_MAX||3)});
 const q = (s, p = []) => pool.query(s, p);
 const baseUrl = () => (process.env.PUBLIC_BASE_URL || process.env.CORS_ORIGIN?.split(',')[0] || 'http://localhost:5173').replace(/\/$/, '');
 

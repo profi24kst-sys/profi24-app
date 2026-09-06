@@ -4,12 +4,13 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import jwt from '@fastify/jwt';
 import pg from 'pg';
+import {JWT_SECRET} from './env.js';
 
 const app=Fastify({logger:true});
-await app.register(cors,{origin:true,credentials:true});
+await app.register(cors,{origin:(process.env.CORS_ORIGIN||'http://localhost:5173').split(',').map(x=>x.trim()),credentials:true});
 await app.register(helmet,{contentSecurityPolicy:false});
-await app.register(jwt,{secret:process.env.JWT_SECRET||'dev-secret-change-me'});
-const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,max:Number(process.env.DB_POOL_MAX||10)});
+await app.register(jwt,{secret:JWT_SECRET});
+const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,max:Number(process.env.DB_POOL_MAX||3)});
 const q=(s,p=[])=>pool.query(s,p);
 const err=(reply,code,message,status=422)=>reply.code(status).send({data:null,error:{code,message}});
 const auth=async(req,reply)=>{if(!await authenticate(req,reply,pool))return;};

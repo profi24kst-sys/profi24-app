@@ -2,10 +2,11 @@ import {authenticate,installOrderAccess} from './access.js';
 import Fastify from 'fastify';
 import jwt from '@fastify/jwt';
 import pg from 'pg';
+import {JWT_SECRET} from './env.js';
 
 const app=Fastify({logger:true});
-await app.register(jwt,{secret:process.env.JWT_SECRET||'dev-secret-change-me'});
-const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,max:5});
+await app.register(jwt,{secret:JWT_SECRET});
+const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,max:Number(process.env.DB_POOL_MAX||3)});
 const q=(s,p=[])=>pool.query(s,p);
 const weights={SLA:3,ACCEPT:2,VISIT:3,APPROVAL:2,PART:2,REPAIR:2,CONTROL:3};
 const labels={SLA:'Просрочен SLA',ACCEPT:'Не принял заявку вовремя',VISIT:'Просрочен выезд',APPROVAL:'Зависло согласование',PART:'Нет движения по запчасти',REPAIR:'Затянувшийся ремонт',CONTROL:'Просрочен контрольный срок'};

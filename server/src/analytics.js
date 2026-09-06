@@ -5,10 +5,11 @@ import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import jwt from '@fastify/jwt';
 import pg from 'pg';
+import {JWT_SECRET} from './env.js';
 const app=Fastify({logger:true});
 await app.register(cors,{origin:(process.env.CORS_ORIGIN||'http://localhost:5173').split(',').map(x=>x.trim()),credentials:true});
-await app.register(helmet,{contentSecurityPolicy:false});await app.register(rateLimit,{max:300,timeWindow:'1 minute'});await app.register(jwt,{secret:process.env.JWT_SECRET||'dev-secret-change-me'});
-const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,max:Number(process.env.DB_POOL_MAX||10)});const q=(s,p=[])=>pool.query(s,p);const fail=(r,c,m,s=422)=>r.code(s).send({data:null,error:{code:c,message:m}});const n=v=>Number(v||0);
+await app.register(helmet,{contentSecurityPolicy:false});await app.register(rateLimit,{max:300,timeWindow:'1 minute'});await app.register(jwt,{secret:JWT_SECRET});
+const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,max:Number(process.env.DB_POOL_MAX||3)});const q=(s,p=[])=>pool.query(s,p);const fail=(r,c,m,s=422)=>r.code(s).send({data:null,error:{code:c,message:m}});const n=v=>Number(v||0);
 await q('ALTER TABLE requests ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ');
 const auth=async(req,reply)=>{if(!await authenticate(req,reply,pool))return;};const owner=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(req.user.role!=='OWNER')return fail(reply,'FORBIDDEN','Раздел аналитики доступен владельцу',403)};
 function range(month){const d=month?new Date(month+'-01T00:00:00Z'):new Date();const s=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),1)),e=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()+1,1));return[s,e]}

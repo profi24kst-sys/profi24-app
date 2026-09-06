@@ -2,10 +2,11 @@ import {authenticate,installOrderAccess} from './access.js';
 import Fastify from 'fastify';
 import jwt from '@fastify/jwt';
 import pg from 'pg';
+import {JWT_SECRET} from './env.js';
 
 const app=Fastify({logger:true});
-await app.register(jwt,{secret:process.env.JWT_SECRET||'dev-secret-change-me'});
-const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,max:5});
+await app.register(jwt,{secret:JWT_SECRET});
+const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,max:Number(process.env.DB_POOL_MAX||3)});
 const q=(s,p=[])=>pool.query(s,p);
 const fail=(r,code,message,status=422)=>r.code(status).send({data:null,error:{code,message}});
 class ApiError extends Error{constructor(code,message,status=422){super(message);this.code=code;this.status=status}}

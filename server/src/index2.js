@@ -9,13 +9,14 @@ import bcrypt from 'bcryptjs';
 import pg from 'pg';
 import { money as financeMoney, id as financeId, operationKey, fingerprint, lockAccounts, FinanceError } from './finance/service.js';
 import {cancelOrder,cancellationReadiness,refundPayment} from './order-financial-actions.js';
+import {JWT_SECRET} from './env.js';
 
 const app=Fastify({logger:true,bodyLimit:8*1024*1024});
 await app.register(cors,{origin:(process.env.CORS_ORIGIN||'http://localhost:5173').split(',').map(x=>x.trim()),credentials:true});
 await app.register(helmet,{contentSecurityPolicy:false});
 await app.register(rateLimit,{max:300,timeWindow:'1 minute'});
-await app.register(jwt,{secret:process.env.JWT_SECRET||'dev-secret-change-me'});
-const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,max:Number(process.env.DB_POOL_MAX||10)});
+await app.register(jwt,{secret:JWT_SECRET});
+const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,max:Number(process.env.DB_POOL_MAX||3)});
 const q=(s,p=[])=>pool.query(s,p);
 const tx=async fn=>{const c=await pool.connect();try{await c.query('BEGIN');const r=await fn(c);await c.query('COMMIT');return r}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}};
 const num=v=>Number(v||0);
