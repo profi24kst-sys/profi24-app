@@ -3,6 +3,8 @@ name: Dependency Upgrade Preview
 on:
   push:
     branches: ['feature/production-acceptance']
+  pull_request:
+    branches: [main, 'feature/**', 'fix/**']
 
 jobs:
   generate:
