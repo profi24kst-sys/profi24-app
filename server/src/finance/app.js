@@ -5,6 +5,7 @@ import rateLimit from '@fastify/rate-limit';
 import jwt from '@fastify/jwt';
 import { financeRoutes } from './routes.js';
 import { pnlRoute } from './pnl.js';
+import {installFinanceRbacGuard} from './rbac-guard.js';
 
 export async function buildFinanceApp(pool,{logger=true,secret=process.env.JWT_SECRET||'dev-secret-change-me'}={}) {
   const app=Fastify({logger});
@@ -19,6 +20,7 @@ export async function buildFinanceApp(pool,{logger=true,secret=process.env.JWT_S
     if(['23505','23503','23514','22003','22P02'].includes(error.code))return reply.code(409).send({data:null,error:{code:'CONFLICT',message:'Операция уже существует или данные нарушают ограничения учёта'}});
     req.log.error(error);return reply.code(500).send({data:null,error:{code:'INTERNAL_ERROR',message:'Не удалось провести операцию. Данные не изменены.'}});
   });
+  installFinanceRbacGuard(app,pool);
   await financeRoutes(app,pool);
   await pnlRoute(app,pool);
   return app;
