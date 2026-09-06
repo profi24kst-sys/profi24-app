@@ -100,7 +100,7 @@ test('Сквозные регрессии доступа, заказов, скл
    const id=await order(),foreign=await order('REPAIR',4);
    const item=(await query("INSERT INTO warehouse_items(name,quantity,purchase_price,sale_price) VALUES('Reserved item',1,100,200) RETURNING id")).rows[0].id;
    assert.equal((await call('procurement','POST','/api/v1/reservations',{item_id:item,request_id:id,quantity:1})).status,201);
-   for(const [action,body]of [['issue',{quantity:1,engineer_id:4}],['write-off',{quantity:1}],['install',{quantity:1,request_id:foreign}]])assert.equal((await call('warehouse','POST',`/api/v1/items/${item}/${action}`,body)).status,409,action);
+   for(const [action,body]of [['issue',{quantity:1,engineer_id:4}],['write-off',{quantity:1,comment:'Проверка защиты резерва'}],['install',{quantity:1,request_id:foreign}]])assert.equal((await call('warehouse','POST',`/api/v1/items/${item}/${action}`,body)).status,409,action);
    assert.equal((await call('procurement','POST','/api/v1/reservations',{item_id:item,request_id:foreign,quantity:1})).status,409);
    const install=await call('warehouse','POST',`/api/v1/items/${item}/install`,{quantity:1,request_id:id});assert.equal(install.status,200,JSON.stringify(install));
    assert.equal(Number((await query('SELECT quantity FROM warehouse_items WHERE id=$1',[item])).rows[0].quantity),0);
