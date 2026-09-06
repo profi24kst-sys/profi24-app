@@ -51,6 +51,9 @@ export const lifecycleStatements=[
 `CREATE OR REPLACE FUNCTION lifecycle_document_guard() RETURNS trigger AS $$
 BEGIN
   IF TG_OP='DELETE' THEN
+    IF TG_TABLE_NAME='request_returns_without_repair' THEN
+      RAISE EXCEPTION 'Проведённый акт возврата без ремонта нельзя удалять' USING ERRCODE='P2401';
+    END IF;
     RAISE EXCEPTION 'Документы жизненного цикла нельзя удалять' USING ERRCODE='P2401';
   END IF;
   IF TG_TABLE_NAME='request_holds' THEN
@@ -89,7 +92,13 @@ BEGIN
     END IF;
     RETURN NEW;
   END IF;
-  RAISE EXCEPTION 'Связи заказов нельзя изменять' USING ERRCODE='P2401';
+  IF TG_TABLE_NAME='request_order_links' THEN
+    RAISE EXCEPTION 'Связь исходного и повторного заказа нельзя изменять' USING ERRCODE='P2401';
+  END IF;
+  IF TG_TABLE_NAME='request_returns_without_repair' THEN
+    RAISE EXCEPTION 'Проведённый акт возврата без ремонта нельзя изменять' USING ERRCODE='P2401';
+  END IF;
+  RAISE EXCEPTION 'Документ жизненного цикла нельзя изменять' USING ERRCODE='P2401';
 END $$ LANGUAGE plpgsql`,
 `DROP TRIGGER IF EXISTS trg_request_holds_guard ON request_holds`,
 `CREATE TRIGGER trg_request_holds_guard BEFORE UPDATE OR DELETE ON request_holds FOR EACH ROW EXECUTE FUNCTION lifecycle_document_guard()`,
