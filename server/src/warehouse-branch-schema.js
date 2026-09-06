@@ -33,7 +33,12 @@ export const warehouseBranchStatements=[
 `CREATE INDEX IF NOT EXISTS idx_warehouse_transfers_from ON warehouse_transfers(from_branch_id,created_at DESC)`,
 `CREATE INDEX IF NOT EXISTS idx_warehouse_transfers_to ON warehouse_transfers(to_branch_id,created_at DESC)`,
 `CREATE OR REPLACE FUNCTION warehouse_item_branch_guard() RETURNS trigger AS $$
+DECLARE active_count INT; inferred_branch INT;
 BEGIN
+ IF NEW.branch_id IS NULL THEN
+   SELECT count(*),min(id) INTO active_count,inferred_branch FROM branches WHERE active=true;
+   IF active_count=1 THEN NEW.branch_id:=inferred_branch; END IF;
+ END IF;
  IF NEW.branch_id IS NULL OR NOT EXISTS(SELECT 1 FROM branches WHERE id=NEW.branch_id AND active=true) THEN
    RAISE EXCEPTION 'Филиал складской позиции не найден или отключён' USING ERRCODE='P2403';
  END IF;
