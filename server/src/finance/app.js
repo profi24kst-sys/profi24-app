@@ -6,6 +6,7 @@ import jwt from '@fastify/jwt';
 import { financeRoutes } from './routes.js';
 import { pnlRoute } from './pnl.js';
 import {installFinanceRbacGuard} from './rbac-guard.js';
+import {installFinanceOrderCompatibility} from './order-compat-routes.js';
 
 export async function buildFinanceApp(pool,{logger=true,secret=process.env.JWT_SECRET||'dev-secret-change-me'}={}) {
   const app=Fastify({logger});
@@ -21,6 +22,7 @@ export async function buildFinanceApp(pool,{logger=true,secret=process.env.JWT_S
     req.log.error(error);return reply.code(500).send({data:null,error:{code:'INTERNAL_ERROR',message:'Не удалось провести операцию. Данные не изменены.'}});
   });
   installFinanceRbacGuard(app,pool);
+  installFinanceOrderCompatibility(app,pool);
   await financeRoutes(app,pool);
   app.get('/api/v1/audit-view',async req=>{
     const rawAccount=req.query?.account_id,rawBefore=req.query?.before;
