@@ -54,4 +54,5 @@ if [ "$RESTORE_UPLOADS" = "YES" ]; then
   tar -xzf "$BACKUP_SET_DIR/uploads.tar.gz" -C "$RESTORE_UPLOAD_ROOT"
 fi
 
-echo "restore_ok backup_set=$(basename "$BACKUP_SET_DIR") tables=$(psql "$RESTORE_DATABASE_URL" -Atqc \"SELECT count(*) FROM pg_tables WHERE schemaname='public'\")"
+TABLES_AFTER=$(psql "$RESTORE_DATABASE_URL" -Atqc "SELECT count(*) FROM pg_tables WHERE schemaname='public'")
+echo "restore_ok backup_set=$(basename "$BACKUP_SET_DIR") tables=$TABLES_AFTER"
