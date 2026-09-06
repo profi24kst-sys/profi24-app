@@ -84,7 +84,7 @@ async function hasManagerBranchAccess(db,user,order){
   return Boolean(row);
 }
 
-export async function requireOrder(db, user, requestId, {mutable=false, lock=false}={}) {
+export async function requireOrder(db, user, requestId, {mutable=false, lock=false, allowHold=false}={}) {
   const id = Number(requestId);
   if (!Number.isSafeInteger(id) || id < 1) throw accessError('VALIDATION','Некорректный номер заказа',422);
   const order = (await db.query(`SELECT * FROM requests WHERE id=$1${lock?' FOR UPDATE':''}`, [id])).rows[0];
@@ -103,7 +103,7 @@ export async function requireOrder(db, user, requestId, {mutable=false, lock=fal
   }
   if (mutable) {
     assertOrderMutable(order);
-    await assertNoActiveHold(db,order);
+    if(!allowHold)await assertNoActiveHold(db,order);
   }
   return order;
 }
@@ -186,9 +186,10 @@ export function installOrderAccess(app, db, service) {
     if (!readOnly && !canMutateOrder(req.user.role,{service,route,method:req.method})) {
       throw accessError('FORBIDDEN','Эта роль не может изменять ремонт или его операционные данные',403);
     }
-    // Documented corrections and append-only evidence may run while the order is terminal or paused.
-    const documented = service==='communications' || /\/(refund|payment|cancel|cancellation-readiness|notes|comment|documents|resume|rework)$/.test(route);
-    const order = await requireOrder(db, req.user, requestId, {mutable:!readOnly && !documented});
+    // Append-only evidence and documented corrections may bypass terminal/hold guards only where explicitly required.
+    const allowTerminal = service==='communications' || /\/(refund|cancel|cancellation-readiness|notes|comment|documents|rework)$/.test(route);
+    const allowHold = /\/(payment|resume)$/.test(route);
+    const order = await requireOrder(db, req.user, requestId, {mutable:!readOnly && !allowTerminal,allowHold});
     req.order = order;
   });
 }
