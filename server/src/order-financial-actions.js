@@ -1,20 +1,54 @@
-import {FinanceError,fingerprint,id,money,text} from './finance/service.js';
+import {FinanceError,fingerprint,id,money,text,lockAccounts} from './finance/service.js';
 
 const fail=(message,code='VALIDATION',statusCode=422)=>{throw new FinanceError(message,code,statusCode)};
 const number=value=>Number(value||0);
 export const cancellationCategories=new Set(['CUSTOMER_REFUSAL','DUPLICATE','NO_CONTACT','UNREPAIRABLE','PRICE_REJECTED','OTHER']);
 
-export async function refundPayment(c,{paymentId,user,body={},key,digest=fingerprint({payment:paymentId,...body})}) {
-  if(user?.role!=='OWNER')fail('Возврат оплаты доступен только OWNER','FORBIDDEN',403);
+async function inTransaction(pool,fn){
+  const c=await pool.connect();
+  try{await c.query('BEGIN');const result=await fn(c);await c.query('COMMIT');return result}
+  catch(error){await c.query('ROLLBACK');throw error}
+  finally{c.release()}
+}
+
+export async function receivePayment(c,{requestId,user,body={},key,digest=fingerprint({request:requestId,...body})}){
+  if(!['OWNER','MANAGER','ACCOUNTANT'].includes(user?.role))fail('Эта роль не принимает оплату клиента','FORBIDDEN',403);
+  await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[key]);
+  const previous=(await c.query('SELECT * FROM payments WHERE idempotency_key=$1',[key])).rows[0];
+  if(previous){
+    if(previous.request_fingerprint!==digest)fail('Номер оплаты уже использован','IDEMPOTENCY_CONFLICT',409);
+    const request=(await c.query('SELECT * FROM requests WHERE id=$1',[previous.request_id])).rows[0];
+    return {...request,payment_id:previous.id,replayed:true};
+  }
+  const request=(await c.query('SELECT * FROM requests WHERE id=$1 AND deleted_at IS NULL FOR UPDATE',[id(requestId,'Заказ')])).rows[0];
+  if(!request)fail('Заказ не найден','NOT_FOUND',404);
+  if(['CLOSED','CANCELLED'].includes(request.status))fail('Закрытый или отменённый заказ не принимает новую оплату','ORDER_FINISHED',409);
+  const amount=money(body.amount),accountId=id(body.account_id,'Источник оплаты');
+  await lockAccounts(c,[accountId],user);
+  if(number(request.total)<=0)fail('В заказе нет суммы к оплате','NO_AMOUNT',409);
+  const balance=Math.max(0,number(request.total)-number(request.paid));
+  if(number(amount)>balance+0.001)fail(`Сумма больше долга: ${balance.toFixed(2)} ₸`,'OVERPAYMENT',409);
+  const payment=(await c.query(`INSERT INTO payments(request_id,amount,method,kind,reference,created_by,account_id,idempotency_key,request_fingerprint)
+    VALUES($1,$2,$3,'PAYMENT',$4,$5,$6,$7,$8) RETURNING *`,[request.id,amount,body.method||'ACCOUNT',body.reference||null,user.id,accountId,key,digest])).rows[0];
+  const paid=number(request.paid)+number(amount),fullyPaid=paid>=number(request.total)-0.001;
+  const row=(await c.query('UPDATE requests SET paid=$1,updated_at=now() WHERE id=$2 RETURNING *',[paid,request.id])).rows[0];
+  await c.query(`INSERT INTO request_history(request_id,user_id,action,details) VALUES($1,$2,'PAYMENT_RECEIVED',$3)`,[request.id,user.id,{payment_id:payment.id,amount,account_id:accountId,fully_paid:fullyPaid}]);
+  return {...row,payment_id:payment.id,replayed:false};
+}
+
+async function refundPaymentTx(c,{paymentId,user,body={},key,digest=fingerprint({payment:paymentId,...body}),expectedRequestId=null}) {
+  if(!['OWNER','ACCOUNTANT'].includes(user?.role))fail('Возврат оплаты доступен собственнику или бухгалтеру','FORBIDDEN',403);
   await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[key]);
   const replay=(await c.query("SELECT * FROM payments WHERE idempotency_key=$1 AND kind='REFUND'",[key])).rows[0];
   if(replay){
     if(replay.request_fingerprint!==digest)fail('Номер возврата уже использован','IDEMPOTENCY_CONFLICT',409);
+    if(expectedRequestId!=null&&Number(replay.request_id)!==Number(expectedRequestId))fail('Возврат относится к другому заказу','STATE_CONFLICT',409);
     const request=(await c.query('SELECT * FROM requests WHERE id=$1',[replay.request_id])).rows[0];
     return {...request,refund_id:replay.id,source_payment_id:replay.source_payment_id,refund_amount:replay.amount,replayed:true};
   }
   const source=(await c.query("SELECT * FROM payments WHERE id=$1 AND kind='PAYMENT' FOR UPDATE",[id(paymentId,'Исходная оплата')])).rows[0];
   if(!source)fail('Исходная оплата не найдена','NOT_FOUND',404);
+  if(expectedRequestId!=null&&Number(source.request_id)!==Number(expectedRequestId))fail('Возврат относится к другому заказу','STATE_CONFLICT',409);
   const request=(await c.query('SELECT * FROM requests WHERE id=$1 AND deleted_at IS NULL FOR UPDATE',[source.request_id])).rows[0];
   if(!request)fail('Заказ не найден','NOT_FOUND',404);
   await c.query("SELECT set_config('app.order_refund_request',$1,true)",[String(request.id)]);
@@ -31,6 +65,16 @@ export async function refundPayment(c,{paymentId,user,body={},key,digest=fingerp
   return {...row,refund_id:refund.id,source_payment_id:source.id,refund_amount:refund.amount,replayed:false};
 }
 
+export async function refundPayment(cOrPool,configOrUser,legacyRequestId,legacyBody){
+  // Backward-compatible contract: refundPayment(pool,user,requestId,{payment_id,...,idempotency_key}).
+  if(legacyBody!==undefined){
+    const user=configOrUser,raw={...(legacyBody||{})},paymentId=raw.payment_id,key=raw.idempotency_key||`legacy-refund-${paymentId}-${Date.now()}`;
+    delete raw.payment_id;delete raw.idempotency_key;
+    return inTransaction(cOrPool,c=>refundPaymentTx(c,{paymentId,user,body:raw,key,expectedRequestId:legacyRequestId}));
+  }
+  return refundPaymentTx(cOrPool,configOrUser||{});
+}
+
 export async function cancellationReadiness(c,requestId,{lock=false}={}) {
   const request=(await c.query(`SELECT * FROM requests WHERE id=$1 AND deleted_at IS NULL${lock?' FOR UPDATE':''}`,[id(requestId,'Заказ')])).rows[0];
   if(!request)fail('Заказ не найден','NOT_FOUND',404);
@@ -40,23 +84,23 @@ export async function cancellationReadiness(c,requestId,{lock=false}={}) {
     c.query(`SELECT COALESCE(sum(f.amount),0) amount,count(*)::int count FROM finance_transactions f WHERE f.request_id=$1 AND f.kind IN ('ORDER_EXPENSE','MANUAL') AND f.type='EXPENSE' AND NOT EXISTS(SELECT 1 FROM finance_transactions rev WHERE rev.reversal_of=f.id)`,[request.id]),
     c.query("SELECT count(*)::int count FROM tasks WHERE request_id=$1 AND status NOT IN ('DONE','CANCELLED')",[request.id])
   ]);
-  const netPaid=number(cash.rows[0].net),expenseAmount=number(expenses.rows[0].amount);
-  return {request,net_paid:netPaid,unreturned_purchases:parts.rows,expense_amount:expenseAmount,expense_count:Number(expenses.rows[0].count||0),open_tasks:Number(tasks.rows[0].count||0),financially_ready:Math.abs(netPaid)<=0.01&&parts.rows.length===0};
+  const netPaid=number(cash.rows[0].net),expenseAmount=number(expenses.rows[0].amount),financiallyReady=Math.abs(netPaid)<=0.01&&parts.rows.length===0;
+  return {request,net_paid:netPaid,unreturned_purchases:parts.rows,expense_amount:expenseAmount,expense_count:Number(expenses.rows[0].count||0),open_tasks:Number(tasks.rows[0].count||0),financially_ready:financiallyReady,ready:financiallyReady};
 }
 
-export async function cancelOrder(c,{requestId,user,body={},key,digest=fingerprint({request:requestId,...body})}) {
+async function cancelOrderTx(c,{requestId,user,body={},key,digest=fingerprint({request:requestId,...body})}) {
   if(user?.role!=='OWNER')fail('Отмена заказа доступна только OWNER','FORBIDDEN',403);
   await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[key]);
   const replay=(await c.query('SELECT * FROM request_cancellations WHERE idempotency_key=$1',[key])).rows[0];
   if(replay){
     if(replay.request_fingerprint!==digest)fail('Номер отмены уже использован','IDEMPOTENCY_CONFLICT',409);
     const request=(await c.query('SELECT * FROM requests WHERE id=$1',[replay.request_id])).rows[0];
-    return {request,cancellation:replay,replayed:true};
+    return {request,cancellation:replay,document:replay,replayed:true};
   }
   const readiness=await cancellationReadiness(c,requestId,{lock:true});
   if(readiness.request.status==='CANCELLED'){
     const cancellation=(await c.query('SELECT * FROM request_cancellations WHERE request_id=$1 ORDER BY id DESC LIMIT 1',[readiness.request.id])).rows[0];
-    return {request:readiness.request,cancellation,replayed:true};
+    return {request:readiness.request,cancellation,document:cancellation,replayed:true};
   }
   if(readiness.request.status==='CLOSED')fail('Сначала оформите возврат оплаты — закрытый заказ автоматически откроется','CLOSED_ORDER',409);
   if(Math.abs(readiness.net_paid)>0.01)fail(`Сначала верните клиенту ${readiness.net_paid.toFixed(2)} ₸`,'CUSTOMER_REFUND_REQUIRED',409);
@@ -76,5 +120,17 @@ export async function cancelOrder(c,{requestId,user,body={},key,digest=fingerpri
   if(relatedTables.dispatch_controls)await c.query("UPDATE dispatch_controls SET status='RESOLVED',resolution=COALESCE(resolution,'Заказ отменён'),resolved_at=COALESCE(resolved_at,now()),updated_by=$2,updated_at=now() WHERE request_id=$1 AND status='OPEN'",[request.id,user.id]);
   if(relatedTables.owner_order_corrections)await c.query("UPDATE owner_order_corrections SET active=false,closed_by=$2,closed_at=now(),close_reason='Заказ отменён' WHERE request_id=$1 AND active=true",[request.id,user.id]);
   await c.query(`INSERT INTO request_history(request_id,user_id,action,details) VALUES($1,$2,'REQUEST_CANCELLED',$3)`,[request.id,user.id,{cancellation_id:cancellation.id,previous_status:readiness.request.status,category,reason,document_reference:document,expense_amount:readiness.expense_amount,expenses_acknowledged:cancellation.expenses_acknowledged,cancelled_tasks:readiness.open_tasks}]);
-  return {request,cancellation,replayed:false};
+  return {request,cancellation,document:cancellation,replayed:false};
+}
+
+export async function cancelOrder(cOrPool,configOrUser,legacyRequestId,legacyBody){
+  // Backward-compatible contract: cancelOrder(pool,user,requestId,{...,expenses_acknowledged,idempotency_key}).
+  if(legacyBody!==undefined){
+    const user=configOrUser,raw={...(legacyBody||{})},key=raw.idempotency_key||`legacy-cancel-${legacyRequestId}-${Date.now()}`;
+    delete raw.idempotency_key;
+    if(raw.acknowledge_expenses===undefined&&raw.expenses_acknowledged!==undefined)raw.acknowledge_expenses=raw.expenses_acknowledged;
+    delete raw.expenses_acknowledged;
+    return inTransaction(cOrPool,c=>cancelOrderTx(c,{requestId:legacyRequestId,user,body:raw,key}));
+  }
+  return cancelOrderTx(cOrPool,configOrUser||{});
 }
