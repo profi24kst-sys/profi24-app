@@ -11,6 +11,7 @@ services:
     environment: &env {NODE_ENV: "${NODE_ENV:-production}", DATABASE_URL: "postgresql://${POSTGRES_USER:-profi24}:${POSTGRES_PASSWORD:-profi24-change-me}@db:5432/${POSTGRES_DB:-profi24}", JWT_SECRET: "${JWT_SECRET:-change-me-in-production}", CORS_ORIGIN: "${CORS_ORIGIN:-http://localhost:5173}", PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-http://localhost:5173}", DB_POOL_MAX: "${DB_POOL_MAX:-10}", TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}", WHATSAPP_TOKEN: "${WHATSAPP_TOKEN:-}", WHATSAPP_PHONE_NUMBER_ID: "${WHATSAPP_PHONE_NUMBER_ID:-}", WHATSAPP_API_VERSION: "${WHATSAPP_API_VERSION:-v23.0}", PORT: 8080}
     depends_on: {db: {condition: service_healthy}}
     healthcheck: &hc {test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:'+process.env.PORT+'/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))\""], interval: 10s, timeout: 5s, retries: 10, start_period: 10s}
+  auth: {build: ./server, restart: unless-stopped, command: ["node","src/auth.js"], environment: {<<: *env, PORT: 8109, AUTH_RATE_LIMIT_PER_MINUTE: "${AUTH_RATE_LIMIT_PER_MINUTE:-30}", AUTH_TOKEN_TTL: "${AUTH_TOKEN_TTL:-12h}"}, depends_on: {api: {condition: service_healthy}}, healthcheck: *hc}
   warehouse: {build: ./server, restart: unless-stopped, command: ["node","src/warehouse.js"], environment: {<<: *env, PORT: 8081}, depends_on: {api: {condition: service_healthy}}, healthcheck: *hc}
   procurement: {build: ./server, restart: unless-stopped, command: ["node","src/procurement.js"], environment: {<<: *env, PORT: 8082}, depends_on: {api: {condition: service_healthy}, warehouse: {condition: service_healthy}}, healthcheck: *hc}
   payroll: {build: ./server, restart: unless-stopped, command: ["node","src/payroll.js"], environment: {<<: *env, PORT: 8083}, depends_on: {api: {condition: service_healthy}}, healthcheck: *hc}
@@ -53,6 +54,6 @@ services:
     build: ./web
     restart: unless-stopped
     ports: ["${WEB_PORT:-5173}:80"]
-    # Core CRM must remain available even when an optional module is unhealthy.
-    depends_on: {api: {condition: service_healthy}}
+    # Login and core CRM are mandatory; optional modules must not block the web edge.
+    depends_on: {api: {condition: service_healthy}, auth: {condition: service_healthy}}
 volumes: {pgdata: {}, uploads: {}, backups: {}}
