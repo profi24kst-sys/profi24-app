@@ -4,10 +4,16 @@ import {PGlite} from '@electric-sql/pglite';
 import {migrateCore} from '../src/migrate.js';
 import {requireOrder} from '../src/access.js';
 
+function harness(){
+  return PGlite.create().then(db=>{
+    const query=(sql,params=[])=>params.length?db.query(sql,params):db.exec(sql).then(r=>r.at(-1));
+    const pool={query,connect:async()=>({query,release(){}}),end:async()=>{}};
+    return {db,query,pool};
+  });
+}
+
 test('branch foundation assigns defaults and enforces branch responsibility',async()=>{
-  const db=await PGlite.create();
-  const query=(sql,params=[])=>params.length?db.query(sql,params):db.exec(sql).then(r=>r.at(-1));
-  const pool={query,connect:async()=>({query,release(){}}),end:async()=>{}};
+  const {db,query,pool}=await harness();
   try{
     await migrateCore(pool);
     const kst=(await query("SELECT id,code,name,timezone FROM branches WHERE code='KST'")).rows[0];
@@ -52,6 +58,42 @@ test('branch foundation assigns defaults and enforces branch responsibility',asy
     await assert.rejects(
       query('UPDATE requests SET branch_id=999999 WHERE id=$1',[kstOrder.id]),
       error=>error.code==='P2403'||error.code==='23503'
+    );
+  }finally{await db.close();}
+});
+
+test('cash shift is branch-bound, single-open and immutable after close',async()=>{
+  const {db,query,pool}=await harness();
+  try{
+    await migrateCore(pool);
+    const manager=(await query("INSERT INTO users(name,email,password_hash,role) VALUES('Cash Manager','cash-manager@test.invalid','unused','MANAGER') RETURNING id,primary_branch_id")).rows[0];
+    const account=(await query("INSERT INTO finance_accounts(name,type,responsible_id,created_by) VALUES('Касса менеджера','CASH',$1,$1) RETURNING id,branch_id",[manager.id])).rows[0];
+    assert.equal(Number(account.branch_id),Number(manager.primary_branch_id));
+
+    const shift=(await query("INSERT INTO finance_cash_shifts(account_id,branch_id,opening_balance,opened_by,opening_note) VALUES($1,$2,10000,$3,'Открытие') RETURNING *",[account.id,manager.primary_branch_id,manager.id])).rows[0];
+    assert.equal(shift.status,'OPEN');
+    assert.equal(Number(shift.branch_id),Number(manager.primary_branch_id));
+    assert.equal(Number((await query("SELECT count(*) c FROM finance_cash_shift_events WHERE shift_id=$1 AND event_type='OPEN'",[shift.id])).rows[0].c),1);
+
+    await assert.rejects(
+      query("INSERT INTO finance_cash_shifts(account_id,branch_id,opening_balance,opened_by) VALUES($1,$2,10000,$3)",[account.id,manager.primary_branch_id,manager.id]),
+      error=>error.code==='23505'
+    );
+
+    const closed=(await query("UPDATE finance_cash_shifts SET status='CLOSED',expected_closing_balance=12500,actual_closing_balance=12400,closed_by=$1,closing_note='Сверка' WHERE id=$2 RETURNING *",[manager.id,shift.id])).rows[0];
+    assert.equal(closed.status,'CLOSED');
+    assert.equal(Number(closed.variance),-100);
+    assert.ok(closed.closed_at);
+    assert.equal(Number((await query("SELECT count(*) c FROM finance_cash_shift_events WHERE shift_id=$1 AND event_type='CLOSE'",[shift.id])).rows[0].c),1);
+
+    await assert.rejects(
+      query("UPDATE finance_cash_shifts SET closing_note='Переписать' WHERE id=$1",[shift.id]),
+      error=>error.code==='P2401'
+    );
+    const event=(await query('SELECT id FROM finance_cash_shift_events WHERE shift_id=$1 ORDER BY id LIMIT 1',[shift.id])).rows[0];
+    await assert.rejects(
+      query('DELETE FROM finance_cash_shift_events WHERE id=$1',[event.id]),
+      error=>error.code==='P2401'
     );
   }finally{await db.close();}
 });
