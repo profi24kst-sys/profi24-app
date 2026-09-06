@@ -1,11 +1,13 @@
 import {calculatePayroll,payrollPeriod} from './payroll-calculation.js';
 import {authenticate,installOrderAccess} from './access.js';
+import {can,PERMISSIONS} from './rbac.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import jwt from '@fastify/jwt';
 import pg from 'pg';
+import {createHash,randomUUID} from 'node:crypto';
 
 const app=Fastify({logger:true});
 await app.register(cors,{origin:(process.env.CORS_ORIGIN||'http://localhost:5173').split(',').map(x=>x.trim()),credentials:true});
@@ -14,49 +16,56 @@ await app.register(rateLimit,{max:300,timeWindow:'1 minute'});
 await app.register(jwt,{secret:process.env.JWT_SECRET||'dev-secret-change-me'});
 const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,max:Number(process.env.DB_POOL_MAX||10)});
 const q=(s,p=[])=>pool.query(s,p);const n=v=>Number(v||0);const fail=(r,c,m,s=422)=>r.code(s).send({data:null,error:{code:c,message:m}});
-
-const schema=[
-`CREATE TABLE IF NOT EXISTS payroll_rules(
- user_id INT PRIMARY KEY REFERENCES users(id),
- base_salary NUMERIC(14,2) NOT NULL DEFAULT 0,
- order_percent NUMERIC(8,3) NOT NULL DEFAULT 0,
- work_percent NUMERIC(8,3) NOT NULL DEFAULT 0,
- gross_profit_percent NUMERIC(8,3) NOT NULL DEFAULT 0,
- active BOOLEAN NOT NULL DEFAULT true,
- updated_by INT REFERENCES users(id),updated_at TIMESTAMPTZ DEFAULT now())`,
-`CREATE TABLE IF NOT EXISTS payroll_adjustments(
- id SERIAL PRIMARY KEY,user_id INT NOT NULL REFERENCES users(id),period_month DATE NOT NULL,
- amount NUMERIC(14,2) NOT NULL,type TEXT NOT NULL CHECK(type IN ('BONUS','PENALTY','OTHER')),
- reason TEXT NOT NULL,created_by INT REFERENCES users(id),created_at TIMESTAMPTZ DEFAULT now())`,
-`CREATE INDEX IF NOT EXISTS idx_payroll_adjustments_period ON payroll_adjustments(period_month,user_id)`
-];for(const s of schema)await q(s);
-
+const tx=async fn=>{const c=await pool.connect();try{await c.query('BEGIN');const out=await fn(c);await c.query('COMMIT');return out}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}};
 const auth=async(req,reply)=>{if(!await authenticate(req,reply,pool))return;};
-const owner=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(req.user.role!=='OWNER')return fail(reply,'FORBIDDEN','Раздел зарплат доступен владельцу',403)};
+const view=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,PERMISSIONS.PAYROLL_VIEW))return fail(reply,'FORBIDDEN','Нет доступа к зарплате',403)};
+const manage=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,PERMISSIONS.PAYROLL_MANAGE))return fail(reply,'FORBIDDEN','Нет прав на операции по зарплате',403)};
+const owner=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(req.user.role!=='OWNER')return fail(reply,'FORBIDDEN','Это действие доступно только собственнику',403)};
+const money=v=>Math.round((Number(v||0)+Number.EPSILON)*100)/100;
 const monthStart=v=>payrollPeriod(v)[0];
 const monthEnd=start=>new Date(Date.UTC(start.getUTCFullYear(),start.getUTCMonth()+1,1));
+const monthKey=d=>new Date(d).toISOString().slice(0,7)+'-01';
+const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
+const opKey=req=>String(req.headers['idempotency-key']||`payroll-${randomUUID()}`).slice(0,160);
+const documentNo=prefix=>`${prefix}-${new Date().toISOString().slice(0,10).replaceAll('-','')}-${randomUUID().slice(0,8).toUpperCase()}`;
 
 installOrderAccess(app,pool,'payroll');
-app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'profi24-payroll',version:'1.0.0'}});
-app.get('/api/v1/rules',{preHandler:owner},async()=>({data:(await q(`SELECT u.id user_id,u.name,u.email,u.role,u.active,
- COALESCE(pr.base_salary,0)::numeric base_salary,COALESCE(pr.order_percent,0)::numeric order_percent,
- COALESCE(pr.work_percent,0)::numeric work_percent,COALESCE(pr.gross_profit_percent,0)::numeric gross_profit_percent,
- COALESCE(pr.active,true) rule_active
- FROM users u LEFT JOIN payroll_rules pr ON pr.user_id=u.id ORDER BY u.active DESC,u.role,u.name`)).rows}));
-app.put('/api/v1/rules/:userId',{preHandler:owner},async(req,reply)=>{const id=n(req.params.userId),b=req.body||{};if(!id)return fail(reply,'VALIDATION','Сотрудник не указан');for(const x of ['base_salary','order_percent','work_percent','gross_profit_percent'])if(n(b[x])<0)return fail(reply,'VALIDATION','Значения не могут быть отрицательными');const exists=(await q('SELECT id FROM users WHERE id=$1',[id])).rows[0];if(!exists)return fail(reply,'NOT_FOUND','Сотрудник не найден',404);const r=await q(`INSERT INTO payroll_rules(user_id,base_salary,order_percent,work_percent,gross_profit_percent,active,updated_by)
- VALUES($1,$2,$3,$4,$5,$6,$7)
- ON CONFLICT(user_id) DO UPDATE SET base_salary=EXCLUDED.base_salary,order_percent=EXCLUDED.order_percent,
- work_percent=EXCLUDED.work_percent,gross_profit_percent=EXCLUDED.gross_profit_percent,active=EXCLUDED.active,updated_by=EXCLUDED.updated_by,updated_at=now()
- RETURNING *`,[id,n(b.base_salary),n(b.order_percent),n(b.work_percent),n(b.gross_profit_percent),b.active!==false,req.user.id]);return{data:r.rows[0]}});
+app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'profi24-payroll',version:'2.0.0'}});
 
-app.get('/api/v1/adjustments',{preHandler:owner},async req=>{const start=monthStart(req.query?.month);const end=monthEnd(start);return{data:(await q(`SELECT a.*,u.name user_name,cb.name created_by_name FROM payroll_adjustments a JOIN users u ON u.id=a.user_id LEFT JOIN users cb ON cb.id=a.created_by WHERE a.period_month>=$1 AND a.period_month<$2 ORDER BY a.created_at DESC`,[start,end])).rows}});
-app.post('/api/v1/adjustments',{preHandler:owner},async(req,reply)=>{const b=req.body||{},amount=Math.abs(n(b.amount));if(!b.user_id||!amount||!b.reason?.trim()||!['BONUS','PENALTY','OTHER'].includes(b.type))return fail(reply,'VALIDATION','Заполните сотрудника, сумму, тип и причину');const start=monthStart(b.month);const signed=b.type==='PENALTY'?-amount:n(b.amount);const r=await q('INSERT INTO payroll_adjustments(user_id,period_month,amount,type,reason,created_by) VALUES($1,$2,$3,$4,$5,$6) RETURNING *',[b.user_id,start,signed,b.type,b.reason.trim(),req.user.id]);return reply.code(201).send({data:r.rows[0]})});
-app.delete('/api/v1/adjustments/:id',{preHandler:owner},async(req,reply)=>{const r=await q('DELETE FROM payroll_adjustments WHERE id=$1 RETURNING id',[req.params.id]);if(!r.rows[0])return fail(reply,'NOT_FOUND','Корректировка не найдена',404);return{data:{ok:true}}});
+async function branch(c,id){const row=(await c.query('SELECT id,code,name FROM branches WHERE id=$1 AND active=true',[Number(id)])).rows[0];if(!row)throw Object.assign(new Error('Филиал не найден или отключён'),{code:'BRANCH_NOT_FOUND',statusCode:422});return row}
+async function employee(c,id){const row=(await c.query('SELECT id,name,role,active,primary_branch_id FROM users WHERE id=$1',[Number(id)])).rows[0];if(!row)throw Object.assign(new Error('Сотрудник не найден'),{code:'NOT_FOUND',statusCode:404});if(!row.primary_branch_id)throw Object.assign(new Error('У сотрудника не назначен основной филиал'),{code:'BRANCH_REQUIRED',statusCode:409});return row}
+async function ensurePeriodMutable(c,branchId,periodMonth){const row=(await c.query('SELECT * FROM payroll_periods WHERE branch_id=$1 AND period_month=$2::date FOR UPDATE',[branchId,periodMonth])).rows[0];if(row&&['APPROVED','PAID','CLOSED'].includes(row.status))throw Object.assign(new Error(`Период ${String(periodMonth).slice(0,7)} уже ${row.status}; изменения входных данных запрещены`),{code:'PAYROLL_PERIOD_LOCKED',statusCode:409});return row}
+async function periodDetails(c,id){const p=(await c.query(`SELECT p.*,b.code branch_code,b.name branch_name,cu.name calculated_by_name,au.name approved_by_name,pu.name paid_by_name,cl.name closed_by_name FROM payroll_periods p JOIN branches b ON b.id=p.branch_id LEFT JOIN users cu ON cu.id=p.calculated_by LEFT JOIN users au ON au.id=p.approved_by LEFT JOIN users pu ON pu.id=p.paid_by LEFT JOIN users cl ON cl.id=p.closed_by WHERE p.id=$1`,[id])).rows[0];if(!p)return null;const accruals=p.calculation_revision?(await c.query(`SELECT a.*,u.name,u.role,u.active FROM payroll_accruals a JOIN users u ON u.id=a.user_id WHERE a.period_id=$1 AND a.revision=$2 ORDER BY u.role,u.name`,[p.id,p.calculation_revision])).rows:[];const events=(await c.query(`SELECT e.*,u.name actor_name FROM payroll_period_events e LEFT JOIN users u ON u.id=e.actor_id WHERE e.period_id=$1 ORDER BY e.id DESC`,[p.id])).rows;return{...p,accruals,events}}
 
-app.get('/api/v1/report',{preHandler:owner},async req=>{
- const [start,end]=payrollPeriod(req.query?.month);
- const {rows,totals}=await calculatePayroll(pool,start,end);
- return {data:{month:start.toISOString().slice(0,7),rows,totals}};
+app.get('/api/v1/rules',{preHandler:view},async()=>({data:(await q(`SELECT u.id user_id,u.name,u.email,u.role,u.active,u.primary_branch_id,
+ rv.id rule_version_id,rv.effective_from,COALESCE(rv.base_salary,0)::numeric base_salary,COALESCE(rv.order_percent,0)::numeric order_percent,
+ COALESCE(rv.work_percent,0)::numeric work_percent,COALESCE(rv.gross_profit_percent,0)::numeric gross_profit_percent,
+ COALESCE(rv.active,false) rule_active,rv.reason rule_reason
+ FROM users u LEFT JOIN LATERAL(SELECT v.* FROM payroll_rule_versions v WHERE v.user_id=u.id ORDER BY v.effective_from DESC,v.id DESC LIMIT 1) rv ON true
+ ORDER BY u.active DESC,u.role,u.name`)).rows}));
+
+app.put('/api/v1/rules/:userId',{preHandler:owner},async(req,reply)=>{
+ const userId=Number(req.params.userId),b=req.body||{};if(!Number.isSafeInteger(userId)||userId<1)return fail(reply,'VALIDATION','Сотрудник не указан');
+ for(const x of ['base_salary','order_percent','work_percent','gross_profit_percent'])if(!Number.isFinite(Number(b[x]||0))||n(b[x])<0)return fail(reply,'VALIDATION','Значения правила не могут быть отрицательными');
+ const effective=monthKey(monthStart(b.effective_from||b.month));const reason=String(b.reason||'Изменение условий оплаты').trim();if(reason.length<3)return fail(reply,'VALIDATION','Укажите причину изменения правила');
+ try{const result=await tx(async c=>{await employee(c,userId);const previous=(await c.query('SELECT id FROM payroll_rule_versions WHERE user_id=$1 ORDER BY effective_from DESC,id DESC LIMIT 1',[userId])).rows[0];const row=(await c.query(`INSERT INTO payroll_rule_versions(user_id,effective_from,base_salary,order_percent,work_percent,gross_profit_percent,active,supersedes_id,reason,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,[userId,effective,n(b.base_salary),n(b.order_percent),n(b.work_percent),n(b.gross_profit_percent),b.active!==false,previous?.id||null,reason,req.user.id])).rows[0];const latest=(await c.query('SELECT * FROM payroll_rule_versions WHERE user_id=$1 ORDER BY effective_from DESC,id DESC LIMIT 1',[userId])).rows[0];await c.query(`INSERT INTO payroll_rules(user_id,base_salary,order_percent,work_percent,gross_profit_percent,active,updated_by,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,now()) ON CONFLICT(user_id) DO UPDATE SET base_salary=$2,order_percent=$3,work_percent=$4,gross_profit_percent=$5,active=$6,updated_by=$7,updated_at=now()`,[userId,latest.base_salary,latest.order_percent,latest.work_percent,latest.gross_profit_percent,latest.active,req.user.id]);return row});return reply.code(201).send({data:result})}catch(e){if(e.code==='23505')return fail(reply,'RULE_VERSION_EXISTS','Для этого сотрудника уже есть версия правила с такой датой. Создайте новую дату вступления в силу.',409);throw e}
 });
 
+app.get('/api/v1/adjustments',{preHandler:view},async req=>{const start=monthStart(req.query?.month),end=monthEnd(start),branchId=req.query?.branch_id?Number(req.query.branch_id):null;const params=[start,end];let bs='';if(branchId){params.push(branchId);bs=` AND a.branch_id=$${params.length}`;}return{data:(await q(`SELECT a.*,u.name user_name,cb.name created_by_name,rb.name reversed_by_name FROM payroll_adjustments a JOIN users u ON u.id=a.user_id LEFT JOIN users cb ON cb.id=a.created_by LEFT JOIN payroll_adjustments rev ON rev.reversal_of=a.id LEFT JOIN users rb ON rb.id=rev.created_by WHERE a.period_month>=$1 AND a.period_month<$2${bs} ORDER BY a.created_at DESC`,params)).rows}});
+
+app.post('/api/v1/adjustments',{preHandler:manage},async(req,reply)=>{const b=req.body||{},amount=Math.abs(n(b.amount));if(!b.user_id||!amount||!b.reason?.trim()||!['BONUS','PENALTY','OTHER'].includes(b.type))return fail(reply,'VALIDATION','Заполните сотрудника, сумму, тип и причину');const start=monthStart(b.month),period=monthKey(start),key=opKey(req);const result=await tx(async c=>{const replay=(await c.query('SELECT * FROM payroll_adjustments WHERE idempotency_key=$1',[key])).rows[0];if(replay)return replay;const u=await employee(c,b.user_id);await ensurePeriodMutable(c,u.primary_branch_id,period);const signed=b.type==='PENALTY'?-amount:amount;return(await c.query(`INSERT INTO payroll_adjustments(user_id,period_month,amount,type,reason,created_by,branch_id,idempotency_key,document_no) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,[u.id,period,signed,b.type,String(b.reason).trim(),req.user.id,u.primary_branch_id,key,documentNo('ADJ')])).rows[0]});return reply.code(201).send({data:result})});
+
+app.delete('/api/v1/adjustments/:id',{preHandler:manage},async(req,reply)=>fail(reply,'IMMUTABLE_ADJUSTMENT','Корректировку нельзя удалить. Используйте сторно.',409));
+app.post('/api/v1/adjustments/:id/reverse',{preHandler:manage},async(req,reply)=>{const reason=String(req.body?.reason||'').trim();if(reason.length<3)return fail(reply,'VALIDATION','Укажите причину сторно');const key=opKey(req);const result=await tx(async c=>{const replay=(await c.query('SELECT * FROM payroll_adjustments WHERE idempotency_key=$1',[key])).rows[0];if(replay)return replay;const source=(await c.query('SELECT * FROM payroll_adjustments WHERE id=$1 FOR UPDATE',[req.params.id])).rows[0];if(!source)throw Object.assign(new Error('Корректировка не найдена'),{code:'NOT_FOUND',statusCode:404});const existing=(await c.query('SELECT * FROM payroll_adjustments WHERE reversal_of=$1 ORDER BY id DESC LIMIT 1',[source.id])).rows[0];if(existing)return existing;await ensurePeriodMutable(c,source.branch_id,source.period_month);return(await c.query(`INSERT INTO payroll_adjustments(user_id,period_month,amount,type,reason,created_by,branch_id,reversal_of,idempotency_key,document_no) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,[source.user_id,source.period_month,-n(source.amount),source.type,`Сторно: ${reason}`,req.user.id,source.branch_id,source.id,key,documentNo('REV')])).rows[0]});return reply.code(201).send({data:result})});
+
+app.get('/api/v1/report',{preHandler:view},async req=>{const[start,end]=payrollPeriod(req.query?.month),branchId=req.query?.branch_id?Number(req.query.branch_id):null;const{rows,totals}=await calculatePayroll(pool,start,end,{branchId});return{data:{month:start.toISOString().slice(0,7),branch_id:branchId,rows,totals}}});
+
+app.get('/api/v1/periods',{preHandler:view},async req=>{const params=[];let where='WHERE 1=1';if(req.query?.month){params.push(monthKey(monthStart(req.query.month)));where+=` AND p.period_month=$${params.length}::date`;}if(req.query?.branch_id){params.push(Number(req.query.branch_id));where+=` AND p.branch_id=$${params.length}`;}return{data:(await q(`SELECT p.*,b.code branch_code,b.name branch_name FROM payroll_periods p JOIN branches b ON b.id=p.branch_id ${where} ORDER BY p.period_month DESC,b.name`,params)).rows}});
+app.get('/api/v1/periods/:id',{preHandler:view},async(req,reply)=>{const data=await periodDetails(pool,Number(req.params.id));if(!data)return fail(reply,'NOT_FOUND','Расчётный период не найден',404);return{data}});
+
+app.post('/api/v1/periods/calculate',{preHandler:manage},async(req,reply)=>{const b=req.body||{},branchId=Number(b.branch_id);if(!Number.isSafeInteger(branchId)||branchId<1)return fail(reply,'VALIDATION','Выберите филиал');const[start,end]=payrollPeriod(b.month),periodMonth=monthKey(start);const result=await tx(async c=>{await branch(c,branchId);let period=(await c.query('SELECT * FROM payroll_periods WHERE branch_id=$1 AND period_month=$2::date FOR UPDATE',[branchId,periodMonth])).rows[0];if(!period)period=(await c.query(`INSERT INTO payroll_periods(branch_id,period_month,status,created_by) VALUES($1,$2,'DRAFT',$3) RETURNING *`,[branchId,periodMonth,req.user.id])).rows[0];if(['APPROVED','PAID','CLOSED'].includes(period.status))throw Object.assign(new Error('Утверждённый или закрытый период нельзя пересчитать'),{code:'PAYROLL_PERIOD_LOCKED',statusCode:409});const revision=Number(period.calculation_revision||0)+1;const calc=await calculatePayroll(c,start,end,{branchId});const fingerprint=hash({branch_id:branchId,period_month:periodMonth,revision,rows:calc.rows.map(x=>({id:x.id,rule:x.rule_version_id,salary:x.salary,kpi:x.kpi_result_id,adjustments:x.adjustments,jobs:x.jobs,revenue:x.revenue})),totals:calc.totals});for(const row of calc.rows){await c.query(`INSERT INTO payroll_accruals(period_id,revision,user_id,branch_id,rule_version_id,kpi_result_id,base_salary,order_commission,work_commission,gross_profit_commission,kpi_bonus,adjustments,total,inputs,fingerprint,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,[period.id,revision,row.id,branchId,row.rule_version_id,row.kpi_result_id,row.rule_active?n(row.base_salary):0,row.order_commission,row.work_commission,row.gross_profit_commission,row.kpi_bonus,row.adjustments,row.salary,{jobs:row.jobs,revenue:row.revenue,gross_profit:row.gross_profit,work_sales:row.work_sales,kpi_score:row.kpi_score,role:row.role,active:row.active},fingerprint,req.user.id])}period=(await c.query(`UPDATE payroll_periods SET status='CALCULATED',calculation_revision=$1,input_cutoff=clock_timestamp(),totals=$2,snapshot_hash=$3,calculated_by=$4,calculated_at=clock_timestamp(),updated_at=now() WHERE id=$5 RETURNING *`,[revision,calc.totals,fingerprint,req.user.id,period.id])).rows[0];await c.query(`INSERT INTO payroll_period_events(period_id,actor_id,action,details) VALUES($1,$2,'PAYROLL_CALCULATED',$3)`,[period.id,req.user.id,{revision,fingerprint,totals:calc.totals}]);return periodDetails(c,period.id)});return reply.code(201).send({data:result})});
+
+app.post('/api/v1/periods/:id/approve',{preHandler:owner},async(req,reply)=>{const result=await tx(async c=>{const p=(await c.query('SELECT * FROM payroll_periods WHERE id=$1 FOR UPDATE',[req.params.id])).rows[0];if(!p)throw Object.assign(new Error('Расчётный период не найден'),{code:'NOT_FOUND',statusCode:404});if(p.status==='APPROVED')return periodDetails(c,p.id);if(p.status!=='CALCULATED'||!p.calculation_revision)throw Object.assign(new Error('Сначала выполните расчёт периода'),{code:'PAYROLL_NOT_CALCULATED',statusCode:409});await c.query(`UPDATE payroll_periods SET status='APPROVED',approved_by=$1,approved_at=clock_timestamp(),updated_at=now() WHERE id=$2`,[req.user.id,p.id]);await c.query(`INSERT INTO payroll_period_events(period_id,actor_id,action,details) VALUES($1,$2,'PAYROLL_APPROVED',$3)`,[p.id,req.user.id,{revision:p.calculation_revision,snapshot_hash:p.snapshot_hash,totals:p.totals}]);return periodDetails(c,p.id)});return{data:result}});
+
+const close=async()=>{try{await pool.end()}finally{process.exit(0)}};process.on('SIGTERM',close);process.on('SIGINT',close);
 app.listen({port:Number(process.env.PORT||8083),host:'0.0.0.0'});
