@@ -21,6 +21,20 @@ export function assertOrderMutable(order) {
     throw accessError('ORDER_FINISHED','Заказ закрыт или отменён. Используйте документированную процедуру исправления.');
   }
 }
+
+async function hasTechnicalOrderAccess(db,user,order){
+  if(user.role==='ENGINEER'&&Number(order.engineer_id)===Number(user.id))return true;
+  if(user.role==='ENGINEER'){
+    const member=(await db.query(`SELECT 1 FROM request_participants WHERE request_id=$1 AND user_id=$2 AND participant_role='ENGINEER' AND removed_at IS NULL LIMIT 1`,[order.id,user.id])).rows[0];
+    return Boolean(member);
+  }
+  if(user.role==='TRAINEE'){
+    const member=(await db.query(`SELECT 1 FROM request_participants rp JOIN user_mentors um ON um.trainee_id=rp.user_id AND um.mentor_id=rp.mentor_id WHERE rp.request_id=$1 AND rp.user_id=$2 AND rp.participant_role='TRAINEE' AND rp.removed_at IS NULL LIMIT 1`,[order.id,user.id])).rows[0];
+    return Boolean(member);
+  }
+  return false;
+}
+
 export async function requireOrder(db, user, requestId, {mutable=false, lock=false}={}) {
   const id = Number(requestId);
   if (!Number.isSafeInteger(id) || id < 1) throw accessError('VALIDATION','Некорректный номер заказа',422);
@@ -28,7 +42,7 @@ export async function requireOrder(db, user, requestId, {mutable=false, lock=fal
   if (!order || order.deleted_at) throw accessError('NOT_FOUND','Заказ не найден',404);
   if (user) {
     if (!isKnownRole(user.role)) throw accessError('FORBIDDEN','Роль пользователя не поддерживается',403);
-    if (isAssignedOnly(user.role) && Number(order.engineer_id) !== Number(user.id)) {
+    if (isAssignedOnly(user.role) && !await hasTechnicalOrderAccess(db,user,order)) {
       throw accessError('FORBIDDEN','Нет доступа к этому заказу',403);
     }
     if (!isAssignedOnly(user.role) && !canAccessAllOrders(user.role)) {
