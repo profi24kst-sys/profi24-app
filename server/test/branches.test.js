@@ -66,8 +66,10 @@ test('cash shift is branch-bound, single-open and immutable after close',async()
   const {db,query,pool}=await harness();
   try{
     await migrateCore(pool);
+    const owner=(await query("INSERT INTO users(name,email,password_hash,role) VALUES('Cash Owner','cash-owner@test.invalid','unused','OWNER') RETURNING id")).rows[0];
     const manager=(await query("INSERT INTO users(name,email,password_hash,role) VALUES('Cash Manager','cash-manager@test.invalid','unused','MANAGER') RETURNING id,primary_branch_id")).rows[0];
-    const account=(await query("INSERT INTO finance_accounts(name,type,responsible_id,created_by) VALUES('Касса менеджера','CASH',$1,$1) RETURNING id,branch_id",[manager.id])).rows[0];
+    await query("SELECT set_config('app.finance_actor',$1,false)",[String(owner.id)]);
+    const account=(await query("INSERT INTO finance_accounts(name,type,responsible_id,created_by) VALUES('Касса менеджера','CASH',$1,$2) RETURNING id,branch_id",[manager.id,owner.id])).rows[0];
     assert.equal(Number(account.branch_id),Number(manager.primary_branch_id));
 
     const shift=(await query("INSERT INTO finance_cash_shifts(account_id,branch_id,opening_balance,opened_by,opening_note) VALUES($1,$2,10000,$3,'Открытие') RETURNING *",[account.id,manager.primary_branch_id,manager.id])).rows[0];
