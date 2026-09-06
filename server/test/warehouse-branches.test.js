@@ -23,13 +23,20 @@ test('склад запрещает скрытое перемещение меж
     const otherOrder=(await query("INSERT INTO requests(number,customer_id,branch_id,status,complaint) VALUES('WH-OTHER',$1,$2,'REPAIR','Test') RETURNING id",[customer,other])).rows[0].id;
     const item=(await query("INSERT INTO warehouse_items(branch_id,sku,name,quantity,purchase_price) VALUES($1,'WH-SKU','Компрессор',3,1000) RETURNING id",[kst])).rows[0].id;
 
-    await assert.rejects(
-      query("INSERT INTO warehouse_movements(item_id,movement_type,quantity,engineer_id,created_by) VALUES($1,'ISSUE',1,$2,$3)",[item,engineer,owner]),
-      error=>error.code==='P2403'
-    );
-    await query('INSERT INTO user_branches(user_id,branch_id,is_primary) VALUES($1,$2,false)',[engineer,kst]);
+    // Новый сотрудник автоматически состоит в своём основном филиале KST, поэтому выдача с KST допустима.
     const movement=(await query("INSERT INTO warehouse_movements(item_id,movement_type,quantity,engineer_id,created_by) VALUES($1,'ISSUE',1,$2,$3) RETURNING id",[item,engineer,owner])).rows[0].id;
 
+    // Но материальная ответственность другого филиала без membership запрещена.
+    const otherItem=(await query("INSERT INTO warehouse_items(branch_id,sku,name,quantity,purchase_price) VALUES($1,'WH2-SKU','Компрессор WH2',2,1000) RETURNING id",[other])).rows[0].id;
+    await assert.rejects(
+      query("INSERT INTO warehouse_movements(item_id,movement_type,quantity,engineer_id,created_by) VALUES($1,'ISSUE',1,$2,$3)",[otherItem,engineer,owner]),
+      error=>error.code==='P2403'
+    );
+    await query('INSERT INTO user_branches(user_id,branch_id,is_primary) VALUES($1,$2,false)',[engineer,other]);
+    const otherMovement=(await query("INSERT INTO warehouse_movements(item_id,movement_type,quantity,engineer_id,created_by) VALUES($1,'ISSUE',1,$2,$3) RETURNING id",[otherItem,engineer,owner])).rows[0].id;
+    assert.ok(otherMovement);
+
+    // Нельзя установить KST-запчасть в заказ другого филиала.
     await assert.rejects(
       query("INSERT INTO warehouse_movements(item_id,movement_type,quantity,engineer_id,request_id,created_by) VALUES($1,'INSTALL',1,$2,$3,$4)",[item,engineer,otherOrder,owner]),
       error=>error.code==='P2403'
