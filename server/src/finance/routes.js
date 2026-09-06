@@ -31,7 +31,7 @@ export async function financeRoutes(app,pool) {
     return Boolean((await c.query('SELECT 1 FROM user_branches WHERE user_id=$1 AND branch_id=$2',[userId,branchId])).rows[0]);
   };
   app.get('/health',async()=>{await q('SELECT 1');return {ok:true,service:'profi24-finance',version:'2.2-branches'};});
-  app.get('/api/v1/accounts',{preHandler:auth},async req=>({data:(await q(`SELECT a.*,u.name responsible_name,b.code branch_code,b.name branch_name FROM finance_account_balances a LEFT JOIN users u ON u.id=a.responsible_id JOIN branches b ON b.id=a.branch_id WHERE ${allowedSql} ORDER BY a.is_active DESC,b.name,a.id`,[req.user.role,req.user.id])).rows}));
+  app.get('/api/v1/accounts',{preHandler:auth},async req=>({data:(await q(`SELECT a.*,fa.branch_id,u.name responsible_name,b.code branch_code,b.name branch_name FROM finance_account_balances a JOIN finance_accounts fa ON fa.id=a.id LEFT JOIN users u ON u.id=a.responsible_id JOIN branches b ON b.id=fa.branch_id WHERE ${allowedSql} ORDER BY a.is_active DESC,b.name,a.id`,[req.user.role,req.user.id])).rows}));
   app.get('/api/v1/categories',{preHandler:auth},async()=>({data:(await q('SELECT * FROM finance_categories ORDER BY type,name')).rows}));
   app.get('/api/v1/responsibles',{preHandler:owner},async()=>({data:(await q('SELECT id,name,role,active FROM users ORDER BY active DESC,name')).rows}));
   app.get('/api/v1/branches',{preHandler:owner},async()=>({data:(await q('SELECT id,code,name,address,timezone FROM branches WHERE active=true ORDER BY name')).rows}));
