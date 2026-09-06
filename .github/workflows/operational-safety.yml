@@ -212,9 +212,17 @@ jobs:
       - name: Login test users
         run: |
           login(){ curl -fsS -X POST http://localhost:5173/api/v1/auth/login -H 'Content-Type: application/json' -d "$1" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(JSON.parse(s).data.access_token))"; }
-          echo "OWNER_TOKEN=$(login '{\"email\":\"attachment-owner@test.invalid\",\"password\":\"AttachmentOwner2026Kst9\"}')" >> "$GITHUB_ENV"
-          echo "TRAINEE_TOKEN=$(login '{\"email\":\"attachment-trainee@test.invalid\",\"password\":\"AttachmentTrainee2026Kst9\"}')" >> "$GITHUB_ENV"
-          echo "ORDER_ID=$(docker compose exec -T db psql -U profi24 -d profi24 -Atqc \"SELECT id FROM requests WHERE number='FILE-SEC-1'\")" >> "$GITHUB_ENV"
+          OWNER_TOKEN=$(login '{"email":"attachment-owner@test.invalid","password":"AttachmentOwner2026Kst9"}')
+          TRAINEE_TOKEN=$(login '{"email":"attachment-trainee@test.invalid","password":"AttachmentTrainee2026Kst9"}')
+          ORDER_ID=$(docker compose exec -T db psql -U profi24 -d profi24 -Atqc "SELECT id FROM requests WHERE number='FILE-SEC-1'")
+          test -n "$OWNER_TOKEN"
+          test -n "$TRAINEE_TOKEN"
+          test -n "$ORDER_ID"
+          {
+            echo "OWNER_TOKEN=$OWNER_TOKEN"
+            echo "TRAINEE_TOKEN=$TRAINEE_TOKEN"
+            echo "ORDER_ID=$ORDER_ID"
+          } >> "$GITHUB_ENV"
       - name: Accept a real JPEG and return hardened download headers
         run: |
           JPEG_B64=$(printf '\377\330\377\340\000\000\000\000' | base64 -w0)
