@@ -16,6 +16,16 @@ check(){
   fi
 }
 
+check_header(){
+  name=$1; pattern=$2
+  if curl -fsSI --max-time "$CURL_TIMEOUT" "$BASE_URL/" | tr -d '\r' | grep -Eqi "$pattern"; then
+    echo "acceptance_ok header=$name"
+  else
+    echo "acceptance_fail header=$name" >&2
+    failures=$((failures+1))
+  fi
+}
+
 check api /health
 check warehouse /warehouse-health
 check procurement /procurement-health
@@ -45,6 +55,11 @@ check ordertasks /order-tasks-health
 check branchadmin /branch-health
 check cashregister /cash-health
 check lifecycle /lifecycle-health
+
+check_header x_content_type_options '^x-content-type-options: nosniff$'
+check_header x_frame_options '^x-frame-options: DENY$'
+check_header referrer_policy '^referrer-policy: no-referrer$'
+check_header content_security_policy '^content-security-policy: .*frame-ancestors '\''none'\''.*object-src '\''none'\'''
 
 if [ -n "${ACCEPTANCE_TOKEN:-}" ]; then
   if curl -fsS --max-time "$CURL_TIMEOUT" "$BASE_URL/api/v1/me" -H "Authorization: Bearer $ACCEPTANCE_TOKEN" | grep -q '"data"'; then
