@@ -20,10 +20,12 @@ test('матрица содержит ровно шесть ролей из ТЗ
   assert.equal(isAssignedOnly('TRAINEE'),true);
 });
 
-test('permission layer разделяет операционные, финансовые и критические права',()=>{
+test('permission layer разделяет операционные, финансовые, филиальные и критические права',()=>{
   const P=PERMISSIONS;
   assert.equal(can('OWNER',P.ROLES_MANAGE),true);
+  assert.equal(can('OWNER',P.BRANCHES_MANAGE),true);
   assert.equal(can('SUPERVISOR',P.STAFF_MANAGE),true);
+  assert.equal(can('SUPERVISOR',P.BRANCHES_MANAGE),true);
   assert.equal(can('SUPERVISOR',P.ROLES_MANAGE),false);
   assert.equal(can('SUPERVISOR',P.FINANCE_ADJUST),false);
   assert.equal(can('SUPERVISOR',P.PROCUREMENT_MANAGE),true);
@@ -31,16 +33,22 @@ test('permission layer разделяет операционные, финанс
   assert.equal(can('ACCOUNTANT',P.ORDERS_TECHNICAL),false);
   assert.equal(can('ACCOUNTANT',P.PROCUREMENT_VIEW),true);
   assert.equal(can('ACCOUNTANT',P.PROCUREMENT_MANAGE),false);
+  assert.equal(can('ACCOUNTANT',P.BRANCHES_VIEW),true);
+  assert.equal(can('ACCOUNTANT',P.BRANCHES_MANAGE),false);
   assert.equal(can('MANAGER',P.FINANCE_RECEIVE_PAYMENT),true);
   assert.equal(can('MANAGER',P.PAYROLL_VIEW),false);
   assert.equal(can('MANAGER',P.PROCUREMENT_MANAGE),true);
+  assert.equal(can('MANAGER',P.BRANCHES_VIEW),true);
+  assert.equal(can('MANAGER',P.BRANCHES_MANAGE),false);
   assert.equal(can('ENGINEER',P.ORDERS_TECHNICAL),true);
   assert.equal(can('ENGINEER',P.FINANCE_VIEW),false);
   assert.equal(can('ENGINEER',P.PROCUREMENT_VIEW),false);
+  assert.equal(can('ENGINEER',P.BRANCHES_VIEW),true);
   assert.equal(can('TRAINEE',P.ORDERS_NOTES),true);
   assert.equal(can('TRAINEE',P.ORDERS_TECHNICAL),false);
   assert.equal(can('TRAINEE',P.WAREHOUSE_VIEW),false);
   assert.equal(can('TRAINEE',P.PROCUREMENT_VIEW),false);
+  assert.equal(can('TRAINEE',P.BRANCHES_VIEW),true);
   assert.ok(permissionsForRole('OWNER').length>permissionsForRole('SUPERVISOR').length);
   assert.deepEqual(permissionsForRole('UNKNOWN'),[]);
 });
