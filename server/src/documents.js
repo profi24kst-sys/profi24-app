@@ -126,7 +126,7 @@ app.post('/api/v1/requests/:id/signatures',async(req,r)=>{
   let decoded,meta;
   try{
     decoded=decodeDataUrl(b.signature_data,{maxEncodedChars:3*1024*1024});
-    meta=inspectUpload({buffer:decoded.buffer,declaredMime:decoded.declaredMime,originalName:'signature.png',maxBytes:2*1024*1024});
+    meta=inspectUpload({buffer:decoded.buffer,declaredMime:decoded.declaredMime,originalName:'signature',maxBytes:2*1024*1024});
     if(!['image/jpeg','image/png','image/webp'].includes(meta.mime))throw fileSecurityError('UNSUPPORTED_SIGNATURE_TYPE','Подпись должна быть PNG, JPEG или WebP');
   }catch(error){return sendSecurityError(r,error);}
   const signatureData=`data:${meta.mime};base64,${decoded.buffer.toString('base64')}`;
