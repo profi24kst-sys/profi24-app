@@ -12,13 +12,13 @@ export function installFinanceRbacGuard(app,pool){
     if(!user||!isKnownRole(user.role))return deny(reply,'Пользователь неактивен или роль не поддерживается');
     req.user=user;
 
-    // Order-scoped finance workflows retain their stricter request/account checks in routes/service.
+    // Order-scoped finance workflows retain stricter request/account checks in routes/service.
     // This keeps assigned-engineer purchase/expense flows possible without exposing the global ledger.
     if(route.includes('/requests/:'))return;
 
     let permission;
     if(req.method==='GET'||req.method==='HEAD'){
-      permission=route==='/api/v1/audit'?P.FINANCE_AUDIT:P.FINANCE_VIEW;
+      permission=route.startsWith('/api/v1/audit')?P.FINANCE_AUDIT:P.FINANCE_VIEW;
     }else{
       permission=P.FINANCE_ADJUST;
     }
