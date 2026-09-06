@@ -2,6 +2,7 @@ import {requireStock,consumeReservations} from './stock-service.js';
 import {requireOrder} from './access.js';
 import {recalculateOrder} from './order-totals.js';
 import {authenticate,installOrderAccess} from './access.js';
+import {can,PERMISSIONS} from './rbac.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
@@ -62,7 +63,11 @@ for(const s of schema)await q(s);
 await q(`CREATE TABLE IF NOT EXISTS stock_reservations(id SERIAL PRIMARY KEY,item_id INT REFERENCES warehouse_items(id),request_id INT REFERENCES requests(id),quantity NUMERIC(14,3) NOT NULL,status TEXT DEFAULT 'ACTIVE',created_by INT REFERENCES users(id),created_at TIMESTAMPTZ DEFAULT now(),released_at TIMESTAMPTZ)`);
 
 const auth=async(req,reply)=>{if(!await authenticate(req,reply,pool))return;};
-const staff=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!['OWNER','MANAGER'].includes(req.user.role))return fail(reply,'FORBIDDEN','Склад доступен владельцу и менеджерам',403)};
+const permit=permission=>async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,permission))return fail(reply,'FORBIDDEN','Недостаточно прав для этой операции склада',403)};
+const warehouseView=permit(PERMISSIONS.WAREHOUSE_VIEW);
+const warehouseReceive=permit(PERMISSIONS.WAREHOUSE_RECEIVE);
+const warehouseIssue=permit(PERMISSIONS.WAREHOUSE_ISSUE);
+const warehouseWriteoff=permit(PERMISSIONS.WAREHOUSE_WRITEOFF);
 
 async function engineerBalance(c,itemId,engineerId){
  const r=await c.query(`SELECT COALESCE(sum(CASE WHEN movement_type='ISSUE' THEN quantity WHEN movement_type IN ('RETURN','INSTALL') THEN -quantity ELSE 0 END),0)::numeric balance FROM warehouse_movements WHERE item_id=$1 AND engineer_id=$2`,[itemId,engineerId]);
@@ -70,38 +75,37 @@ async function engineerBalance(c,itemId,engineerId){
 }
 async function recalcRequest(c,id){return recalculateOrder(c,id)}
 
-
 installOrderAccess(app,pool,'warehouse');
-app.get('/health',async()=>{await q('SELECT 1');return {ok:true,service:'profi24-warehouse',version:'1.0.0'}});
+app.get('/health',async()=>{await q('SELECT 1');return {ok:true,service:'profi24-warehouse',version:'1.1-rbac'}});
 
-app.get('/api/v1/stock',{preHandler:staff},async req=>{
+app.get('/api/v1/stock',{preHandler:warehouseView},async req=>{
  const search=String(req.query?.search||'').trim();const p=[];let where='WHERE active=true';
  if(search){p.push(`%${search}%`);where+=` AND (name ILIKE $1 OR COALESCE(sku,'') ILIKE $1 OR COALESCE(oem_code,'') ILIKE $1 OR COALESCE(supplier,'') ILIKE $1)`}
  const rows=(await q(`SELECT *,CASE WHEN quantity<=min_quantity THEN true ELSE false END low_stock,(quantity*purchase_price)::numeric stock_cost FROM warehouse_items ${where} ORDER BY low_stock DESC,name LIMIT 1000`,p)).rows;
  return {data:rows};
 });
 
-app.get('/api/v1/metrics',{preHandler:staff},async()=>{
+app.get('/api/v1/metrics',{preHandler:warehouseView},async()=>{
  const s=(await q(`SELECT count(*) FILTER(WHERE active=true)::int positions,COALESCE(sum(quantity),0)::numeric units,COALESCE(sum(quantity*purchase_price),0)::numeric stock_cost,count(*) FILTER(WHERE active=true AND quantity<=min_quantity)::int low_stock FROM warehouse_items`)).rows[0];
  const issued=(await q(`SELECT COALESCE(sum(CASE WHEN movement_type='ISSUE' THEN quantity WHEN movement_type IN ('RETURN','INSTALL') THEN -quantity ELSE 0 END),0)::numeric issued_units FROM warehouse_movements`)).rows[0];
  return {data:{...s,...issued}};
 });
 
-app.post('/api/v1/items',{preHandler:staff},async(req,reply)=>{
+app.post('/api/v1/items',{preHandler:warehouseReceive},async(req,reply)=>{
  const {sku,name,oem_code,supplier,purchase_price=0,sale_price=0,min_quantity=0,location,notes}=req.body||{};
  if(!name?.trim())return fail(reply,'VALIDATION','Укажите название запчасти');
  const r=await q(`INSERT INTO warehouse_items(sku,name,oem_code,supplier,purchase_price,sale_price,min_quantity,location,notes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,[sku?.trim()||null,name.trim(),oem_code?.trim()||null,supplier?.trim()||null,n(purchase_price),n(sale_price),n(min_quantity),location?.trim()||null,notes?.trim()||null]);
  return reply.code(201).send({data:r.rows[0]});
 });
 
-app.patch('/api/v1/items/:id',{preHandler:staff},async(req,reply)=>{
+app.patch('/api/v1/items/:id',{preHandler:warehouseReceive},async(req,reply)=>{
  const old=(await q('SELECT * FROM warehouse_items WHERE id=$1',[req.params.id])).rows[0];if(!old)return fail(reply,'NOT_FOUND','Позиция не найдена',404);
  const b={...old,...req.body};
  const r=await q(`UPDATE warehouse_items SET sku=$1,name=$2,oem_code=$3,supplier=$4,purchase_price=$5,sale_price=$6,min_quantity=$7,location=$8,notes=$9,active=$10,updated_at=now() WHERE id=$11 RETURNING *`,[b.sku||null,b.name,b.oem_code||null,b.supplier||null,n(b.purchase_price),n(b.sale_price),n(b.min_quantity),b.location||null,b.notes||null,b.active!==false,req.params.id]);
  return {data:r.rows[0]};
 });
 
-app.post('/api/v1/items/:id/receive',{preHandler:staff},async(req,reply)=>{
+app.post('/api/v1/items/:id/receive',{preHandler:warehouseReceive},async(req,reply)=>{
  const qty=n(req.body?.quantity);if(!Number.isFinite(qty)||qty<=0)return fail(reply,'VALIDATION','Количество должно быть больше 0');
  const result=await tx(async c=>{const item=(await c.query('SELECT * FROM warehouse_items WHERE id=$1 FOR UPDATE',[req.params.id])).rows[0];if(!item)throw new Error('Позиция не найдена');
  const unitCost=req.body?.purchase_price==null?n(item.purchase_price):n(req.body.purchase_price);const supplier=req.body?.supplier??item.supplier;
@@ -111,7 +115,7 @@ app.post('/api/v1/items/:id/receive',{preHandler:staff},async(req,reply)=>{
  return {data:result};
 });
 
-app.post('/api/v1/items/:id/issue',{preHandler:staff},async(req,reply)=>{
+app.post('/api/v1/items/:id/issue',{preHandler:warehouseIssue},async(req,reply)=>{
  const qty=n(req.body?.quantity),engineerId=n(req.body?.engineer_id);if(!Number.isFinite(qty)||qty<=0||!engineerId)return fail(reply,'VALIDATION','Укажите количество и инженера');
  const result=await tx(async c=>{const item=(await c.query('SELECT * FROM warehouse_items WHERE id=$1 FOR UPDATE',[req.params.id])).rows[0];if(!item)throw new Error('Позиция не найдена');await requireStock(c,item,qty);
  const engineer=(await c.query("SELECT id FROM users WHERE id=$1 AND role='ENGINEER' AND active=true",[engineerId])).rows[0];if(!engineer)throw new Error('Инженер не найден');
@@ -119,14 +123,14 @@ app.post('/api/v1/items/:id/issue',{preHandler:staff},async(req,reply)=>{
  await c.query(`INSERT INTO warehouse_movements(item_id,movement_type,quantity,engineer_id,unit_cost,sale_price,comment,created_by) VALUES($1,'ISSUE',$2,$3,$4,$5,$6,$7)`,[item.id,qty,engineerId,item.purchase_price,item.sale_price,req.body?.comment||null,req.user.id]);return updated});return {data:result};
 });
 
-app.post('/api/v1/items/:id/return',{preHandler:staff},async(req,reply)=>{
+app.post('/api/v1/items/:id/return',{preHandler:warehouseIssue},async(req,reply)=>{
  const qty=n(req.body?.quantity),engineerId=n(req.body?.engineer_id);if(!Number.isFinite(qty)||qty<=0||!engineerId)return fail(reply,'VALIDATION','Укажите количество и инженера');
  const result=await tx(async c=>{const item=(await c.query('SELECT * FROM warehouse_items WHERE id=$1 FOR UPDATE',[req.params.id])).rows[0];if(!item)throw new Error('Позиция не найдена');const bal=await engineerBalance(c,item.id,engineerId);if(bal<qty)throw new Error(`У инженера числится только ${bal}`);
  const updated=(await c.query('UPDATE warehouse_items SET quantity=quantity+$1,updated_at=now() WHERE id=$2 RETURNING *',[qty,item.id])).rows[0];
  await c.query(`INSERT INTO warehouse_movements(item_id,movement_type,quantity,engineer_id,unit_cost,sale_price,comment,created_by) VALUES($1,'RETURN',$2,$3,$4,$5,$6,$7)`,[item.id,qty,engineerId,item.purchase_price,item.sale_price,req.body?.comment||null,req.user.id]);return updated});return {data:result};
 });
 
-app.post('/api/v1/items/:id/install',{preHandler:staff},async(req,reply)=>{
+app.post('/api/v1/items/:id/install',{preHandler:warehouseIssue},async(req,reply)=>{
  const qty=n(req.body?.quantity),requestId=n(req.body?.request_id),engineerId=req.body?.engineer_id?n(req.body.engineer_id):null;if(!Number.isFinite(qty)||qty<=0||!requestId)return fail(reply,'VALIDATION','Укажите количество и заказ');
  const result=await tx(async c=>{const item=(await c.query('SELECT * FROM warehouse_items WHERE id=$1 FOR UPDATE',[req.params.id])).rows[0];if(!item)throw new Error('Позиция не найдена');const request=await requireOrder(c,req.user,requestId,{mutable:true,lock:true});
  if(engineerId){const bal=await engineerBalance(c,item.id,engineerId);if(bal<qty)throw new Error(`У инженера числится только ${bal}`)}else{await requireStock(c,item,qty,requestId);await consumeReservations(c,requestId,item.id,qty);await c.query('UPDATE warehouse_items SET quantity=quantity-$1,updated_at=now() WHERE id=$2',[qty,item.id])}
@@ -136,17 +140,17 @@ app.post('/api/v1/items/:id/install',{preHandler:staff},async(req,reply)=>{
  await recalcRequest(c,requestId);await c.query('INSERT INTO request_history(request_id,user_id,action,details) VALUES($1,$2,$3,$4)',[requestId,req.user.id,'WAREHOUSE_PART_INSTALLED',{warehouse_item_id:item.id,name:item.name,qty,engineer_id:engineerId}]);return {request_number:request.number,item_id:item.id,quantity:qty}});return {data:result};
 });
 
-app.post('/api/v1/items/:id/write-off',{preHandler:staff},async(req,reply)=>{
+app.post('/api/v1/items/:id/write-off',{preHandler:warehouseWriteoff},async(req,reply)=>{
  const qty=n(req.body?.quantity);if(!Number.isFinite(qty)||qty<=0)return fail(reply,'VALIDATION','Количество должно быть больше 0');
  const result=await tx(async c=>{const item=(await c.query('SELECT * FROM warehouse_items WHERE id=$1 FOR UPDATE',[req.params.id])).rows[0];if(!item)throw new Error('Позиция не найдена');await requireStock(c,item,qty);const updated=(await c.query('UPDATE warehouse_items SET quantity=quantity-$1,updated_at=now() WHERE id=$2 RETURNING *',[qty,item.id])).rows[0];await c.query(`INSERT INTO warehouse_movements(item_id,movement_type,quantity,unit_cost,comment,created_by) VALUES($1,'WRITE_OFF',$2,$3,$4,$5)`,[item.id,qty,item.purchase_price,req.body?.comment||null,req.user.id]);return updated});return {data:result};
 });
 
-app.get('/api/v1/movements',{preHandler:staff},async req=>{
+app.get('/api/v1/movements',{preHandler:warehouseView},async req=>{
  const limit=Math.min(500,Math.max(1,n(req.query?.limit)||200));
  const rows=(await q(`SELECT m.*,i.name item_name,i.sku,i.oem_code,u.name engineer_name,r.number request_number,cb.name created_by_name FROM warehouse_movements m JOIN warehouse_items i ON i.id=m.item_id LEFT JOIN users u ON u.id=m.engineer_id LEFT JOIN requests r ON r.id=m.request_id LEFT JOIN users cb ON cb.id=m.created_by ORDER BY m.created_at DESC LIMIT $1`,[limit])).rows;return {data:rows};
 });
 
-app.get('/api/v1/engineer-stock',{preHandler:staff},async()=>{
+app.get('/api/v1/engineer-stock',{preHandler:warehouseView},async()=>{
  const rows=(await q(`SELECT m.item_id,i.name,i.sku,i.oem_code,m.engineer_id,u.name engineer_name,COALESCE(sum(CASE WHEN m.movement_type='ISSUE' THEN m.quantity WHEN m.movement_type IN ('RETURN','INSTALL') THEN -m.quantity ELSE 0 END),0)::numeric quantity,i.purchase_price,i.sale_price FROM warehouse_movements m JOIN warehouse_items i ON i.id=m.item_id JOIN users u ON u.id=m.engineer_id WHERE m.engineer_id IS NOT NULL GROUP BY m.item_id,i.name,i.sku,i.oem_code,m.engineer_id,u.name,i.purchase_price,i.sale_price HAVING COALESCE(sum(CASE WHEN m.movement_type='ISSUE' THEN m.quantity WHEN m.movement_type IN ('RETURN','INSTALL') THEN -m.quantity ELSE 0 END),0)>0 ORDER BY u.name,i.name`)).rows;return {data:rows};
 });
 
