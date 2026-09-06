@@ -7,6 +7,32 @@ on:
     branches: [main, 'feature/**', 'fix/**']
 
 jobs:
+  dependency_upgrade_preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Generate security-upgraded backend dependency lockfile
+        working-directory: server
+        run: npm install --save fastify@^5.12.2 @fastify/jwt@^10.2.2
+      - name: Reject critical production dependency vulnerabilities
+        working-directory: server
+        run: npm audit --omit=dev --audit-level=critical
+      - name: Show resolved security-sensitive versions
+        working-directory: server
+        run: npm ls fastify @fastify/jwt fast-jwt --depth=2
+      - name: Upload audited backend manifests
+        uses: actions/upload-artifact@v4
+        with:
+          name: audited-server-dependencies
+          path: |
+            server/package.json
+            server/package-lock.json
+          if-no-files-found: error
+          retention-days: 1
+
   validate:
     runs-on: ubuntu-latest
     steps:
