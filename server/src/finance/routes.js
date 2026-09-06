@@ -24,10 +24,16 @@ export async function financeRoutes(app,pool) {
     if(active.length>1)reject('Выберите филиал денежного счёта','BRANCH_REQUIRED',422);
     reject('Нет активного филиала для денежного счёта','BRANCH_NOT_FOUND',422);
   };
+  const responsibleBelongs=async(c,userId,branchId)=>{
+    if(!userId)return true;
+    const table=(await c.query("SELECT to_regclass('public.user_branches') name")).rows[0]?.name;
+    if(!table)return true;
+    return Boolean((await c.query('SELECT 1 FROM user_branches WHERE user_id=$1 AND branch_id=$2',[userId,branchId])).rows[0]);
+  };
   app.get('/health',async()=>{await q('SELECT 1');return {ok:true,service:'profi24-finance',version:'2.2-branches'};});
   app.get('/api/v1/accounts',{preHandler:auth},async req=>({data:(await q(`SELECT a.*,u.name responsible_name,b.code branch_code,b.name branch_name FROM finance_account_balances a LEFT JOIN users u ON u.id=a.responsible_id JOIN branches b ON b.id=a.branch_id WHERE ${allowedSql} ORDER BY a.is_active DESC,b.name,a.id`,[req.user.role,req.user.id])).rows}));
   app.get('/api/v1/categories',{preHandler:auth},async()=>({data:(await q('SELECT * FROM finance_categories ORDER BY type,name')).rows}));
-  app.get('/api/v1/responsibles',{preHandler:owner},async()=>({data:(await q('SELECT id,name,role,active,primary_branch_id FROM users ORDER BY active DESC,name')).rows}));
+  app.get('/api/v1/responsibles',{preHandler:owner},async()=>({data:(await q('SELECT id,name,role,active FROM users ORDER BY active DESC,name')).rows}));
   app.get('/api/v1/branches',{preHandler:owner},async()=>({data:(await q('SELECT id,code,name,address,timezone FROM branches WHERE active=true ORDER BY name')).rows}));
 
   app.post('/api/v1/accounts',{preHandler:owner},async(req,reply)=>{
@@ -39,7 +45,7 @@ export async function financeRoutes(app,pool) {
       const previous=(await c.query('SELECT * FROM finance_accounts WHERE creation_key=$1',[key])).rows[0];
       if(previous){if(previous.creation_fingerprint!==digest)reject('Номер создания счёта уже использован','IDEMPOTENCY_CONFLICT',409);return previous;}
       const branch=await resolveBranch(c,b.branch_id);
-      if(responsible&&!(await c.query('SELECT 1 FROM user_branches WHERE user_id=$1 AND branch_id=$2',[responsible,branch])).rows[0])reject('Ответственный сотрудник не относится к выбранному филиалу','RESPONSIBLE_BRANCH_MISMATCH',422);
+      if(responsible&&!await responsibleBelongs(c,responsible,branch))reject('Ответственный сотрудник не относится к выбранному филиалу','RESPONSIBLE_BRANCH_MISMATCH',422);
       const a=(await c.query(`INSERT INTO finance_accounts(name,type,branch_id,responsible_id,comment,created_by,creation_key,creation_fingerprint) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,[name,type,branch,responsible,String(b.comment||'').slice(0,1000),req.user.id,key,digest])).rows[0];
       if(Number(initial)!==0)await insertEntry(c,req.user,{account_id:a.id,type:initial.startsWith('-')?'EXPENSE':'INCOME',kind:'OPENING',category:'OPENING',amount:initial.replace('-',''),comment:text(b.initial_reason,'Основание начального остатка'),document_reference:b.document_reference||null,idempotency_key:key,metadata:{fingerprint:digest}});
       return a;
@@ -55,7 +61,7 @@ export async function financeRoutes(app,pool) {
       if(typeof merged.is_active!=='boolean')reject('Некорректная активность счёта');
       const branch=await resolveBranch(c,merged.branch_id);
       const responsible=merged.responsible_id?id(merged.responsible_id,'Ответственный'):null;
-      if(responsible&&!(await c.query('SELECT 1 FROM user_branches WHERE user_id=$1 AND branch_id=$2',[responsible,branch])).rows[0])reject('Ответственный сотрудник не относится к выбранному филиалу','RESPONSIBLE_BRANCH_MISMATCH',422);
+      if(responsible&&!await responsibleBelongs(c,responsible,branch))reject('Ответственный сотрудник не относится к выбранному филиалу','RESPONSIBLE_BRANCH_MISMATCH',422);
       return (await c.query(`UPDATE finance_accounts SET name=$1,type=$2,branch_id=$3,responsible_id=$4,comment=$5,is_active=$6,updated_at=now() WHERE id=$7 RETURNING *`,[
         text(merged.name,'Название',120),text(merged.type,'Тип'),branch,responsible,String(merged.comment||'').slice(0,1000),merged.is_active,a.id])).rows[0];
     })};
