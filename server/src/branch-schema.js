@@ -77,6 +77,23 @@ export const branchStatements=[
    END $$ LANGUAGE plpgsql`,
   `DROP TRIGGER IF EXISTS trg_branch_guard_request ON requests`,
   `CREATE TRIGGER trg_branch_guard_request BEFORE INSERT OR UPDATE OF branch_id,engineer_id,manager_id ON requests FOR EACH ROW EXECUTE FUNCTION branch_guard_request()`,
+  `CREATE TABLE IF NOT EXISTS branch_audit_log(
+    id BIGSERIAL PRIMARY KEY,
+    branch_id INT REFERENCES branches(id),
+    user_id INT REFERENCES users(id),
+    actor_id INT REFERENCES users(id),
+    action TEXT NOT NULL,
+    details JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_branch_audit_branch ON branch_audit_log(branch_id,id DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_branch_audit_user ON branch_audit_log(user_id,id DESC)`,
+  `CREATE OR REPLACE FUNCTION branch_audit_immutable() RETURNS trigger AS $$
+   BEGIN
+     RAISE EXCEPTION 'Журнал филиалов и ответственности нельзя изменять или удалять' USING ERRCODE='P2401';
+   END $$ LANGUAGE plpgsql`,
+  `DROP TRIGGER IF EXISTS trg_branch_audit_immutable ON branch_audit_log`,
+  `CREATE TRIGGER trg_branch_audit_immutable BEFORE UPDATE OR DELETE ON branch_audit_log FOR EACH ROW EXECUTE FUNCTION branch_audit_immutable()`,
   `CREATE INDEX IF NOT EXISTS idx_requests_branch_status ON requests(branch_id,status)`,
   `CREATE INDEX IF NOT EXISTS idx_user_branches_branch ON user_branches(branch_id,user_id)`
 ];
