@@ -5,6 +5,8 @@ import jwt from '@fastify/jwt';
 import pg from 'pg';
 import {authenticate,installOrderAccess,requireOrder} from './access.js';
 import {can,PERMISSIONS} from './rbac.js';
+import {cancelOrder} from './order-financial-actions.js';
+import {fingerprint,operationKey} from './finance/service.js';
 
 const app=Fastify({logger:true,bodyLimit:4*1024*1024});
 await app.register(cors,{origin:(process.env.CORS_ORIGIN||'http://localhost:5173').split(',').map(x=>x.trim()),credentials:true});
@@ -25,9 +27,10 @@ const dateValue=v=>{if(!v)return null;const d=new Date(v);return Number.isNaN(d.
 const auth=async(req,reply)=>{if(!await authenticate(req,reply,pool))return;};
 const office=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,PERMISSIONS.ORDERS_EDIT))return fail(reply,'FORBIDDEN','Операционное изменение доступно собственнику, управляющему или менеджеру',403)};
 const operations=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,PERMISSIONS.OPERATIONS_MANAGE))return fail(reply,'FORBIDDEN','Недостаточно операционных прав',403)};
+const owner=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(req.user.role!=='OWNER')return fail(reply,'FORBIDDEN','Возврат техники без ремонта подтверждает только собственник',403)};
 
 installOrderAccess(app,pool,'lifecycle');
-app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'profi24-order-lifecycle',version:'2.0.0'}});
+app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'profi24-order-lifecycle',version:'2.1.0'}});
 
 async function sameBranchUser(c,userId,branchId,{engineer=false}={}){
   if(!userId)return null;
@@ -35,13 +38,14 @@ async function sameBranchUser(c,userId,branchId,{engineer=false}={}){
   return (await c.query(`SELECT u.id,u.name,u.role FROM users u JOIN user_branches ub ON ub.user_id=u.id WHERE u.id=$1 AND u.active=true AND ub.branch_id=$2 ${role} LIMIT 1`,[userId,branchId])).rows[0]||null;
 }
 async function lifecycleSnapshot(c,requestId){
-  const [holds,visits,outgoing,incoming]=await Promise.all([
+  const [holds,visits,outgoing,incoming,returned]=await Promise.all([
     c.query(`SELECT h.*,u.name responsible_name,s.name started_by_name,r.name resumed_by_name FROM request_holds h LEFT JOIN users u ON u.id=h.responsible_id LEFT JOIN users s ON s.id=h.started_by LEFT JOIN users r ON r.id=h.resumed_by WHERE h.request_id=$1 ORDER BY h.id DESC`,[requestId]),
     c.query(`SELECT v.*,e.name engineer_name,cb.name created_by_name,done.name completed_by_name FROM request_visit_attempts v LEFT JOIN users e ON e.id=v.engineer_id LEFT JOIN users cb ON cb.id=v.created_by LEFT JOIN users done ON done.id=v.completed_by WHERE v.request_id=$1 ORDER BY v.attempt_no DESC`,[requestId]),
     c.query(`SELECT l.*,r.number child_number,r.status child_status,r.engineer_id,r.scheduled_at FROM request_order_links l JOIN requests r ON r.id=l.child_request_id WHERE l.parent_request_id=$1 ORDER BY l.id DESC`,[requestId]),
-    c.query(`SELECT l.*,r.number parent_number,r.status parent_status FROM request_order_links l JOIN requests r ON r.id=l.parent_request_id WHERE l.child_request_id=$1 ORDER BY l.id DESC`,[requestId])
+    c.query(`SELECT l.*,r.number parent_number,r.status parent_status FROM request_order_links l JOIN requests r ON r.id=l.parent_request_id WHERE l.child_request_id=$1 ORDER BY l.id DESC`,[requestId]),
+    c.query(`SELECT rr.*,u.name created_by_name FROM request_returns_without_repair rr LEFT JOIN users u ON u.id=rr.created_by WHERE rr.request_id=$1`,[requestId])
   ]);
-  return {active_hold:holds.rows.find(x=>!x.resumed_at)||null,holds:holds.rows,visits:visits.rows,links:outgoing.rows,parent_links:incoming.rows};
+  return {active_hold:holds.rows.find(x=>!x.resumed_at)||null,holds:holds.rows,visits:visits.rows,links:outgoing.rows,parent_links:incoming.rows,return_without_repair:returned.rows[0]||null};
 }
 async function createSystemHold(c,{order,user,type,reason,responsibleId=null,pauseSla=true,expected=null}){
   const active=(await c.query('SELECT id FROM request_holds WHERE request_id=$1 AND resumed_at IS NULL LIMIT 1',[order.id])).rows[0];
@@ -175,6 +179,32 @@ app.post('/api/v1/requests/:id/rework',{preHandler:office},async(req,reply)=>{
     const link=(await c.query('INSERT INTO request_order_links(parent_request_id,child_request_id,link_type,reason,created_by) VALUES($1,$2,$3,$4,$5) RETURNING *',[parent.id,child.id,type,reason,req.user.id])).rows[0];
     await c.query(`INSERT INTO request_history(request_id,user_id,action,details) VALUES($1,$2,'REWORK_CHILD_CREATED',$3),($4,$2,'REWORK_CREATED_FROM_PARENT',$5)`,[parent.id,req.user.id,{link_id:link.id,child_request_id:child.id,child_number:child.number,link_type:type,reason},child.id,{link_id:link.id,parent_request_id:parent.id,parent_number:parent.number,link_type:type,reason}]);
     return{link,request:child};
+  });
+  return reply.code(201).send({data:result});
+});
+
+app.post('/api/v1/requests/:id/return-without-repair',{preHandler:owner},async(req,reply)=>{
+  const reason=text(req.body?.reason),documentReference=text(req.body?.document_reference,200),handoverReference=text(req.body?.handover_reference,200);
+  if(reason.length<3)return fail(reply,'VALIDATION','Опишите причину возврата без ремонта');
+  if(documentReference.length<3)return fail(reply,'VALIDATION','Укажите акт или документ-основание');
+  if(handoverReference.length<3)return fail(reply,'VALIDATION','Укажите подтверждение передачи техники клиенту');
+  const key=operationKey(req),digest=fingerprint({request:req.params.id,...(req.body||{})});
+  const result=await tx(async c=>{
+    const order=await requireOrder(c,req.user,req.params.id,{mutable:true,lock:true});
+    const replay=(await c.query('SELECT * FROM request_returns_without_repair WHERE idempotency_key=$1',[key])).rows[0];
+    if(replay){
+      if(replay.request_fingerprint!==digest)throw Object.assign(new Error('Номер операции возврата уже использован'),{code:'IDEMPOTENCY_CONFLICT',statusCode:409});
+      const request=(await c.query('SELECT * FROM requests WHERE id=$1',[replay.request_id])).rows[0];
+      const cancellation=(await c.query('SELECT * FROM request_cancellations WHERE id=$1',[replay.cancellation_id])).rows[0];
+      return{request,cancellation,document:replay,replayed:true};
+    }
+    const previous=(await c.query('SELECT * FROM request_returns_without_repair WHERE request_id=$1',[order.id])).rows[0];
+    if(previous)throw Object.assign(new Error('Возврат без ремонта уже оформлен'),{code:'ALREADY_RETURNED_WITHOUT_REPAIR',statusCode:409});
+    const cancelled=await cancelOrder(c,{requestId:order.id,user:req.user,body:{category:'UNREPAIRABLE',reason,document_reference:documentReference,acknowledge_expenses:req.body?.acknowledge_expenses===true},key,digest});
+    const document=(await c.query(`INSERT INTO request_returns_without_repair(request_id,cancellation_id,reason,document_reference,handover_reference,expense_amount,created_by,idempotency_key,request_fingerprint)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,[order.id,cancelled.cancellation?.id||null,reason,documentReference,handoverReference,cancelled.cancellation?.expense_amount||0,req.user.id,key,digest])).rows[0];
+    await c.query(`INSERT INTO request_history(request_id,user_id,action,details) VALUES($1,$2,'RETURNED_WITHOUT_REPAIR',$3)`,[order.id,req.user.id,{return_document_id:document.id,cancellation_id:document.cancellation_id,reason,document_reference:documentReference,handover_reference:handoverReference,expense_amount:document.expense_amount}]);
+    return{request:cancelled.request,cancellation:cancelled.cancellation,document,replayed:false};
   });
   return reply.code(201).send({data:result});
 });
