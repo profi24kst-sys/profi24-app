@@ -138,12 +138,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Prepare environment
         run: cp .env.example .env
-      - name: Start core CRM, lifecycle, payroll and KPI
-        run: docker compose up -d --build db api ownercontrol lifecycle payroll kpi web
-      - name: Wait for core, lifecycle, payroll and KPI health
+      - name: Start core CRM, auth, lifecycle, payroll and KPI
+        run: docker compose up -d --build db api auth ownercontrol lifecycle payroll kpi web
+      - name: Wait for core, auth, lifecycle, payroll and KPI health
         run: |
           for i in $(seq 1 50); do
             if curl -fsS http://localhost:5173/health >/dev/null \
+              && curl -fsS http://localhost:5173/auth-health >/dev/null \
               && curl -fsS http://localhost:5173/owner-health >/dev/null \
               && curl -fsS http://localhost:5173/lifecycle-health >/dev/null \
               && curl -fsS http://localhost:5173/payroll-health >/dev/null \
@@ -151,19 +152,21 @@ jobs:
             sleep 3
           done
           docker compose ps
-          docker compose logs api ownercontrol lifecycle payroll workflow kpi web
+          docker compose logs api auth ownercontrol lifecycle payroll workflow kpi web
           exit 1
       - name: Create ephemeral smoke owner
         run: |
-          docker compose exec -T api node --input-type=module -e "import bcrypt from 'bcryptjs';import pg from 'pg';const p=new pg.Pool({connectionString:process.env.DATABASE_URL});const h=await bcrypt.hash('profi24',10);await p.query(\"INSERT INTO users(name,email,password_hash,role,active) VALUES('Smoke Owner','owner@profi24.kz',\$1,'OWNER',true) ON CONFLICT(email) DO UPDATE SET password_hash=EXCLUDED.password_hash,role='OWNER',active=true\",[h]);await p.end();"
-      - name: Verify authenticated core, lifecycle, payroll and KPI API
+          docker compose exec -T api node --input-type=module -e "import bcrypt from 'bcryptjs';import pg from 'pg';const p=new pg.Pool({connectionString:process.env.DATABASE_URL});const h=await bcrypt.hash('SmokeOwner2026Kst9',10);await p.query(\"INSERT INTO users(name,email,password_hash,role,active) VALUES('Smoke Owner','smoke-owner@test.invalid',\$1,'OWNER',true) ON CONFLICT(email) DO UPDATE SET password_hash=EXCLUDED.password_hash,role='OWNER',active=true\",[h]);await p.end();"
+      - name: Verify authenticated core, auth audit, lifecycle, payroll and KPI API
         run: |
           LOGIN=$(curl -fsS -X POST http://localhost:5173/api/v1/auth/login \
             -H 'Content-Type: application/json' \
-            -d '{"email":"owner@profi24.kz","password":"profi24"}')
+            -d '{"email":"smoke-owner@test.invalid","password":"SmokeOwner2026Kst9"}')
           TOKEN=$(printf '%s' "$LOGIN" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);if(!j.data?.access_token)process.exit(1);process.stdout.write(j.data.access_token)})")
           curl -fsS http://localhost:5173/api/v1/me -H "Authorization: Bearer $TOKEN" | grep -q OWNER
           curl -fsS http://localhost:5173/api/v1/requests -H "Authorization: Bearer $TOKEN" | grep -q '"data"'
+          curl -fsS 'http://localhost:5173/auth-api/v1/auth/security-events?limit=5' -H "Authorization: Bearer $TOKEN" | grep -q 'smoke-owner@test.invalid'
+          curl -fsS http://localhost:5173/auth-health | grep -q profi24-auth
           curl -fsS http://localhost:5173/owner-health | grep -q owner-control
           curl -fsS http://localhost:5173/lifecycle-health | grep -q profi24-order-lifecycle
           curl -fsS http://localhost:5173/payroll-health | grep -q profi24-payroll
@@ -176,6 +179,7 @@ jobs:
           docker compose exec -T db psql -U profi24 -d profi24 -c 'SELECT count(*) FROM requests;'
           docker compose exec -T db psql -U profi24 -d profi24 -c 'SELECT count(*) FROM payroll_periods;'
           docker compose exec -T db psql -U profi24 -d profi24 -c 'SELECT count(*) FROM kpi_result_snapshots;'
+          docker compose exec -T db psql -U profi24 -d profi24 -c 'SELECT count(*) FROM auth_login_events;'
       - name: Show service status
         if: always()
         run: docker compose ps
@@ -183,6 +187,7 @@ jobs:
         if: failure()
         run: |
           docker compose logs --tail=150 api
+          docker compose logs --tail=150 auth
           docker compose logs --tail=150 ownercontrol
           docker compose logs --tail=150 lifecycle
           docker compose logs --tail=150 payroll
