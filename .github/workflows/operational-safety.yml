@@ -1,0 +1,90 @@
+name: Operational Safety
+
+on:
+  push:
+    branches: [main, 'feature/**', 'fix/**']
+  pull_request:
+    branches: [main, 'feature/**', 'fix/**']
+
+jobs:
+  account_security:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: profi24_ops
+          POSTGRES_USER: profi24_ops
+          POSTGRES_PASSWORD: OpsDb2026KstSafe9
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U profi24_ops -d profi24_ops"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://profi24_ops:OpsDb2026KstSafe9@127.0.0.1:5432/profi24_ops
+      NODE_ENV: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install backend dependencies
+        working-directory: server
+        run: npm install
+      - name: Prove production check requires an OWNER
+        working-directory: server
+        run: |
+          if npm run production-user-check; then
+            echo 'production user check unexpectedly passed without an owner'
+            exit 1
+          fi
+      - name: Bootstrap first OWNER and verify production accounts
+        working-directory: server
+        run: |
+          npm run bootstrap-owner -- ops-owner@test.invalid 'OpsOwner2026Kst9' 'Ops Owner'
+          npm run production-user-check
+      - name: Prove second bootstrap and weak reset are rejected
+        working-directory: server
+        run: |
+          if npm run bootstrap-owner -- second-owner@test.invalid 'SecondOwner2026Kst9' 'Second Owner'; then
+            echo 'second OWNER bootstrap unexpectedly succeeded'
+            exit 1
+          fi
+          if npm run set-password -- ops-owner@test.invalid 'profi24'; then
+            echo 'weak password reset unexpectedly succeeded'
+            exit 1
+          fi
+          npm run set-password -- ops-owner@test.invalid 'RotatedOwner2026Kst8'
+          npm run production-user-check
+
+  backup_tools:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create checksum-valid fake backup set
+        run: |
+          mkdir -p /tmp/profi24-backups/20260907-120000 /tmp/profi24-offsite
+          printf 'custom-format-placeholder\n' >/tmp/profi24-backups/20260907-120000/postgres.dump
+          printf 'uploads-placeholder\n' >/tmp/profi24-backups/20260907-120000/uploads.tar.gz
+          cd /tmp/profi24-backups/20260907-120000
+          sha256sum postgres.dump uploads.tar.gz >SHA256SUMS
+      - name: Verify freshness and atomic offsite export
+        run: |
+          BACKUP_DIR=/tmp/profi24-backups MAX_BACKUP_AGE_HOURS=26 sh ops/backup-status.sh
+          BACKUP_DIR=/tmp/profi24-backups OFFSITE_BACKUP_DIR=/tmp/profi24-offsite sh ops/export-backup.sh
+          cd /tmp/profi24-offsite/20260907-120000
+          sha256sum -c SHA256SUMS
+      - name: Prove duplicate export and corrupted backup are rejected
+        run: |
+          if BACKUP_DIR=/tmp/profi24-backups OFFSITE_BACKUP_DIR=/tmp/profi24-offsite sh ops/export-backup.sh; then
+            echo 'duplicate export unexpectedly succeeded'
+            exit 1
+          fi
+          printf 'corruption\n' >>/tmp/profi24-backups/20260907-120000/postgres.dump
+          if BACKUP_DIR=/tmp/profi24-backups MAX_BACKUP_AGE_HOURS=26 sh ops/backup-status.sh; then
+            echo 'corrupted backup unexpectedly passed integrity check'
+            exit 1
+          fi
