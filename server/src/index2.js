@@ -101,7 +101,7 @@ app.post('/api/v1/requests/:id/payment',{preHandler:roles('OWNER','MANAGER','ACC
     await hist(c,cur.id,req.user.id,'PAYMENT_RECEIVED',{amount,account_id:accountId,fully_paid:fullyPaid});return row;
   });return {data:result};
 });
-app.post('/api/v1/payments/:id/refund',{preHandler:roles('OWNER')},async(req,reply)=>{
+app.post('/api/v1/payments/:id/refund',{preHandler:roles('OWNER','ACCOUNTANT')},async(req,reply)=>{
   const key=operationKey(req),digest=fingerprint({payment:req.params.id,...req.body});
   return {data:await tx(c=>refundPayment(c,{paymentId:req.params.id,user:req.user,body:req.body||{},key,digest}))};
 });
