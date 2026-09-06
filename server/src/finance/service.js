@@ -1,5 +1,6 @@
 import {recalculateOrder} from '../order-totals.js';
-import {canAdminFinance,isAssignedOnly} from '../rbac.js';
+import {canAdminFinance} from '../rbac.js';
+import {requireOrder} from '../access.js';
 import { createHash, randomUUID } from 'node:crypto';
 
 export class FinanceError extends Error {
@@ -47,7 +48,7 @@ export async function transaction(pool,user,fn) {
 async function hasBranchMembership(c,userId,branchId){
   if(!branchId)return true;
   const table=(await c.query("SELECT to_regclass('public.user_branches') name")).rows[0]?.name;
-  if(!table)return true; // Isolated finance tests / legacy bootstrap before branch migration.
+  if(!table)return true;
   return Boolean((await c.query('SELECT 1 FROM user_branches WHERE user_id=$1 AND branch_id=$2 LIMIT 1',[userId,branchId])).rows[0]);
 }
 export async function lockAccounts(c,ids,user,{active=true}={}) {
@@ -64,11 +65,13 @@ export async function lockAccounts(c,ids,user,{active=true}={}) {
   return accounts;
 }
 export async function requestAccess(c,requestId,user,{write=false}={}) {
-  const request=(await c.query('SELECT * FROM requests WHERE id=$1 FOR UPDATE',[id(requestId,'Заказ')])).rows[0];
-  if(!request||request.deleted_at)reject('Заказ не найден','NOT_FOUND',404);
-  if(isAssignedOnly(user.role)&&Number(request.engineer_id)!==Number(user.id))reject('Заказ назначен другому инженеру','FORBIDDEN',403);
-  if(write&&['CLOSED','CANCELLED'].includes(request.status))reject('Сначала откройте заказ для корректировки','ORDER_FINISHED',409);
-  return request;
+  try{return await requireOrder(c,user,id(requestId,'Заказ'),{mutable:write,lock:true});}
+  catch(error){
+    if(error?.code==='NOT_FOUND')reject('Заказ не найден','NOT_FOUND',404);
+    if(error?.code==='FORBIDDEN')reject('Нет доступа к заказу','FORBIDDEN',403);
+    if(error?.code==='ORDER_FINISHED')reject('Сначала откройте заказ для корректировки','ORDER_FINISHED',409);
+    throw error;
+  }
 }
 export async function insertEntry(c,user,data) {
   const keys=['account_id','type','kind','category','amount','occurred_at','request_id','part_id','transfer_group_id','reversal_of','comment','document_reference','counterparty','idempotency_key','metadata'];
@@ -88,7 +91,8 @@ export async function createTransfer(c,user,body,key,digest) {
   if(from===to)reject('Для перевода нужны два разных счёта');
   const amount=money(body.amount),comment=text(body.comment,'Назначение перевода'),occurred_at=date(body.occurred_at),group=randomUUID();
   if(body.request_id)await requestAccess(c,body.request_id,user);
-  await lockAccounts(c,[from,to],user);
+  const [fromAccount,toAccount]=await lockAccounts(c,[from,to],user);
+  if(fromAccount.branch_id!==toAccount.branch_id&&!canAdminFinance(user.role))reject('Перевод между филиалами доступен только бухгалтеру или собственнику','FORBIDDEN',403);
   await c.query('INSERT INTO finance_transfers(id,from_account_id,to_account_id,amount,created_by,comment) VALUES($1,$2,$3,$4,$5,$6)',[group,from,to,amount,user.id,comment]);
   const common={kind:'TRANSFER',category:'TRANSFER',amount,comment,occurred_at,transfer_group_id:group,request_id:body.request_id||null,metadata:{fingerprint:digest}};
   const out=await insertEntry(c,user,{...common,type:'EXPENSE',account_id:from,idempotency_key:key});
