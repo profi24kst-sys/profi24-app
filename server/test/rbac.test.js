@@ -67,7 +67,7 @@ test('миграция принимает шесть ролей и БД отве
   }finally{await db.close();}
 });
 
-test('инженер и стажёр видят только назначенные заказы, офисные роли видят все',async()=>{
+test('стажёр получает заказ только как участник заказа своего активного наставника',async()=>{
   const db=await PGlite.create();
   const query=(sql,params=[])=>params.length?db.query(sql,params):db.exec(sql).then(r=>r.at(-1));
   const pool={query,connect:async()=>({query,release(){}}),end:async()=>{}};
@@ -77,16 +77,24 @@ test('инженер и стажёр видят только назначенн�
       await query('INSERT INTO users(name,email,password_hash,role) VALUES($1,$2,$3,$4)',[role,`scope-${i}@test.invalid`,'unused',role]);
     }
     await query("INSERT INTO customers(name,phone) VALUES('Client','000')");
-    const engineerOrder=(await query("INSERT INTO requests(number,customer_id,engineer_id,status,complaint) VALUES('RBAC-E',1,5,'REPAIR','Test') RETURNING id")).rows[0].id;
-    const traineeOrder=(await query("INSERT INTO requests(number,customer_id,engineer_id,status,complaint) VALUES('RBAC-T',1,6,'REPAIR','Test') RETURNING id")).rows[0].id;
+    const mentorOrder=(await query("INSERT INTO requests(number,customer_id,engineer_id,status,complaint) VALUES('RBAC-E',1,5,'REPAIR','Test') RETURNING id")).rows[0].id;
+    const otherMentorOrder=(await query("INSERT INTO requests(number,customer_id,engineer_id,status,complaint) VALUES('RBAC-E2',1,5,'REPAIR','Test') RETURNING id")).rows[0].id;
+    const invalidPrimaryTraineeOrder=(await query("INSERT INTO requests(number,customer_id,engineer_id,status,complaint) VALUES('RBAC-T',1,6,'REPAIR','Test') RETURNING id")).rows[0].id;
+    await query('INSERT INTO user_mentors(trainee_id,mentor_id,assigned_by) VALUES(6,5,1)');
+    await query("INSERT INTO request_participants(request_id,user_id,participant_role,mentor_id,added_by) VALUES($1,6,'TRAINEE',5,1)",[mentorOrder]);
+
     for(const id of [1,2,3,4]){
       const user=(await query('SELECT id,role FROM users WHERE id=$1',[id])).rows[0];
-      assert.equal((await requireOrder(pool,user,engineerOrder)).id,engineerOrder,user.role);
-      assert.equal((await requireOrder(pool,user,traineeOrder)).id,traineeOrder,user.role);
+      assert.equal((await requireOrder(pool,user,mentorOrder)).id,mentorOrder,user.role);
+      assert.equal((await requireOrder(pool,user,invalidPrimaryTraineeOrder)).id,invalidPrimaryTraineeOrder,user.role);
     }
-    assert.equal((await requireOrder(pool,{id:5,role:'ENGINEER'},engineerOrder)).id,engineerOrder);
-    assert.equal((await requireOrder(pool,{id:6,role:'TRAINEE'},traineeOrder)).id,traineeOrder);
-    await assert.rejects(requireOrder(pool,{id:5,role:'ENGINEER'},traineeOrder),error=>error.code==='FORBIDDEN');
-    await assert.rejects(requireOrder(pool,{id:6,role:'TRAINEE'},engineerOrder),error=>error.code==='FORBIDDEN');
+    assert.equal((await requireOrder(pool,{id:5,role:'ENGINEER'},mentorOrder)).id,mentorOrder);
+    assert.equal((await requireOrder(pool,{id:5,role:'ENGINEER'},otherMentorOrder)).id,otherMentorOrder);
+    assert.equal((await requireOrder(pool,{id:6,role:'TRAINEE'},mentorOrder)).id,mentorOrder);
+    await assert.rejects(requireOrder(pool,{id:6,role:'TRAINEE'},otherMentorOrder),error=>error.code==='FORBIDDEN');
+    await assert.rejects(requireOrder(pool,{id:6,role:'TRAINEE'},invalidPrimaryTraineeOrder),error=>error.code==='FORBIDDEN');
+
+    await query('UPDATE user_mentors SET mentor_id=1,updated_at=now() WHERE trainee_id=6');
+    await assert.rejects(requireOrder(pool,{id:6,role:'TRAINEE'},mentorOrder),error=>error.code==='FORBIDDEN');
   }finally{await db.close();}
 });
