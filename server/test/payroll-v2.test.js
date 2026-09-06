@@ -110,6 +110,7 @@ test('Stage D payroll: versioned rules, reversal documents and immutable periods
       assert.equal(recalc.status,409,JSON.stringify(recalc));
       const late=await s.call('POST','/api/v1/adjustments',{user_id:4,month:'2026-09',type:'BONUS',amount:1000,reason:'Late change'},2);
       assert.equal(late.status,409,JSON.stringify(late));
+      await assert.rejects(s.query(`INSERT INTO payroll_adjustments(user_id,period_month,amount,type,reason,created_by,branch_id) VALUES(4,'2026-09-01',1000,'BONUS','Direct late change',2,$1)`,[s.branch]),e=>e.code==='P2401');
       const retro=await s.call('PUT','/api/v1/rules/4',{month:'2026-08',base_salary:90000,order_percent:9,work_percent:4,gross_profit_percent:0,reason:'Backdated terms'},1);
       assert.equal(retro.status,409,JSON.stringify(retro));assert.equal(retro.error.code,'PAYROLL_RULE_RETRO_LOCKED');
       await assert.rejects(s.query(`INSERT INTO payroll_rule_versions(user_id,effective_from,base_salary,order_percent,work_percent,gross_profit_percent,active,reason,created_by) VALUES(4,'2026-08-01',90000,9,4,0,true,'Direct backdate',1)`),e=>e.code==='P2401');
