@@ -42,8 +42,10 @@ async function setup(){
   await app.ready();
   const roles={1:'OWNER',2:'SUPERVISOR',3:'MANAGER',4:'ENGINEER',5:'TRAINEE',6:'ACCOUNTANT'};
   const tokens=Object.fromEntries(Object.entries(roles).map(([id,role])=>[id,app.jwt.sign({id:Number(id),role})]));
-  const call=async(method,url,payload,user=1)=>{
-    const r=await app.inject({method,url,payload,headers:{authorization:'Bearer '+tokens[user]}});
+  let operationSeq=0;
+  const call=async(method,url,payload,user=1,key=null)=>{
+    const operationKey=key||'lifecycle-operation-'+String(++operationSeq).padStart(8,'0');
+    const r=await app.inject({method,url,payload,headers:{authorization:'Bearer '+tokens[user],'idempotency-key':operationKey}});
     let body={};try{body=r.json()}catch{}
     return{status:r.statusCode,...body};
   };
@@ -53,7 +55,7 @@ async function setup(){
   return{db,pool,query,app,branch,baseOrder,call,order,close:async()=>{await app.close();await db.close();delete globalThis.__lifecycleTestPool;}};
 }
 
-test('Stage C lifecycle: паузы SLA, повторные визиты и rework документированы',async t=>{
+test('Stage C lifecycle: паузы SLA, повторные визиты, rework и возврат без ремонта документированы',async t=>{
   const s=await setup();
   try{
     await t.test('офисная пауза останавливает SLA; бухгалтер и стажёр только читают lifecycle',async()=>{
@@ -98,6 +100,20 @@ test('Stage C lifecycle: паузы SLA, повторные визиты и rewo
       assert.equal((await s.call('POST',`/api/v1/requests/${parent.id}/rework`,{link_type:'REWORK',reason:'Дубликат'},3)).status,409);
       assert.equal((await s.call('POST',`/api/v1/requests/${parent.id}/rework`,{link_type:'WARRANTY_REWORK',reason:'Гарантийная переделка'},3)).status,403);
       await assert.rejects(s.query("UPDATE request_order_links SET reason='Переписать связь' WHERE child_request_id=$1",[rework.data.request.id]),e=>e.code==='P2401');
+    });
+
+    await t.test('возврат без ремонта доступен только OWNER и создаёт отдельный неизменяемый документ',async()=>{
+      const order=await s.order();
+      const body={reason:'Ремонт технически нецелесообразен',document_reference:'Акт возврата №1',handover_reference:'Подпись клиента №1'};
+      assert.equal((await s.call('POST',`/api/v1/requests/${order.id}/return-without-repair`,body,3)).status,403,'manager cannot finalize');
+      const returned=await s.call('POST',`/api/v1/requests/${order.id}/return-without-repair`,body,1,'lifecycle-return-00000001');
+      assert.equal(returned.status,201,JSON.stringify(returned));
+      assert.equal(returned.data.request.status,'CANCELLED');
+      assert.equal(returned.data.document.handover_reference,body.handover_reference);
+      const history=(await s.query("SELECT action FROM request_history WHERE request_id=$1 ORDER BY id",[order.id])).rows.map(x=>x.action);
+      assert.ok(history.includes('REQUEST_CANCELLED'));assert.ok(history.includes('RETURNED_WITHOUT_REPAIR'));
+      await assert.rejects(s.query("UPDATE request_returns_without_repair SET reason='Переписать документ' WHERE request_id=$1",[order.id]),e=>e.code==='P2401');
+      await assert.rejects(s.query('DELETE FROM request_returns_without_repair WHERE request_id=$1',[order.id]),e=>e.code==='P2401');
     });
   }finally{await s.close();}
 });
