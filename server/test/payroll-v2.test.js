@@ -17,6 +17,18 @@ async function setup(){
   const pool={query,connect:async()=>{const prior=queue;let release;queue=new Promise(r=>{release=r});await prior;return{query,release}},end:async()=>{}};
   globalThis.__payrollTestPool=pool;
   await migrateCore(pool);
+  // request_works is normally created by the operational API module; the unit harness only loads core migrations.
+  await query(`CREATE TABLE IF NOT EXISTS request_works(
+    id SERIAL PRIMARY KEY,
+    request_id INT NOT NULL REFERENCES requests(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    qty NUMERIC(12,3) NOT NULL DEFAULT 1,
+    unit_price NUMERIC(14,2) NOT NULL DEFAULT 0,
+    direct_cost NUMERIC(14,2) NOT NULL DEFAULT 0,
+    performed_by INT REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`);
   const branch=(await query("SELECT id FROM branches WHERE code='KST'")).rows[0].id;
   await query(`INSERT INTO users(name,email,password_hash,role,primary_branch_id) VALUES
     ('Owner Pay','pay-owner@test.invalid','unused','OWNER',$1),
