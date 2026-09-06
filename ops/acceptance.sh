@@ -59,7 +59,8 @@ check lifecycle /lifecycle-health
 check_header x_content_type_options '^x-content-type-options: nosniff$'
 check_header x_frame_options '^x-frame-options: DENY$'
 check_header referrer_policy '^referrer-policy: no-referrer$'
-check_header content_security_policy '^content-security-policy: .*frame-ancestors '\''none'\''.*object-src '\''none'\'''
+check_header csp_frame_ancestors "^content-security-policy: .*frame-ancestors 'none'"
+check_header csp_object_src "^content-security-policy: .*object-src 'none'"
 
 if [ -n "${ACCEPTANCE_TOKEN:-}" ]; then
   if curl -fsS --max-time "$CURL_TIMEOUT" "$BASE_URL/api/v1/me" -H "Authorization: Bearer $ACCEPTANCE_TOKEN" | grep -q '"data"'; then
