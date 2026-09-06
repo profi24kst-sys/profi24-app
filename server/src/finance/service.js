@@ -1,4 +1,5 @@
 import {recalculateOrder} from '../order-totals.js';
+import {canAdminFinance,isAssignedOnly} from '../rbac.js';
 import { createHash, randomUUID } from 'node:crypto';
 
 export class FinanceError extends Error {
@@ -47,13 +48,13 @@ export async function lockAccounts(c,ids,user,{active=true}={}) {
   const unique=[...new Set(ids.map(v=>id(v)))].sort((a,b)=>a-b);
   const accounts=(await c.query('SELECT * FROM finance_accounts WHERE id=ANY($1::int[]) ORDER BY id FOR UPDATE',[unique])).rows;
   if(accounts.length!==unique.length) reject('Денежный счёт не найден','NOT_FOUND',404);
-  for(const a of accounts){if(user.role!=='OWNER'&&Number(a.responsible_id)!==Number(user.id))reject('Нет доступа к этому источнику денег','FORBIDDEN',403);if(active&&!a.is_active)reject('Счёт отключён. Выберите активный источник денег');}
+  for(const a of accounts){if(!canAdminFinance(user.role)&&Number(a.responsible_id)!==Number(user.id))reject('Нет доступа к этому источнику денег','FORBIDDEN',403);if(active&&!a.is_active)reject('Счёт отключён. Выберите активный источник денег');}
   return accounts;
 }
 export async function requestAccess(c,requestId,user,{write=false}={}) {
   const request=(await c.query('SELECT * FROM requests WHERE id=$1 FOR UPDATE',[id(requestId,'Заказ')])).rows[0];
   if(!request||request.deleted_at)reject('Заказ не найден','NOT_FOUND',404);
-  if(user.role==='ENGINEER'&&Number(request.engineer_id)!==Number(user.id))reject('Заказ назначен другому инженеру','FORBIDDEN',403);
+  if(isAssignedOnly(user.role)&&Number(request.engineer_id)!==Number(user.id))reject('Заказ назначен другому инженеру','FORBIDDEN',403);
   if(write&&['CLOSED','CANCELLED'].includes(request.status))reject('Сначала откройте заказ для корректировки','ORDER_FINISHED',409);
   return request;
 }
