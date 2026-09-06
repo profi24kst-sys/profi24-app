@@ -1,4 +1,5 @@
 import {authenticate,installOrderAccess} from './access.js';
+import {roleAllowed} from './rbac.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
@@ -13,7 +14,7 @@ const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,max:Number(pro
 const q=(s,p=[])=>pool.query(s,p);
 const err=(reply,code,message,status=422)=>reply.code(status).send({data:null,error:{code,message}});
 const auth=async(req,reply)=>{if(!await authenticate(req,reply,pool))return;};
-const roles=(...a)=>async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!a.includes(req.user.role))return err(reply,'FORBIDDEN','Недостаточно прав',403)};
+const roles=(...a)=>async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!roleAllowed(req.user.role,a))return err(reply,'FORBIDDEN','Недостаточно прав',403)};
 
 const schema=[
 `ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_chat_id TEXT`,
@@ -66,11 +67,11 @@ async function sendWhatsApp(m){const token=process.env.WHATSAPP_TOKEN,phoneId=pr
 async function processQueue(limit=30){const rows=(await q(`SELECT * FROM message_queue WHERE status='QUEUED' ORDER BY created_at LIMIT $1`,[limit])).rows;let sent=0;for(const m of rows){try{let id=null;if(m.channel==='TELEGRAM')id=await sendTelegram(m);else if(m.channel==='WHATSAPP')id=await sendWhatsApp(m);if(id===null)continue;await q(`UPDATE message_queue SET status='SENT',provider_message_id=$1,sent_at=now(),updated_at=now(),attempts=attempts+1,error_text=NULL WHERE id=$2`,[id,m.id]);sent++}catch(e){await q(`UPDATE message_queue SET status=CASE WHEN attempts>=2 THEN 'ERROR' ELSE 'QUEUED' END,attempts=attempts+1,error_text=$1,updated_at=now() WHERE id=$2`,[String(e.message).slice(0,500),m.id])}}return sent}
 
 installOrderAccess(app,pool,'communications');
-app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'profi24-communications',version:'1.0.0',telegram_configured:Boolean(process.env.TELEGRAM_BOT_TOKEN),whatsapp_configured:Boolean(process.env.WHATSAPP_TOKEN&&process.env.WHATSAPP_PHONE_NUMBER_ID)}});
+app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'profi24-communications',version:'1.1-rbac',telegram_configured:Boolean(process.env.TELEGRAM_BOT_TOKEN),whatsapp_configured:Boolean(process.env.WHATSAPP_TOKEN&&process.env.WHATSAPP_PHONE_NUMBER_ID)}});
 app.get('/api/v1/communications/status',{preHandler:auth},async()=>({data:{telegram_configured:Boolean(process.env.TELEGRAM_BOT_TOKEN),whatsapp_configured:Boolean(process.env.WHATSAPP_TOKEN&&process.env.WHATSAPP_PHONE_NUMBER_ID),queued:Number((await q("SELECT count(*) c FROM message_queue WHERE status='QUEUED'")).rows[0].c),errors:Number((await q("SELECT count(*) c FROM message_queue WHERE status='ERROR'")).rows[0].c)}}));
 app.get('/api/v1/communications/templates',{preHandler:auth},async()=>({data:(await q('SELECT * FROM message_templates ORDER BY audience,name')).rows}));
 app.patch('/api/v1/communications/templates/:id',{preHandler:roles('OWNER','MANAGER')},async(req,reply)=>{const old=(await q('SELECT * FROM message_templates WHERE id=$1',[req.params.id])).rows[0];if(!old)return err(reply,'NOT_FOUND','Шаблон не найден',404);const b={...old,...req.body};const r=(await q('UPDATE message_templates SET name=$1,channel=$2,body=$3,active=$4,updated_at=now() WHERE id=$5 RETURNING *',[b.name,b.channel,b.body,b.active,req.params.id])).rows[0];return{data:r}});
-app.get('/api/v1/communications/queue',{preHandler:auth},async req=>{const status=req.query?.status;const rows=(await q(`SELECT mq.*,r.number request_number,c.name customer_name FROM message_queue mq LEFT JOIN requests r ON r.id=mq.request_id LEFT JOIN customers c ON c.id=r.customer_id WHERE ($1::text IS NULL OR mq.status=$1) AND ($2::text IN ('OWNER','MANAGER') OR (r.engineer_id=$3 AND r.deleted_at IS NULL)) ORDER BY mq.created_at DESC LIMIT 500`,[status||null,req.user.role,req.user.id])).rows;return{data:rows}});
+app.get('/api/v1/communications/queue',{preHandler:auth},async req=>{const status=req.query?.status;const rows=(await q(`SELECT mq.*,r.number request_number,c.name customer_name FROM message_queue mq LEFT JOIN requests r ON r.id=mq.request_id LEFT JOIN customers c ON c.id=r.customer_id WHERE ($1::text IS NULL OR mq.status=$1) AND ($2::text IN ('OWNER','SUPERVISOR','MANAGER') OR (r.engineer_id=$3 AND r.deleted_at IS NULL)) ORDER BY mq.created_at DESC LIMIT 500`,[status||null,req.user.role,req.user.id])).rows;return{data:rows}});
 app.post('/api/v1/communications/manual',{preHandler:roles('OWNER','MANAGER')},async(req,reply)=>{const {request_id,template_code,channel,audience,recipient,body}=req.body||{};if(!request_id||(!template_code&&!body))return err(reply,'VALIDATION','Укажите заявку и шаблон или текст');const m=await enqueue({request_id,template_code,audience,channel,recipient,body,dedupe_key:`manual:${Date.now()}:${Math.random()}`,created_by:req.user.id});return reply.code(201).send({data:m})});
 app.post('/api/v1/communications/sync',{preHandler:roles('OWNER','MANAGER')},async()=>{const discovered=await syncHistory(),sent=await processQueue();return{data:{discovered,sent}}});
 app.post('/api/v1/communications/queue/:id/retry',{preHandler:roles('OWNER','MANAGER')},async(req,reply)=>{const r=(await q("UPDATE message_queue SET status=CASE WHEN recipient IS NULL THEN 'WAITING_RECIPIENT' ELSE 'QUEUED' END,error_text=NULL,updated_at=now() WHERE id=$1 RETURNING *",[req.params.id])).rows[0];if(!r)return err(reply,'NOT_FOUND','Сообщение не найдено',404);return{data:r}});
