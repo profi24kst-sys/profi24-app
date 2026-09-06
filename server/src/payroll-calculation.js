@@ -13,10 +13,14 @@ async function versionedUsers(c,start,branchId=null){
   const params=[start];let branch='';
   if(branchId){params.push(branchId);branch=` AND u.primary_branch_id=$${params.length}`;}
   return (await c.query(`SELECT u.id,u.name,u.email,u.role,u.active,u.primary_branch_id,
-    rv.id rule_version_id,COALESCE(rv.base_salary,0) base_salary,COALESCE(rv.order_percent,0) order_percent,
-    COALESCE(rv.work_percent,0) work_percent,COALESCE(rv.gross_profit_percent,0) gross_profit_percent,
-    COALESCE(rv.active,false) rule_active
+    rv.id rule_version_id,
+    COALESCE(rv.base_salary,pr.base_salary,0) base_salary,
+    COALESCE(rv.order_percent,pr.order_percent,0) order_percent,
+    COALESCE(rv.work_percent,pr.work_percent,0) work_percent,
+    COALESCE(rv.gross_profit_percent,pr.gross_profit_percent,0) gross_profit_percent,
+    COALESCE(rv.active,pr.active,true) rule_active
     FROM users u
+    LEFT JOIN payroll_rules pr ON pr.user_id=u.id
     LEFT JOIN LATERAL (
       SELECT v.* FROM payroll_rule_versions v
       WHERE v.user_id=u.id AND v.effective_from<=$1::date
@@ -27,6 +31,7 @@ async function versionedUsers(c,start,branchId=null){
 }
 
 // Single source for live preview, payroll snapshots, P&L and order profitability.
+// Versioned rules take precedence. Legacy payroll_rules remain a compatibility fallback until every employee has a versioned rule.
 // branchId limits both employee ownership (primary branch) and orders used for commissions.
 export async function calculatePayroll(c,start,end,{branchId=null}={}) {
   const users=await versionedUsers(c,start,branchId);
