@@ -62,11 +62,13 @@ test('Stage D payroll payments: finance posting, partial settlement, reversal an
     assert.equal(approved.status,200,JSON.stringify(approved));
 
     let firstId,secondId;
-    await t.test('ACCOUNTANT posts partial real finance expense and overpayment is rejected',async()=>{
+    await t.test('ACCOUNTANT posts partial cash settlement without double-counting payroll in P&L',async()=>{
       const first=await s.call('POST',`/api/v1/periods/${periodId}/payments`,{user_id:3,account_id:s.account,amount:40000,document_reference:'PAY-001'},2,'salary-payment-first-0001');
       assert.equal(first.status,201,JSON.stringify(first));firstId=first.data.payment.id;
       assert.equal(first.data.period.status,'APPROVED');assert.equal(Number(first.data.period.payment_totals.remaining),60000);
-      const tx=(await s.query('SELECT * FROM finance_transactions WHERE id=$1',[first.data.payment.finance_transaction_id])).rows[0];assert.equal(tx.type,'EXPENSE');assert.equal(tx.kind,'MANUAL');assert.equal(tx.category,'PAYROLL');assert.equal(Number(tx.amount),40000);
+      const tx=(await s.query('SELECT * FROM finance_transactions WHERE id=$1',[first.data.payment.finance_transaction_id])).rows[0];
+      assert.equal(tx.type,'EXPENSE');assert.equal(tx.kind,'PAYROLL_PAYMENT');assert.equal(tx.category,'PAYROLL');assert.equal(Number(tx.amount),40000);assert.equal(tx.affects_pnl,false);
+      assert.equal(Number((await s.query("SELECT count(*) c FROM finance_pnl_transactions WHERE category='PAYROLL'")).rows[0].c),0);
       const over=await s.call('POST',`/api/v1/periods/${periodId}/payments`,{user_id:3,account_id:s.account,amount:70000,document_reference:'PAY-OVER'},2);
       assert.equal(over.status,409,JSON.stringify(over));assert.equal(over.error.code,'PAYROLL_OVERPAYMENT');
       const replay=await s.call('POST',`/api/v1/periods/${periodId}/payments`,{user_id:3,account_id:s.account,amount:40000,document_reference:'PAY-001'},2,'salary-payment-first-0001');
@@ -78,6 +80,7 @@ test('Stage D payroll payments: finance posting, partial settlement, reversal an
       assert.equal(second.status,201,JSON.stringify(second));secondId=second.data.payment.id;
       assert.equal(second.data.period.status,'PAID');assert.equal(Number(second.data.period.payment_totals.remaining),0);
       assert.equal((await s.call('POST',`/api/v1/periods/${periodId}/close`,{reason:'Month closed'},2)).status,403);
+      assert.equal(Number((await s.query("SELECT count(*) c FROM finance_pnl_transactions WHERE category='PAYROLL'")).rows[0].c),0);
     });
 
     await t.test('reversal restores finance balance and returns PAID period to APPROVED',async()=>{
@@ -85,6 +88,7 @@ test('Stage D payroll payments: finance posting, partial settlement, reversal an
       const rev=await s.call('POST',`/api/v1/payments/${secondId}/reverse`,{reason:'Wrong payout document',document_reference:'REV-002'},2);
       assert.equal(rev.status,201,JSON.stringify(rev));assert.equal(rev.data.period.status,'APPROVED');assert.equal(Number(rev.data.period.payment_totals.remaining),60000);
       const after=Number((await s.query('SELECT balance FROM finance_account_balances WHERE id=$1',[s.account])).rows[0].balance);assert.equal(after,before+60000);
+      const reversalTx=(await s.query('SELECT ft.* FROM finance_transactions ft JOIN payroll_payments pp ON pp.finance_transaction_id=ft.id WHERE pp.id=$1',[rev.data.payment.id])).rows[0];assert.equal(reversalTx.affects_pnl,false);
       await assert.rejects(s.query('DELETE FROM payroll_payments WHERE id=$1',[firstId]),e=>e.code==='P2401');
     });
 
