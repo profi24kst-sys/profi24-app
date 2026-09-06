@@ -60,6 +60,71 @@ jobs:
           npm run set-password -- ops-owner@test.invalid 'RotatedOwner2026Kst8'
           npm run production-user-check
 
+  auth_security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare auth-security environment
+        run: |
+          cat > .env <<'EOF'
+          POSTGRES_DB=profi24
+          POSTGRES_USER=profi24
+          POSTGRES_PASSWORD=AuthDb2026KstSafe9
+          JWT_SECRET=AuthJwt2026KstSafeSecretValue42Q7
+          NODE_ENV=production
+          CORS_ORIGIN=http://localhost:5173
+          PUBLIC_BASE_URL=http://localhost:5173
+          DB_POOL_MAX=10
+          WEB_PORT=5173
+          BACKUP_RETENTION_DAYS=14
+          AUTH_RATE_LIMIT_PER_MINUTE=30
+          AUTH_TOKEN_TTL=12h
+          AUTH_FAILURE_LIMIT=10
+          AUTH_FAILURE_WINDOW_MINUTES=10
+          AUTH_LOCK_MINUTES=15
+          EOF
+      - name: Start auth gateway through nginx
+        run: docker compose up -d --build db api auth web
+      - name: Wait for auth gateway health
+        run: |
+          for i in $(seq 1 50); do
+            if curl -fsS http://localhost:5173/health >/dev/null && curl -fsS http://localhost:5173/auth-health >/dev/null; then exit 0; fi
+            sleep 3
+          done
+          docker compose ps
+          docker compose logs api auth web
+          exit 1
+      - name: Create strong OWNER account
+        run: |
+          docker compose exec -T api node src/bootstrap-owner.js auth-owner@test.invalid 'AuthOwner2026Kst9' 'Auth Owner'
+      - name: Prove database-backed brute-force lockout
+        run: |
+          bad_login(){ curl -sS -o /tmp/auth-bad.json -w '%{http_code}' -X POST http://localhost:5173/api/v1/auth/login -H 'Content-Type: application/json' -d '{"email":"auth-owner@test.invalid","password":"WrongPassword2026"}'; }
+          for i in $(seq 1 9); do
+            CODE=$(bad_login)
+            test "$CODE" = '401' || { echo "attempt $i expected 401, got $CODE"; cat /tmp/auth-bad.json; exit 1; }
+          done
+          CODE=$(bad_login)
+          test "$CODE" = '429' || { echo "10th attempt expected 429, got $CODE"; cat /tmp/auth-bad.json; exit 1; }
+          CODE=$(curl -sS -o /tmp/auth-locked.json -w '%{http_code}' -X POST http://localhost:5173/api/v1/auth/login -H 'Content-Type: application/json' -d '{"email":"auth-owner@test.invalid","password":"AuthOwner2026Kst9"}')
+          test "$CODE" = '429' || { echo "correct password during lock expected 429, got $CODE"; cat /tmp/auth-locked.json; exit 1; }
+      - name: Clear test lock and verify successful audited login
+        run: |
+          docker compose exec -T db psql -U profi24 -d profi24 -c "DELETE FROM auth_login_state WHERE email='auth-owner@test.invalid';"
+          LOGIN=$(curl -fsS -X POST http://localhost:5173/api/v1/auth/login -H 'Content-Type: application/json' -d '{"email":"auth-owner@test.invalid","password":"AuthOwner2026Kst9"}')
+          TOKEN=$(printf '%s' "$LOGIN" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(JSON.parse(s).data.access_token))")
+          curl -fsS 'http://localhost:5173/auth-api/v1/auth/security-events?limit=30' -H "Authorization: Bearer $TOKEN" >/tmp/security-events.json
+          node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync('/tmp/security-events.json','utf8'));const rows=j.data||[];if(!rows.some(x=>x.email==='auth-owner@test.invalid'&&x.success===false)||!rows.some(x=>x.email==='auth-owner@test.invalid'&&x.success===true))process.exit(1)"
+          test "$(docker compose exec -T db psql -U profi24 -d profi24 -Atqc "SELECT count(*) FROM auth_login_state WHERE email='auth-owner@test.invalid'")" = '0'
+      - name: Show auth security failure logs
+        if: failure()
+        run: |
+          docker compose ps
+          docker compose logs --tail=200 api auth web
+      - name: Stop auth stack
+        if: always()
+        run: docker compose down -v
+
   backup_tools:
     runs-on: ubuntu-latest
     steps:
@@ -106,17 +171,19 @@ jobs:
           DB_POOL_MAX=10
           WEB_PORT=5173
           BACKUP_RETENTION_DAYS=14
+          AUTH_RATE_LIMIT_PER_MINUTE=30
+          AUTH_TOKEN_TTL=12h
           EOF
-      - name: Start core and documents service
-        run: docker compose up -d --build db api documents web
-      - name: Wait for documents health
+      - name: Start core, auth and documents service
+        run: docker compose up -d --build db api auth documents web
+      - name: Wait for auth and documents health
         run: |
           for i in $(seq 1 50); do
-            if curl -fsS http://localhost:5173/health >/dev/null && curl -fsS http://localhost:5173/documents-health >/dev/null; then exit 0; fi
+            if curl -fsS http://localhost:5173/health >/dev/null && curl -fsS http://localhost:5173/auth-health >/dev/null && curl -fsS http://localhost:5173/documents-health >/dev/null; then exit 0; fi
             sleep 3
           done
           docker compose ps
-          docker compose logs api documents web
+          docker compose logs api auth documents web
           exit 1
       - name: Seed owner, mentor engineer, trainee and participant order
         run: |
@@ -186,7 +253,7 @@ jobs:
         if: failure()
         run: |
           docker compose ps
-          docker compose logs --tail=180 api documents web
+          docker compose logs --tail=180 api auth documents web
       - name: Stop attachment stack
         if: always()
         run: docker compose down -v
