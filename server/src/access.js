@@ -1,3 +1,5 @@
+import {canAccessAllOrders,canMutateOrder,isAssignedOnly,isKnownRole} from './rbac.js';
+
 // Shared authentication and order authorization for every API service.
 const authenticated = Symbol('active-user');
 export function accessError(code, message, statusCode = 409) {
@@ -7,8 +9,9 @@ export async function authenticate(req, reply, db) {
   if (req[authenticated]) return true;
   try { await req.jwtVerify(); }
   catch { reply.code(401).send({data:null,error:{code:'UNAUTHORIZED',message:'Требуется авторизация'}}); return false; }
-  const user = (await db.query('SELECT id,name,role FROM users WHERE id=$1 AND active=true', [req.user.id])).rows[0];
+  const user = (await db.query('SELECT id,name,email,role FROM users WHERE id=$1 AND active=true', [req.user.id])).rows[0];
   if (!user) { reply.code(403).send({data:null,error:{code:'FORBIDDEN',message:'Пользователь неактивен'}}); return false; }
+  if (!isKnownRole(user.role)) { reply.code(403).send({data:null,error:{code:'FORBIDDEN',message:'Роль пользователя не поддерживается'}}); return false; }
   req.user = user;
   req[authenticated] = true;
   return true;
@@ -23,9 +26,14 @@ export async function requireOrder(db, user, requestId, {mutable=false, lock=fal
   if (!Number.isSafeInteger(id) || id < 1) throw accessError('VALIDATION','Некорректный номер заказа',422);
   const order = (await db.query(`SELECT * FROM requests WHERE id=$1${lock?' FOR UPDATE':''}`, [id])).rows[0];
   if (!order || order.deleted_at) throw accessError('NOT_FOUND','Заказ не найден',404);
-  if (user && user.role !== 'OWNER' && user.role !== 'MANAGER' &&
-      (user.role !== 'ENGINEER' || Number(order.engineer_id) !== Number(user.id))) {
-    throw accessError('FORBIDDEN','Нет доступа к этому заказу',403);
+  if (user) {
+    if (!isKnownRole(user.role)) throw accessError('FORBIDDEN','Роль пользователя не поддерживается',403);
+    if (isAssignedOnly(user.role) && Number(order.engineer_id) !== Number(user.id)) {
+      throw accessError('FORBIDDEN','Нет доступа к этому заказу',403);
+    }
+    if (!isAssignedOnly(user.role) && !canAccessAllOrders(user.role)) {
+      throw accessError('FORBIDDEN','Нет доступа к заказам',403);
+    }
   }
   if (mutable) assertOrderMutable(order);
   return order;
@@ -66,9 +74,12 @@ export function installOrderAccess(app, db, service) {
       }
     }
     if (requestId == null) return;
-    // These routes have their own document/role/replay checks. Comments remain append-only.
-    const documented = service==='communications' || /\/(refund|cancel|cancellation-readiness|notes|comment|documents)$/.test(route);
     const readOnly = ['GET','HEAD'].includes(req.method);
+    if (!readOnly && !canMutateOrder(req.user.role,{service,route,method:req.method})) {
+      throw accessError('FORBIDDEN','Эта роль не может изменять ремонт или его операционные данные',403);
+    }
+    // These routes have their own documented correction/replay checks. Comments remain append-only.
+    const documented = service==='communications' || /\/(refund|cancel|cancellation-readiness|notes|comment|documents)$/.test(route);
     const order = await requireOrder(db, req.user, requestId, {mutable:!readOnly && !documented});
     req.order = order;
   });
