@@ -28,6 +28,12 @@ jobs:
         run: |
           npm run test:orders
           npm run test:crm
+      - name: Run business-logic unit tests (pricing guard, KPI bonus, workflow transitions)
+        working-directory: server
+        run: |
+          npm run test:pricing-guard
+          npm run test:kpi
+          npm run test:workflow
       - name: Install web dependencies
         working-directory: web
         run: npm install

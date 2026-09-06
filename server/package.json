@@ -9,6 +9,9 @@
     "test:finance": "node --test test/finance.test.js",
     "test:orders": "node --test test/order-close.test.js",
     "test:crm": "node --test test/crm-regression.test.js",
+    "test:pricing-guard": "node --test test/pricing-guard.test.js",
+    "test:kpi": "node --test test/kpi.test.js",
+    "test:workflow": "node --test test/workflow.test.js",
     "set-password": "node src/set-password.js"
   },
   "dependencies": {
