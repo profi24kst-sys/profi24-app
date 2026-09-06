@@ -4,7 +4,7 @@ import {PGlite} from '@electric-sql/pglite';
 import {migrateCore} from '../src/migrate.js';
 import {requireOrder} from '../src/access.js';
 import {
-  ROLE_CODES,ROLE_LABELS,canAccessAllOrders,canAdminFinance,canMutateOrder,
+  ROLE_CODES,ROLE_LABELS,PERMISSIONS,can,permissionsForRole,canAccessAllOrders,canAdminFinance,canMutateOrder,
   isAssignedOnly,roleAllowed
 } from '../src/rbac.js';
 
@@ -20,12 +20,34 @@ test('матрица содержит ровно шесть ролей из ТЗ
   assert.equal(isAssignedOnly('TRAINEE'),true);
 });
 
-test('операционные изменения разделены между бухгалтером и стажёром',()=>{
+test('permission layer разделяет операционные, финансовые и критические права',()=>{
+  const P=PERMISSIONS;
+  assert.equal(can('OWNER',P.ROLES_MANAGE),true);
+  assert.equal(can('SUPERVISOR',P.STAFF_MANAGE),true);
+  assert.equal(can('SUPERVISOR',P.ROLES_MANAGE),false);
+  assert.equal(can('SUPERVISOR',P.FINANCE_ADJUST),false);
+  assert.equal(can('ACCOUNTANT',P.FINANCE_ADJUST),true);
+  assert.equal(can('ACCOUNTANT',P.ORDERS_TECHNICAL),false);
+  assert.equal(can('MANAGER',P.FINANCE_RECEIVE_PAYMENT),true);
+  assert.equal(can('MANAGER',P.PAYROLL_VIEW),false);
+  assert.equal(can('ENGINEER',P.ORDERS_TECHNICAL),true);
+  assert.equal(can('ENGINEER',P.FINANCE_VIEW),false);
+  assert.equal(can('TRAINEE',P.ORDERS_NOTES),true);
+  assert.equal(can('TRAINEE',P.ORDERS_TECHNICAL),false);
+  assert.equal(can('TRAINEE',P.WAREHOUSE_VIEW),false);
+  assert.ok(permissionsForRole('OWNER').length>permissionsForRole('SUPERVISOR').length);
+  assert.deepEqual(permissionsForRole('UNKNOWN'),[]);
+});
+
+test('операционные изменения разделены между бухгалтером, инженером и стажёром',()=>{
   assert.equal(canMutateOrder('ACCOUNTANT',{service:'index2',route:'/api/v1/requests/:id/payment',method:'POST'}),true);
   assert.equal(canMutateOrder('ACCOUNTANT',{service:'index2',route:'/api/v1/requests/:id/diagnosis',method:'POST'}),false);
   assert.equal(canMutateOrder('TRAINEE',{service:'index2',route:'/api/v1/requests/:id/notes',method:'POST'}),true);
   assert.equal(canMutateOrder('TRAINEE',{service:'index2',route:'/api/v1/requests/:id/works',method:'POST'}),false);
   assert.equal(canMutateOrder('ENGINEER',{service:'index2',route:'/api/v1/requests/:id/works',method:'POST'}),true);
+  assert.equal(canMutateOrder('ENGINEER',{service:'index2',route:'/api/v1/requests/:id/payment',method:'POST'}),false);
+  assert.equal(canMutateOrder('ENGINEER',{service:'index2',route:'/api/v1/requests/:id/schedule',method:'PATCH'}),false);
+  assert.equal(canMutateOrder('ENGINEER',{service:'index2',route:'/api/v1/requests/:id/close',method:'POST'}),false);
 });
 
 test('миграция принимает шесть ролей и БД отвергает неизвестную роль',async()=>{
