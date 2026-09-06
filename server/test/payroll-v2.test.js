@@ -102,7 +102,7 @@ test('Stage D payroll: versioned rules, reversal documents and immutable periods
       await assert.rejects(s.query('UPDATE payroll_accruals SET total=0 WHERE period_id=$1',[periodId]),e=>e.code==='P2401');
     });
 
-    await t.test('only OWNER approves; approved period blocks recalculation and new adjustments',async()=>{
+    await t.test('only OWNER approves; locked period rejects recalculation, adjustments and retroactive rules',async()=>{
       assert.equal((await s.call('POST',`/api/v1/periods/${periodId}/approve`,{},2)).status,403);
       const approved=await s.call('POST',`/api/v1/periods/${periodId}/approve`,{},1);
       assert.equal(approved.status,200,JSON.stringify(approved));assert.equal(approved.data.status,'APPROVED');
@@ -110,6 +110,9 @@ test('Stage D payroll: versioned rules, reversal documents and immutable periods
       assert.equal(recalc.status,409,JSON.stringify(recalc));
       const late=await s.call('POST','/api/v1/adjustments',{user_id:4,month:'2026-09',type:'BONUS',amount:1000,reason:'Late change'},2);
       assert.equal(late.status,409,JSON.stringify(late));
+      const retro=await s.call('PUT','/api/v1/rules/4',{month:'2026-08',base_salary:90000,order_percent:9,work_percent:4,gross_profit_percent:0,reason:'Backdated terms'},1);
+      assert.equal(retro.status,409,JSON.stringify(retro));assert.equal(retro.error.code,'PAYROLL_RULE_RETRO_LOCKED');
+      await assert.rejects(s.query(`INSERT INTO payroll_rule_versions(user_id,effective_from,base_salary,order_percent,work_percent,gross_profit_percent,active,reason,created_by) VALUES(4,'2026-08-01',90000,9,4,0,true,'Direct backdate',1)`),e=>e.code==='P2401');
       const versions=(await s.query('SELECT effective_from,base_salary FROM payroll_rule_versions WHERE user_id=4 ORDER BY effective_from')).rows;
       assert.equal(versions.length,2);assert.equal(Number(versions[0].base_salary),100000);assert.equal(Number(versions[1].base_salary),150000);
     });
