@@ -22,6 +22,19 @@ export async function buildFinanceApp(pool,{logger=true,secret=process.env.JWT_S
   });
   installFinanceRbacGuard(app,pool);
   await financeRoutes(app,pool);
+  app.get('/api/v1/audit-view',async req=>{
+    const rawAccount=req.query?.account_id,rawBefore=req.query?.before;
+    const account=rawAccount==null||rawAccount===''?null:Number(rawAccount),before=rawBefore==null||rawBefore===''?null:Number(rawBefore);
+    if(account!=null&&(!Number.isSafeInteger(account)||account<1))return {data:[]};
+    if(before!=null&&(!Number.isSafeInteger(before)||before<1))return {data:[]};
+    const rows=(await pool.query(`SELECT l.*,a.name account_name,b.name branch_name
+      FROM finance_audit_log l
+      LEFT JOIN finance_accounts a ON a.id=l.account_id
+      LEFT JOIN branches b ON b.id=a.branch_id
+      WHERE ($1::int IS NULL OR l.account_id=$1) AND ($2::bigint IS NULL OR l.id<$2)
+      ORDER BY l.id DESC LIMIT 100`,[account,before])).rows;
+    return {data:rows};
+  });
   await pnlRoute(app,pool);
   return app;
 }
