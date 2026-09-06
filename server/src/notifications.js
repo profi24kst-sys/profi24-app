@@ -1,3 +1,4 @@
+import {authenticate,installOrderAccess} from './access.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
@@ -11,7 +12,7 @@ await app.register(jwt,{secret:process.env.JWT_SECRET||'dev-secret-change-me'});
 const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,max:Number(process.env.DB_POOL_MAX||10)});
 const q=(s,p=[])=>pool.query(s,p);
 const err=(reply,code,message,status=422)=>reply.code(status).send({data:null,error:{code,message}});
-const auth=async(req,reply)=>{try{await req.jwtVerify()}catch{return err(reply,'UNAUTHORIZED','Требуется авторизация',401)}};
+const auth=async(req,reply)=>{if(!await authenticate(req,reply,pool))return;};
 
 const schema=[
 `CREATE TABLE IF NOT EXISTS notification_events(
@@ -89,6 +90,7 @@ async function refresh(){
  }catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}
 }
 
+installOrderAccess(app,pool,'notifications');
 app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'profi24-notifications',version:'1.0.0'}});
 app.get('/api/v1/notifications',{preHandler:auth},async req=>{await refresh();const p=[req.user.id];let access;if(req.user.role==='ENGINEER')access=`((n.audience='ENGINEER' OR n.audience='USER') AND n.target_user_id=$1)`;else access=`(n.audience='OPS' OR n.target_user_id=$1)`;const rows=(await q(`SELECT n.*,nr.read_at AS user_read_at FROM notification_events n LEFT JOIN notification_reads nr ON nr.notification_id=n.id AND nr.user_id=$1 WHERE n.resolved_at IS NULL AND ${access} ORDER BY CASE n.severity WHEN 'critical' THEN 3 WHEN 'warning' THEN 2 ELSE 1 END DESC,n.created_at DESC LIMIT 300`,p)).rows;return{data:rows}});
 app.get('/api/v1/notifications/history',{preHandler:auth},async req=>{const p=[req.user.id];let access;if(req.user.role==='ENGINEER')access=`((n.audience='ENGINEER' OR n.audience='USER') AND n.target_user_id=$1)`;else access=`(n.audience='OPS' OR n.target_user_id=$1)`;const rows=(await q(`SELECT n.*,nr.read_at AS user_read_at FROM notification_events n LEFT JOIN notification_reads nr ON nr.notification_id=n.id AND nr.user_id=$1 WHERE ${access} ORDER BY n.created_at DESC LIMIT 500`,p)).rows;return{data:rows}});

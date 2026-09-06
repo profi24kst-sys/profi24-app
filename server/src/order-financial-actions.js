@@ -17,6 +17,7 @@ export async function refundPayment(c,{paymentId,user,body={},key,digest=fingerp
   if(!source)fail('Исходная оплата не найдена','NOT_FOUND',404);
   const request=(await c.query('SELECT * FROM requests WHERE id=$1 AND deleted_at IS NULL FOR UPDATE',[source.request_id])).rows[0];
   if(!request)fail('Заказ не найден','NOT_FOUND',404);
+  await c.query("SELECT set_config('app.order_refund_request',$1,true)",[String(request.id)]);
   const amount=money(body.amount),reason=text(body.reason,'Причина возврата',500),document=text(body.document_reference,'Документ возврата',200);
   const refunded=number((await c.query("SELECT COALESCE(sum(amount),0) amount FROM payments WHERE kind='REFUND' AND source_payment_id=$1",[source.id])).rows[0].amount);
   const available=number(source.amount)-refunded;

@@ -42,24 +42,23 @@ async function issue(requestId) {
   const r = (await q(`SELECT r.*,c.name customer_name,c.phone,c.address,e.category,e.brand,e.model,e.serial_number
     FROM requests r JOIN customers c ON c.id=r.customer_id
     LEFT JOIN equipment e ON e.id=r.equipment_id WHERE r.id=$1 AND r.deleted_at IS NULL`, [requestId])).rows[0];
-  if (!r || Number(r.total) <= 0 || Number(r.paid) + 0.01 < Number(r.total)) return null;
+  if (!r || r.status !== 'CLOSED' || !r.closed_at || !r.warranty_until || Number(r.paid) + 0.01 < Number(r.total)) return null;
 
   let card = (await q('SELECT * FROM warranty_cards WHERE request_id=$1', [requestId])).rows[0];
   if (!card) {
-    const days = await warrantyDays(requestId);
+    const days = Math.max(1,Math.ceil((new Date(r.warranty_until)-new Date(r.closed_at))/86400000));
     const token = crypto.randomBytes(24).toString('hex');
     card = (await q(`INSERT INTO warranty_cards(request_id,token,warranty_days,warranty_until)
-      VALUES($1,$2,$3,CURRENT_DATE+$3::int) RETURNING *`, [requestId, token, days])).rows[0];
-    await q('UPDATE requests SET warranty_until=$1 WHERE id=$2', [card.warranty_until, requestId]);
+      VALUES($1,$2,$3,$4) ON CONFLICT(request_id) DO UPDATE SET warranty_until=EXCLUDED.warranty_until,warranty_days=EXCLUDED.warranty_days RETURNING *`, [requestId, token, days, r.warranty_until])).rows[0];
     const no = `WARRANTY-${requestId}-${Date.now().toString().slice(-8)}`;
     await q(`INSERT INTO generated_documents(request_id,document_type,document_number)
-      VALUES($1,'WARRANTY',$2)`, [requestId, no]);
+      SELECT $1,'WARRANTY',$2 WHERE NOT EXISTS(SELECT 1 FROM generated_documents WHERE request_id=$1 AND document_type='WARRANTY')`, [requestId, no]);
     await q(`INSERT INTO request_history(request_id,action,details)
       VALUES($1,'WARRANTY_ISSUED',$2)`, [requestId, { warranty_days: days, warranty_until: card.warranty_until, document_number: no }]);
   }
 
   const url = `${baseUrl()}/warranty/${card.token}`;
-  const body = `Здравствуйте, ${r.customer_name}! Оплата по заказу ${r.number} получена полностью. Гарантийный талон PROFI24: ${url}. Гарантия действует до ${new Date(card.warranty_until).toLocaleDateString('ru-RU')}.`;
+  const body = `Здравствуйте, ${r.customer_name}! Ремонт по заказу ${r.number} завершён. Гарантийный талон PROFI24: ${url}. Гарантия действует до ${new Date(card.warranty_until).toLocaleDateString('ru-RU')}.`;
   try {
     await q(`INSERT INTO message_queue(request_id,template_code,channel,audience,recipient,body,status,dedupe_key)
       VALUES($1,'CUSTOMER_WARRANTY','WHATSAPP','CUSTOMER',$2,$3,$4,$5)
@@ -73,14 +72,12 @@ async function issue(requestId) {
 async function syncPayments() {
   const state = (await q('SELECT last_history_id FROM warranty_state WHERE id=1')).rows[0];
   const rows = (await q(`SELECT id,request_id FROM request_history
-    WHERE id>$1 AND action='PAYMENT_RECEIVED' ORDER BY id ASC LIMIT 500`, [state.last_history_id])).rows;
+    WHERE id>$1 AND action='REQUEST_CLOSED' ORDER BY id ASC LIMIT 500`, [state.last_history_id])).rows;
   let last = Number(state.last_history_id || 0);
   for (const h of rows) {
-    last = Math.max(last, Number(h.id));
-    try { await issue(h.request_id); } catch (e) { app.log.error(e); }
+    try { await issue(h.request_id);last = Math.max(last, Number(h.id)); } catch (e) { app.log.error(e);break; }
   }
-  const maxAny = (await q('SELECT COALESCE(max(id),$1)::bigint id FROM request_history', [last])).rows[0].id;
-  await q('UPDATE warranty_state SET last_history_id=$1,updated_at=now() WHERE id=1', [maxAny]);
+  await q('UPDATE warranty_state SET last_history_id=$1,updated_at=now() WHERE id=1', [last]);
 }
 
 app.get('/health', async () => { await q('SELECT 1'); return { ok: true, service: 'profi24-warranty', version: '1.0.1' }; });
@@ -92,7 +89,7 @@ app.get('/public/warranty/:token', async (req, reply) => {
       e.category,e.brand,e.model,e.serial_number,eng.name engineer_name
     FROM requests r JOIN customers c ON c.id=r.customer_id
     LEFT JOIN equipment e ON e.id=r.equipment_id LEFT JOIN users eng ON eng.id=r.engineer_id
-    WHERE r.id=$1 AND r.deleted_at IS NULL`, [card.request_id])).rows[0];
+    WHERE r.id=$1 AND r.deleted_at IS NULL AND r.status='CLOSED' AND r.closed_at IS NOT NULL AND r.paid+0.01>=r.total`, [card.request_id])).rows[0];
   if (!r) return reply.code(404).send({ data: null, error: { code: 'WARRANTY_INACTIVE', message: 'Гарантийный талон недействителен' } });
   const [works, parts] = await Promise.all([
     q('SELECT name,qty,unit_price FROM request_works WHERE request_id=$1 ORDER BY id', [card.request_id]),

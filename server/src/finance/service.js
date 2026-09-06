@@ -1,3 +1,4 @@
+import {recalculateOrder} from '../order-totals.js';
 import { createHash, randomUUID } from 'node:crypto';
 
 export class FinanceError extends Error {
@@ -68,11 +69,7 @@ export async function replay(c,key,digest) {
   if(row&&row.metadata?.fingerprint!==digest)reject('Этот номер операции уже использован с другими данными','IDEMPOTENCY_CONFLICT',409);
   return row;
 }
-export async function recalcParts(c,requestId) {
-  await c.query(`UPDATE requests r SET
-    direct_cost=COALESCE((SELECT sum(qty*direct_cost) FROM request_works WHERE request_id=r.id),0)+COALESCE((SELECT sum(qty*purchase_price) FROM parts WHERE request_id=r.id AND status<>'CANCELLED'),0),
-    total=GREATEST(0,COALESCE((SELECT sum(qty*unit_price) FROM request_works WHERE request_id=r.id),0)+COALESCE((SELECT sum(qty*sale_price) FROM parts WHERE request_id=r.id AND status<>'CANCELLED'),0)-COALESCE(r.discount_amount,0)),updated_at=now() WHERE r.id=$1`,[requestId]);
-}
+export async function recalcParts(c,id){return recalculateOrder(c,id)}
 export async function createTransfer(c,user,body,key,digest) {
   const from=id(body.from_account_id),to=id(body.to_account_id);
   if(from===to)reject('Для перевода нужны два разных счёта');

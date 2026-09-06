@@ -8,6 +8,7 @@
     "check": "node src/check-all.js",
     "test:finance": "node --test test/finance.test.js",
     "test:orders": "node --test test/order-close.test.js",
+    "test:crm": "node --test test/crm-regression.test.js",
     "set-password": "node src/set-password.js"
   },
   "dependencies": {

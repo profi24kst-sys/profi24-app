@@ -14,9 +14,9 @@ INSERT INTO requests(number,engineer_id,manager_id) VALUES ('TEST-1',2,3),('TEST
 CREATE TABLE request_history(id SERIAL PRIMARY KEY,request_id INT REFERENCES requests(id),user_id INT REFERENCES users(id),action TEXT,details JSONB,created_at TIMESTAMPTZ DEFAULT now());
 CREATE TABLE payments(id SERIAL PRIMARY KEY,request_id INT REFERENCES requests(id),amount NUMERIC(14,2) CHECK(amount>0),method TEXT,kind TEXT,reference TEXT,created_by INT REFERENCES users(id),created_at TIMESTAMPTZ DEFAULT now());
 CREATE TABLE parts(id SERIAL PRIMARY KEY,request_id INT REFERENCES requests(id),name TEXT,qty NUMERIC(10,2),purchase_price NUMERIC(14,2),sale_price NUMERIC(14,2),supplier TEXT,status TEXT,created_by INT REFERENCES users(id),created_at TIMESTAMPTZ DEFAULT now());
-CREATE TABLE request_works(id SERIAL PRIMARY KEY,request_id INT REFERENCES requests(id),qty NUMERIC,unit_price NUMERIC,direct_cost NUMERIC);
+CREATE TABLE request_works(id SERIAL PRIMARY KEY,request_id INT REFERENCES requests(id),qty NUMERIC,unit_price NUMERIC,direct_cost NUMERIC,performed_by INT REFERENCES users(id));
 CREATE TABLE payroll_rules(user_id INT,active BOOLEAN DEFAULT true,base_salary NUMERIC,order_percent NUMERIC,work_percent NUMERIC,gross_profit_percent NUMERIC);
-CREATE TABLE payroll_adjustments(period_month DATE,amount NUMERIC);
+CREATE TABLE payroll_adjustments(user_id INT REFERENCES users(id),period_month DATE,amount NUMERIC);
 CREATE TABLE tasks(id SERIAL PRIMARY KEY,title TEXT,request_id INT REFERENCES requests(id),assigned_to INT REFERENCES users(id),status TEXT DEFAULT 'OPEN');
 CREATE TABLE stock_reservations(id SERIAL PRIMARY KEY,request_id INT REFERENCES requests(id),status TEXT DEFAULT 'ACTIVE',released_at TIMESTAMPTZ);
 CREATE TABLE dispatch_controls(request_id INT PRIMARY KEY REFERENCES requests(id),status TEXT DEFAULT 'OPEN',resolution TEXT,resolved_at TIMESTAMPTZ,updated_by INT REFERENCES users(id),updated_at TIMESTAMPTZ DEFAULT now());
@@ -92,9 +92,10 @@ test('Статус CLOSED защищён на уровне базы данных
 });
 
 test('Возврат оплаты связан с исходным платежом, требует документ и открывает закрытый заказ',async()=>{
-  const s=await setup("UPDATE requests SET status='CLOSED',total=1000,paid=1000,closed_at=now() WHERE id=1;");try{
+  const s=await setup("UPDATE requests SET total=1000,paid=1000 WHERE id=1;");try{
     const cash=await s.create('Касса возвратов','CASH',0);
     const payment=(await s.query("INSERT INTO payments(request_id,amount,method,kind,reference,created_by,account_id) VALUES(1,1000,'ACCOUNT','PAYMENT','Чек оплаты 7',1,$1) RETURNING *",[cash])).rows[0];
+    await runTx(s.pool,async c=>{await c.query("SELECT set_config('app.completion_close_request','1',true)");await c.query("UPDATE requests SET status='CLOSED',closed_at=now() WHERE id=1")});
     assert.equal(await s.balance(cash),1000);
     const firstBody={amount:400,reason:'Частичный возврат по заявлению клиента',document_reference:'Чек возврата 8'};
     const first=await runTx(s.pool,c=>refundPayment(c,{paymentId:payment.id,user:{id:1,role:'OWNER'},body:firstBody,key:'1:refund-payment-test-0001'}));

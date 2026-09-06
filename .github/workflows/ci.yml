@@ -2,9 +2,9 @@ name: CRM CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'feature/**', 'fix/**']
   pull_request:
-    branches: [main]
+    branches: [main, 'feature/**', 'fix/**']
 
 jobs:
   validate:
@@ -23,6 +23,11 @@ jobs:
       - name: Run auditable finance tests
         working-directory: server
         run: npm run test:finance
+      - name: Run order and CRM regression tests
+        working-directory: server
+        run: |
+          npm run test:orders
+          npm run test:crm
       - name: Install web dependencies
         working-directory: web
         run: npm install

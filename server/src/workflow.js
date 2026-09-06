@@ -1,3 +1,4 @@
+import {authenticate,installOrderAccess} from './access.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
@@ -12,7 +13,7 @@ const pool=new pg.Pool({connectionString:process.env.DATABASE_URL});
 const q=(sql,params=[])=>pool.query(sql,params);
 const fail=(reply,code,message,status=422)=>reply.code(status).send({data:null,error:{code,message}});
 const auth=async(req,reply)=>{
-  try{await req.jwtVerify();}catch{return fail(reply,'UNAUTHORIZED','Требуется авторизация',401);}
+  if(!await authenticate(req,reply,pool))return;
   const user=(await q('SELECT id,name,role FROM users WHERE id=$1 AND active=true',[req.user.id])).rows[0];
   if(!user)return fail(reply,'FORBIDDEN','Пользователь неактивен',403);
   req.user=user;
@@ -41,6 +42,7 @@ function stage(request,events){
   if(request.status==='ACCEPTED'&&events.includes('DEPART')&&!events.includes('ARRIVE'))return 'ON_ROUTE';
   return request.status;
 }
+installOrderAccess(app,pool,'workflow');
 app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'profi24-workflow',version:'1.2.0'};});
 app.get('/api/v1/requests/:id/workflow',{preHandler:auth},async(req,reply)=>{
   const request=await current(req.params.id);

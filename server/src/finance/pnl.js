@@ -1,3 +1,4 @@
+import {calculatePayroll} from '../payroll-calculation.js';
 import { reject,monthRange } from './service.js';
 
 export async function pnlRoute(app,pool) {
@@ -13,14 +14,7 @@ export async function pnlRoute(app,pool) {
     let payroll=0,payrollAvailable=false;
     const tables=(await q("SELECT to_regclass('payroll_rules') rules,to_regclass('payroll_adjustments') adjustments,to_regclass('request_works') works")).rows[0];
     if(tables.rules&&tables.adjustments&&tables.works){
-      const users=(await q(`SELECT u.id,u.role,pr.* FROM payroll_rules pr JOIN users u ON u.id=pr.user_id WHERE pr.active=true AND u.active=true`)).rows;
-      for(const user of users){
-        const totals=(await q(`SELECT COALESCE(sum(r.total),0) revenue,COALESCE(sum(r.total-r.direct_cost),0) gross,
-          COALESCE(sum((SELECT sum(w.qty*w.unit_price) FROM request_works w WHERE w.request_id=r.id)),0) work
-          FROM requests r WHERE r.deleted_at IS NULL AND r.status='CLOSED' AND r.closed_at>=$1 AND r.closed_at<$2 AND ${user.role==='ENGINEER'?'r.engineer_id':'r.manager_id'}=$3`,[start,end,user.user_id])).rows[0];
-        payroll+=n(user.base_salary)+n(totals.revenue)*n(user.order_percent)/100+n(totals.gross)*n(user.gross_profit_percent)/100+n(totals.work)*n(user.work_percent)/100;
-      }
-      payroll+=n((await q('SELECT COALESCE(sum(amount),0) amount FROM payroll_adjustments WHERE period_month>=$1 AND period_month<$2',[start,end])).rows[0].amount);
+      payroll=(await calculatePayroll(pool,start,end)).totals.salary;
       payrollAvailable=true;
     }
     const revenue=n(orders.revenue)+n(cash.other_income),gross=n(orders.revenue)-n(orders.direct_cost);

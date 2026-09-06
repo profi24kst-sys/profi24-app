@@ -27,10 +27,10 @@ export async function closeOrder(c,{requestId,userId}){
     if(Number(value?.days)>0)warranty=Number(value.days);
   }
   await c.query("SELECT set_config('app.completion_close_request',$1,true)",[String(request.id)]);
+  await c.query('UPDATE repair_completions SET warranty_days=$1,closed_at=now(),updated_at=now() WHERE request_id=$2',[warranty,request.id]);
   const closed=(await c.query(`UPDATE requests SET status='CLOSED',closed_at=now(),warranty_until=CURRENT_DATE+$1::int,updated_at=now()
     WHERE id=$2 AND status='PAYMENT_REQUIRED' AND deleted_at IS NULL RETURNING closed_at,warranty_until`,[warranty,request.id])).rows[0];
   if(!closed)throw new OrderCloseError('Статус заказа изменился. Обновите данные','STATE_CONFLICT');
-  await c.query('UPDATE repair_completions SET warranty_days=$1,closed_at=now(),updated_at=now() WHERE request_id=$2',[warranty,request.id]);
   const documents=[];
   for(const [index,type] of ['COMPLETION_ACT','WARRANTY'].entries()){
     const number=`${type}-${request.id}-${Date.now().toString().slice(-8)}-${index+1}`;
