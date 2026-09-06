@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS finance_cash_shifts(
   branch_id INT NOT NULL REFERENCES branches(id),
   status TEXT NOT NULL DEFAULT 'OPEN' CHECK(status IN ('OPEN','CLOSED')),
   opening_balance NUMERIC(14,2) NOT NULL,
+  actual_opening_balance NUMERIC(14,2),
+  opening_variance NUMERIC(14,2),
   opened_by INT NOT NULL REFERENCES users(id),
   opened_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   opening_note TEXT NOT NULL DEFAULT '',
@@ -78,12 +80,14 @@ BEGIN
     END IF;
     NEW.branch_id:=account_row.branch_id;
     NEW.status:='OPEN';
+    NEW.actual_opening_balance:=COALESCE(NEW.actual_opening_balance,NEW.opening_balance);
+    NEW.opening_variance:=NEW.actual_opening_balance-NEW.opening_balance;
     NEW.closed_by:=NULL;NEW.closed_at:=NULL;NEW.expected_closing_balance:=NULL;NEW.actual_closing_balance:=NULL;NEW.variance:=NULL;
   ELSE
     IF OLD.status='CLOSED' THEN
       RAISE EXCEPTION 'Закрытую кассовую смену нельзя изменять' USING ERRCODE='P2401';
     END IF;
-    NEW.account_id:=OLD.account_id;NEW.branch_id:=OLD.branch_id;NEW.opened_by:=OLD.opened_by;NEW.opened_at:=OLD.opened_at;NEW.opening_balance:=OLD.opening_balance;
+    NEW.account_id:=OLD.account_id;NEW.branch_id:=OLD.branch_id;NEW.opened_by:=OLD.opened_by;NEW.opened_at:=OLD.opened_at;NEW.opening_balance:=OLD.opening_balance;NEW.actual_opening_balance:=OLD.actual_opening_balance;NEW.opening_variance:=OLD.opening_variance;
     IF NEW.status='CLOSED' THEN
       IF NEW.closed_by IS NULL OR NEW.expected_closing_balance IS NULL OR NEW.actual_closing_balance IS NULL THEN
         RAISE EXCEPTION 'Для закрытия смены укажите ответственного и фактический остаток' USING ERRCODE='P2400';
@@ -104,7 +108,7 @@ CREATE OR REPLACE FUNCTION finance_cash_shift_event_log() RETURNS trigger AS $$
 BEGIN
   IF TG_OP='INSERT' THEN
     INSERT INTO finance_cash_shift_events(shift_id,event_type,actor_id,details)
-    VALUES(NEW.id,'OPEN',NEW.opened_by,jsonb_build_object('opening_balance',NEW.opening_balance,'branch_id',NEW.branch_id,'account_id',NEW.account_id));
+    VALUES(NEW.id,'OPEN',NEW.opened_by,jsonb_build_object('opening_balance',NEW.opening_balance,'actual_opening_balance',NEW.actual_opening_balance,'opening_variance',NEW.opening_variance,'branch_id',NEW.branch_id,'account_id',NEW.account_id));
   ELSIF OLD.status='OPEN' AND NEW.status='CLOSED' THEN
     INSERT INTO finance_cash_shift_events(shift_id,event_type,actor_id,details)
     VALUES(NEW.id,'CLOSE',NEW.closed_by,jsonb_build_object('expected',NEW.expected_closing_balance,'actual',NEW.actual_closing_balance,'variance',NEW.variance));
@@ -114,6 +118,25 @@ END; $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS trg_finance_cash_shift_event_log ON finance_cash_shifts;
 CREATE TRIGGER trg_finance_cash_shift_event_log AFTER INSERT OR UPDATE ON finance_cash_shifts
 FOR EACH ROW EXECUTE FUNCTION finance_cash_shift_event_log();
+
+CREATE OR REPLACE FUNCTION finance_attach_open_cash_shift() RETURNS trigger AS $$
+DECLARE account_type TEXT; open_shift BIGINT; shift_account INT; shift_status TEXT;
+BEGIN
+  SELECT type INTO account_type FROM finance_accounts WHERE id=NEW.account_id;
+  IF NEW.cash_shift_id IS NOT NULL THEN
+    SELECT account_id,status INTO shift_account,shift_status FROM finance_cash_shifts WHERE id=NEW.cash_shift_id;
+    IF shift_account IS NULL OR shift_account<>NEW.account_id OR shift_status<>'OPEN' THEN
+      RAISE EXCEPTION 'Кассовая операция относится к другой или закрытой смене' USING ERRCODE='P2409';
+    END IF;
+  ELSIF account_type='CASH' THEN
+    SELECT id INTO open_shift FROM finance_cash_shifts WHERE account_id=NEW.account_id AND status='OPEN' ORDER BY id DESC LIMIT 1;
+    NEW.cash_shift_id:=open_shift;
+  END IF;
+  RETURN NEW;
+END; $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_finance_attach_open_cash_shift ON finance_transactions;
+CREATE TRIGGER trg_finance_attach_open_cash_shift BEFORE INSERT ON finance_transactions
+FOR EACH ROW EXECUTE FUNCTION finance_attach_open_cash_shift();
 
 CREATE OR REPLACE FUNCTION finance_cash_shift_event_immutable() RETURNS trigger AS $$
 BEGIN
