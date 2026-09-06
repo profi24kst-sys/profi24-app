@@ -8,7 +8,7 @@
     "check": "node src/check-all.js",
     "test:finance": "node --test test/finance.test.js",
     "test:orders": "node --test test/order-close.test.js",
-    "test:crm": "node --test test/crm-regression.test.js",
+    "test:crm": "node --test test/crm-regression.test.js test/rbac.test.js",
     "test:rbac": "node --test test/rbac.test.js",
     "set-password": "node src/set-password.js"
   },
