@@ -74,7 +74,7 @@ test('Stage D KPI: role-correct metrics, permission scope and approved payroll b
     });
 
     let engineerSnapshot;
-    await t.test('SUPERVISOR calculates snapshots; only OWNER approves',async()=>{
+    await t.test('SUPERVISOR calculates snapshots; only OWNER approves and approved plan is locked',async()=>{
       assert.equal((await s.call('POST','/api/v1/results/calculate',{branch_id:s.branch,month:'2026-09'},3)).status,403);
       const calc=await s.call('POST','/api/v1/results/calculate',{branch_id:s.branch,month:'2026-09'},2);
       assert.equal(calc.status,201,JSON.stringify(calc));engineerSnapshot=calc.data.snapshots.find(x=>Number(x.user_id)===6);assert.ok(engineerSnapshot);
@@ -82,11 +82,13 @@ test('Stage D KPI: role-correct metrics, permission scope and approved payroll b
       assert.equal((await s.call('POST',`/api/v1/results/${engineerSnapshot.id}/approve`,{},2)).status,403);
       const approved=await s.call('POST',`/api/v1/results/${engineerSnapshot.id}/approve`,{},1);
       assert.equal(approved.status,200,JSON.stringify(approved));assert.equal(approved.data.status,'APPROVED');
+      const rewrite=await s.call('PUT','/api/v1/plans/6',{month:'2026-09',target_jobs:2,target_revenue:150000,target_avg_check:75000,target_conversion:100,target_sla:95,target_quality:95,bonus_max:999999},2);
+      assert.equal(rewrite.status,409,JSON.stringify(rewrite));assert.equal(rewrite.error.code,'KPI_ALREADY_APPROVED');
       await assert.rejects(s.query('UPDATE kpi_result_snapshots SET bonus_amount=0 WHERE id=$1',[engineerSnapshot.id]),e=>e.code==='P2401');
       await assert.rejects(s.query('DELETE FROM kpi_result_snapshots WHERE id=$1',[engineerSnapshot.id]),e=>e.code==='P2401');
     });
 
-    await t.test('approved KPI bonus enters payroll exactly once and locks the used plan from rewrite',async()=>{
+    await t.test('approved KPI bonus enters payroll exactly once and locks the used plan from direct rewrite',async()=>{
       const[start,end]=payrollPeriod('2026-09');const calc=await calculatePayroll(s.pool,start,end,{branchId:s.branch});const engineer=calc.rows.find(x=>Number(x.id)===6);
       assert.equal(Number(engineer.kpi_bonus),20000);assert.equal(Number(engineer.salary),20000);assert.equal(Number(engineer.kpi_result_id),Number(engineerSnapshot.id));
       await assert.rejects(s.query('UPDATE kpi_plans SET bonus_max=999999 WHERE user_id=6 AND month=$1::date',['2026-09-01']),e=>e.code==='P2401');
