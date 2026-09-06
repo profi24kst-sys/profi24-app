@@ -1,4 +1,5 @@
 import {authenticate,installOrderAccess} from './access.js';
+import {roleAllowed} from './rbac.js';
 import Fastify from 'fastify';
 import jwt from '@fastify/jwt';
 import pg from 'pg';
@@ -26,11 +27,10 @@ for(const s of[
  `CREATE INDEX IF NOT EXISTS idx_equipment_deleted_at ON equipment(deleted_at)`
 ])await q(s);
 
-
 installOrderAccess(app,pool,'directory-admin');
-app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'directory-admin',version:'1.1.0'}});
+app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'directory-admin',version:'1.2-rbac'}});
 
-app.get('/api/v1/customers/deleted-by-phone',{preHandler:auth},async(req,reply)=>{if(!['OWNER','MANAGER'].includes(req.user.role))return fail(reply,'FORBIDDEN','Поиск удалённых клиентов доступен менеджеру и владельцу',403);const pn=phone(req.query?.phone);if(!pn)return fail(reply,'VALIDATION','Укажите телефон');const row=(await q(`SELECT id,name,phone,email,address,notes,deleted_at,delete_reason FROM customers WHERE phone_norm=$1 AND deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 1`,[pn])).rows[0];return{data:row||null}});
+app.get('/api/v1/customers/deleted-by-phone',{preHandler:auth},async(req,reply)=>{if(!roleAllowed(req.user.role,['OWNER','MANAGER']))return fail(reply,'FORBIDDEN','Поиск удалённых клиентов доступен менеджеру, управляющему и владельцу',403);const pn=phone(req.query?.phone);if(!pn)return fail(reply,'VALIDATION','Укажите телефон');const row=(await q(`SELECT id,name,phone,email,address,notes,deleted_at,delete_reason FROM customers WHERE phone_norm=$1 AND deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 1`,[pn])).rows[0];return{data:row||null}});
 
 app.get('/api/v1/deleted',{preHandler:owner},async()=>{const [customers,equipment]=await Promise.all([
  q(`SELECT c.id,c.name,c.phone,c.address,c.deleted_at,c.delete_reason,u.name deleted_by_name,(SELECT count(*) FROM requests r WHERE r.customer_id=c.id AND r.deleted_at IS NULL)::int request_count FROM customers c LEFT JOIN users u ON u.id=c.deleted_by WHERE c.deleted_at IS NOT NULL ORDER BY c.deleted_at DESC LIMIT 500`),
