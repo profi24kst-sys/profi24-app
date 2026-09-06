@@ -1,0 +1,22 @@
+const ROLE_LABELS=Object.freeze({OWNER:'Собственник',SUPERVISOR:'Управляющий',ACCOUNTANT:'Бухгалтер',MANAGER:'Менеджер',ENGINEER:'Инженер',TRAINEE:'Стажёр'});
+const P=Object.freeze({
+ ORDERS_VIEW_ALL:'orders.view.all',ORDERS_VIEW_ASSIGNED:'orders.view.assigned',ORDERS_CREATE:'orders.create',ORDERS_ASSIGN:'orders.assign',ORDERS_EDIT:'orders.edit',ORDERS_TECHNICAL:'orders.technical',ORDERS_NOTES:'orders.notes',ORDERS_FILES:'orders.files',ORDERS_CLOSE:'orders.close',ORDERS_CANCEL:'orders.cancel',
+ FINANCE_VIEW:'finance.view',FINANCE_RECEIVE_PAYMENT:'finance.receive_payment',FINANCE_REFUND:'finance.refund',FINANCE_ADJUST:'finance.adjust',FINANCE_AUDIT:'finance.audit',
+ WAREHOUSE_VIEW:'warehouse.view',WAREHOUSE_RECEIVE:'warehouse.receive',WAREHOUSE_ISSUE:'warehouse.issue',WAREHOUSE_WRITEOFF:'warehouse.writeoff',
+ STAFF_VIEW:'staff.view',STAFF_MANAGE:'staff.manage',ROLES_MANAGE:'roles.manage',ANALYTICS_VIEW:'analytics.view',PAYROLL_VIEW:'payroll.view',PAYROLL_MANAGE:'payroll.manage',OPERATIONS_MANAGE:'operations.manage',COMMUNICATIONS_MANAGE:'communications.manage',APPROVALS_MANAGE:'approvals.manage',DIRECTORY_DELETED_LOOKUP:'directory.deleted_lookup',DIRECTORY_DELETE:'directory.delete',ENGINEER_PERFORMANCE_VIEW:'engineer.performance.view'
+});
+const map={
+ OWNER:new Set(Object.values(P)),
+ SUPERVISOR:new Set([P.ORDERS_VIEW_ALL,P.ORDERS_CREATE,P.ORDERS_ASSIGN,P.ORDERS_EDIT,P.ORDERS_TECHNICAL,P.ORDERS_NOTES,P.ORDERS_FILES,P.ORDERS_CLOSE,P.ORDERS_CANCEL,P.FINANCE_VIEW,P.FINANCE_AUDIT,P.WAREHOUSE_VIEW,P.WAREHOUSE_RECEIVE,P.WAREHOUSE_ISSUE,P.WAREHOUSE_WRITEOFF,P.STAFF_VIEW,P.STAFF_MANAGE,P.ANALYTICS_VIEW,P.OPERATIONS_MANAGE,P.COMMUNICATIONS_MANAGE,P.APPROVALS_MANAGE,P.DIRECTORY_DELETED_LOOKUP,P.ENGINEER_PERFORMANCE_VIEW]),
+ ACCOUNTANT:new Set([P.ORDERS_VIEW_ALL,P.FINANCE_VIEW,P.FINANCE_RECEIVE_PAYMENT,P.FINANCE_REFUND,P.FINANCE_ADJUST,P.FINANCE_AUDIT,P.WAREHOUSE_VIEW,P.PAYROLL_VIEW,P.PAYROLL_MANAGE]),
+ MANAGER:new Set([P.ORDERS_VIEW_ALL,P.ORDERS_CREATE,P.ORDERS_ASSIGN,P.ORDERS_EDIT,P.ORDERS_TECHNICAL,P.ORDERS_NOTES,P.ORDERS_FILES,P.ORDERS_CLOSE,P.ORDERS_CANCEL,P.FINANCE_VIEW,P.FINANCE_RECEIVE_PAYMENT,P.WAREHOUSE_VIEW,P.WAREHOUSE_RECEIVE,P.WAREHOUSE_ISSUE,P.OPERATIONS_MANAGE,P.COMMUNICATIONS_MANAGE,P.APPROVALS_MANAGE,P.DIRECTORY_DELETED_LOOKUP,P.ENGINEER_PERFORMANCE_VIEW]),
+ ENGINEER:new Set([P.ORDERS_VIEW_ASSIGNED,P.ORDERS_TECHNICAL,P.ORDERS_NOTES,P.ORDERS_FILES,P.APPROVALS_MANAGE]),
+ TRAINEE:new Set([P.ORDERS_VIEW_ASSIGNED,P.ORDERS_NOTES,P.ORDERS_FILES])
+};
+function user(){try{return JSON.parse(localStorage.getItem('user')||'null')}catch{return null}}
+function can(permission,role=user()?.role){return Boolean(role&&map[role]?.has(permission))}
+function roleAllowed(role,allowed=[]){return allowed.includes(role)||(role==='SUPERVISOR'&&allowed.includes('MANAGER'))}
+function permissions(role=user()?.role){return role&&map[role]?[...map[role]]:[]}
+window.Profi24RBAC=Object.freeze({P,ROLE_LABELS,can,roleAllowed,permissions,user});
+window.dispatchEvent(new CustomEvent('profi24:rbac-ready'));
+export{P,ROLE_LABELS,can,roleAllowed,permissions,user};
