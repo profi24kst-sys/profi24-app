@@ -130,7 +130,8 @@ export function canMutateOrder(role,{service='',route='',method='GET'}={}){
     return false;
   }
   if(role==='TRAINEE'){
-    return (/\/(notes|comment)$/.test(route)&&can(role,P.ORDERS_NOTES))||(service==='documents'&&/\/files(?:\/|$)/.test(route)&&can(role,P.ORDERS_FILES));
+    if(/\/(notes|comment)$/.test(route))return can(role,P.ORDERS_NOTES);
+    return service==='documents'&&method==='POST'&&/\/requests\/:id\/files$/.test(route)&&can(role,P.ORDERS_FILES);
   }
   return false;
 }
