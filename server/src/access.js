@@ -8,6 +8,19 @@ export function accessError(code, message, statusCode = 409) {
 async function tableExists(db,name){
   return Boolean((await db.query('SELECT to_regclass($1) name',[`public.${name}`])).rows[0]?.name);
 }
+async function managerBranchIds(db,userId){
+  if(!await tableExists(db,'user_branches'))return null;
+  return (await db.query('SELECT branch_id FROM user_branches WHERE user_id=$1 ORDER BY branch_id',[userId])).rows.map(x=>Number(x.branch_id));
+}
+async function allowedManagerRequestIds(db,userId,requestIds){
+  const ids=[...new Set((requestIds||[]).map(Number).filter(Number.isSafeInteger))];
+  if(!ids.length)return new Set();
+  const branches=await managerBranchIds(db,userId);
+  if(branches===null)return new Set(ids);
+  if(!branches.length)return new Set();
+  const rows=(await db.query('SELECT id FROM requests WHERE id=ANY($1::int[]) AND branch_id=ANY($2::int[]) AND deleted_at IS NULL',[ids,branches])).rows;
+  return new Set(rows.map(x=>Number(x.id)));
+}
 export async function authenticate(req, reply, db) {
   if (req[authenticated]) return true;
   try { await req.jwtVerify(); }
@@ -100,6 +113,45 @@ export function installOrderAccess(app, db, service) {
     if (status >= 500) req.log.error(e);
     return reply.code(status).send({data:null,error:{code:e.code || 'INTERNAL_ERROR',message:status>=500?'Не удалось выполнить действие. Обновите страницу и повторите.':e.message}});
   });
+
+  if(service==='index2')app.addHook('preSerialization',async(req,reply,payload)=>{
+    if(req.user?.role!=='MANAGER'||!payload||payload.data==null)return payload;
+    const route=req.routeOptions?.url||'';
+    const branches=await managerBranchIds(db,req.user.id);
+    if(branches===null)return payload;
+    if(route==='/api/v1/requests'&&Array.isArray(payload.data)){
+      payload.data=payload.data.filter(row=>branches.includes(Number(row.branch_id)));
+      return payload;
+    }
+    if(route==='/api/v1/customers'&&Array.isArray(payload.data)){
+      const ids=payload.data.map(x=>Number(x.id)).filter(Number.isSafeInteger);
+      if(!ids.length||!branches.length){payload.data=payload.data.map(x=>({...x,request_count:0,lifetime_paid:0}));return payload;}
+      const rows=(await db.query(`SELECT customer_id,count(*)::int request_count,COALESCE(sum(paid),0)::numeric lifetime_paid FROM requests WHERE deleted_at IS NULL AND branch_id=ANY($1::int[]) AND customer_id=ANY($2::int[]) GROUP BY customer_id`,[branches,ids])).rows;
+      const agg=new Map(rows.map(x=>[Number(x.customer_id),x]));
+      payload.data=payload.data.map(x=>{const a=agg.get(Number(x.id));return {...x,request_count:a?.request_count||0,lifetime_paid:a?.lifetime_paid||0}});
+      return payload;
+    }
+    if((route==='/api/v1/complaints'||route==='/api/v1/dispatch-controls')&&Array.isArray(payload.data)){
+      const allowed=await allowedManagerRequestIds(db,req.user.id,payload.data.map(x=>x.request_id));
+      payload.data=payload.data.filter(x=>x.request_id!=null&&allowed.has(Number(x.request_id)));
+      return payload;
+    }
+    if(route==='/api/v1/dashboard'&&payload.data&&typeof payload.data==='object'&&!Array.isArray(payload.data)){
+      if(!branches.length){payload.data={...payload.data,total:0,new:0,active:0,closed:0,overdue:0,gross_profit:0,tasks_open:0,complaints_open:0};return payload;}
+      const orders=(await db.query(`SELECT count(*)::int total,count(*) FILTER(WHERE status='NEW')::int new,count(*) FILTER(WHERE status NOT IN ('CLOSED','CANCELLED'))::int active,count(*) FILTER(WHERE status='CLOSED')::int closed,count(*) FILTER(WHERE sla_deadline<now() AND status NOT IN ('CLOSED','CANCELLED'))::int overdue,COALESCE(sum(total-direct_cost) FILTER(WHERE status='CLOSED'),0)::numeric gross_profit FROM requests WHERE deleted_at IS NULL AND branch_id=ANY($1::int[])`,[branches])).rows[0];
+      const tasks=(await db.query(`SELECT count(DISTINCT t.id)::int c FROM tasks t LEFT JOIN requests r ON r.id=t.request_id WHERE t.status='OPEN' AND (t.assigned_to=$2 OR (r.deleted_at IS NULL AND r.branch_id=ANY($1::int[])))`,[branches,req.user.id])).rows[0].c;
+      const complaints=(await db.query(`SELECT count(*)::int c FROM complaints co JOIN requests r ON r.id=co.request_id WHERE co.status='OPEN' AND r.deleted_at IS NULL AND r.branch_id=ANY($1::int[])`,[branches])).rows[0].c;
+      payload.data={...payload.data,...orders,tasks_open:tasks,complaints_open:complaints};
+      return payload;
+    }
+    if(route==='/api/v1/dashboard/finance'&&payload.data&&typeof payload.data==='object'&&!Array.isArray(payload.data)){
+      const totals=branches.length?(await db.query(`SELECT COALESCE(sum(total),0)::numeric revenue,COALESCE(sum(direct_cost),0)::numeric direct_cost,COALESCE(sum(total-direct_cost),0)::numeric gross_profit,COALESCE(sum(paid),0)::numeric paid,COALESCE(sum(GREATEST(total-paid,0)),0)::numeric outstanding FROM requests WHERE created_at>=date_trunc('month',now()) AND deleted_at IS NULL AND status<>'CANCELLED' AND branch_id=ANY($1::int[])`,[branches])).rows[0]:{revenue:0,direct_cost:0,gross_profit:0,paid:0,outstanding:0};
+      payload.data={totals};
+      return payload;
+    }
+    return payload;
+  });
+
   app.addHook('preHandler', async (req, reply) => {
     const route = req.routeOptions.url;
     if (!route?.startsWith('/api/') || route === '/api/v1/auth/login') return;
