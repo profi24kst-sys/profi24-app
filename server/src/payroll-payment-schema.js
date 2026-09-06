@@ -2,6 +2,7 @@ export const payrollPaymentStatements=[
 `ALTER TABLE finance_transactions DROP CONSTRAINT IF EXISTS finance_kind_check`,
 `ALTER TABLE finance_transactions ADD CONSTRAINT finance_kind_check CHECK(kind IN
   ('MANUAL','ORDER_EXPENSE','PART_PURCHASE','PART_RETURN','PAYMENT','REFUND','OPENING','ADJUSTMENT','TRANSFER','REVERSAL','PAYROLL_PAYMENT'))`,
+`ALTER TABLE payroll_adjustments ALTER COLUMN branch_id SET NOT NULL`,
 `CREATE TABLE IF NOT EXISTS payroll_payments(
   id BIGSERIAL PRIMARY KEY,
   period_id BIGINT NOT NULL REFERENCES payroll_periods(id),
@@ -44,6 +45,20 @@ BEGIN
 END $$ LANGUAGE plpgsql`,
 `DROP TRIGGER IF EXISTS trg_payroll_rule_version_insert_guard ON payroll_rule_versions`,
 `CREATE TRIGGER trg_payroll_rule_version_insert_guard BEFORE INSERT ON payroll_rule_versions FOR EACH ROW EXECUTE FUNCTION payroll_rule_version_insert_guard()`,
+`CREATE OR REPLACE FUNCTION payroll_adjustment_insert_guard() RETURNS trigger AS $$
+BEGIN
+  IF EXISTS(
+    SELECT 1 FROM payroll_periods p
+    WHERE p.branch_id=NEW.branch_id
+      AND p.period_month=NEW.period_month
+      AND p.status IN ('APPROVED','PAID','CLOSED')
+  ) THEN
+    RAISE EXCEPTION 'После утверждения расчётного периода новые корректировки запрещены' USING ERRCODE='P2401';
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql`,
+`DROP TRIGGER IF EXISTS trg_payroll_adjustment_insert_guard ON payroll_adjustments`,
+`CREATE TRIGGER trg_payroll_adjustment_insert_guard BEFORE INSERT ON payroll_adjustments FOR EACH ROW EXECUTE FUNCTION payroll_adjustment_insert_guard()`,
 `CREATE OR REPLACE FUNCTION payroll_period_guard() RETURNS trigger AS $$
 DECLARE allowed BOOLEAN:=false;
 BEGIN
