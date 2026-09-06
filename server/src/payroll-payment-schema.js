@@ -28,6 +28,22 @@ BEGIN
 END $$ LANGUAGE plpgsql`,
 `DROP TRIGGER IF EXISTS trg_payroll_payments_immutable ON payroll_payments`,
 `CREATE TRIGGER trg_payroll_payments_immutable BEFORE UPDATE OR DELETE ON payroll_payments FOR EACH ROW EXECUTE FUNCTION payroll_payment_guard()`,
+`CREATE OR REPLACE FUNCTION payroll_rule_version_insert_guard() RETURNS trigger AS $$
+BEGIN
+  IF EXISTS(
+    SELECT 1
+    FROM payroll_periods p
+    JOIN payroll_accruals a ON a.period_id=p.id AND a.revision=p.calculation_revision
+    WHERE a.user_id=NEW.user_id
+      AND p.period_month>=NEW.effective_from
+      AND p.status IN ('APPROVED','PAID','CLOSED')
+  ) THEN
+    RAISE EXCEPTION 'Нельзя задним числом менять условия оплаты после утверждения расчётного периода' USING ERRCODE='P2401';
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql`,
+`DROP TRIGGER IF EXISTS trg_payroll_rule_version_insert_guard ON payroll_rule_versions`,
+`CREATE TRIGGER trg_payroll_rule_version_insert_guard BEFORE INSERT ON payroll_rule_versions FOR EACH ROW EXECUTE FUNCTION payroll_rule_version_insert_guard()`,
 `CREATE OR REPLACE FUNCTION payroll_period_guard() RETURNS trigger AS $$
 DECLARE allowed BOOLEAN:=false;
 BEGIN
