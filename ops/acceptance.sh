@@ -27,6 +27,7 @@ check_header(){
 }
 
 check api /health
+check auth /auth-health
 check warehouse /warehouse-health
 check procurement /procurement-health
 check payroll /payroll-health
