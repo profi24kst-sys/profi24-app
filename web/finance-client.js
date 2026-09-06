@@ -3,7 +3,8 @@ export const financeDate = () => new Intl.DateTimeFormat('en-CA',{timeZone:'Asia
 export const financeKey = () => globalThis.crypto?.randomUUID?.() || 'op-'+Date.now()+'-'+Math.random().toString(36).slice(2);
 export const financeUser = () => {try{return JSON.parse(localStorage.getItem('user')||'null');}catch{return null;}};
 export async function financeApi(path,{method='GET',body,key,signal}={}) {
-  const response=await fetch('/finance-api/v1'+path,{method,signal,headers:{Authorization:'Bearer '+localStorage.token,...(body?{'Content-Type':'application/json'}:{}),...(key?{'Idempotency-Key':key}:{})},...(body?{body:JSON.stringify(body)}:{})});
+  const resolved=path.startsWith('/audit')?'/audit-view'+path.slice('/audit'.length):path;
+  const response=await fetch('/finance-api/v1'+resolved,{method,signal,headers:{Authorization:'Bearer '+localStorage.token,...(body?{'Content-Type':'application/json'}:{}),...(key?{'Idempotency-Key':key}:{})},...(body?{body:JSON.stringify(body)}:{})});
   const json=await response.json().catch(()=>({}));
   if(!response.ok)throw new Error(json.error?.message||'Финансовый модуль недоступен. Повторите запрос.');
   return json.data;
