@@ -4,6 +4,7 @@ set -eu
 fail(){ echo "preflight_error: $*" >&2; exit 1; }
 require(){ eval "v=\${$1:-}"; [ -n "$v" ] || fail "$1 обязателен"; }
 placeholder(){ case "$1" in *change-me*|*change-this*|*replace-with*|*example*|*changeme*|*secret*) return 0;; *) return 1;; esac; }
+positive_int(){ name=$1; value=$2; case "$value" in ''|*[!0-9]*) fail "$name должен быть числом";; esac; }
 
 require NODE_ENV
 [ "$NODE_ENV" = "production" ] || fail "NODE_ENV должен быть production"
@@ -36,19 +37,19 @@ if [ "$ALLOW_INSECURE_HTTP" != "YES" ]; then
 fi
 
 DB_POOL_MAX=${DB_POOL_MAX:-10}
-case "$DB_POOL_MAX" in ''|*[!0-9]*) fail "DB_POOL_MAX должен быть положительным целым";; esac
+positive_int DB_POOL_MAX "$DB_POOL_MAX"
 [ "$DB_POOL_MAX" -gt 0 ] || fail "DB_POOL_MAX должен быть > 0"
 
 WEB_PORT=${WEB_PORT:-5173}
-case "$WEB_PORT" in ''|*[!0-9]*) fail "WEB_PORT должен быть числом";; esac
+positive_int WEB_PORT "$WEB_PORT"
 [ "$WEB_PORT" -gt 0 ] && [ "$WEB_PORT" -le 65535 ] || fail "WEB_PORT вне диапазона 1..65535"
 
 BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-14}
-case "$BACKUP_RETENTION_DAYS" in ''|*[!0-9]*) fail "BACKUP_RETENTION_DAYS должен быть числом";; esac
+positive_int BACKUP_RETENTION_DAYS "$BACKUP_RETENTION_DAYS"
 [ "$BACKUP_RETENTION_DAYS" -ge 7 ] || fail "храните production backup минимум 7 дней"
 
 AUTH_RATE_LIMIT_PER_MINUTE=${AUTH_RATE_LIMIT_PER_MINUTE:-30}
-case "$AUTH_RATE_LIMIT_PER_MINUTE" in ''|*[!0-9]*) fail "AUTH_RATE_LIMIT_PER_MINUTE должен быть числом";; esac
+positive_int AUTH_RATE_LIMIT_PER_MINUTE "$AUTH_RATE_LIMIT_PER_MINUTE"
 [ "$AUTH_RATE_LIMIT_PER_MINUTE" -ge 10 ] && [ "$AUTH_RATE_LIMIT_PER_MINUTE" -le 120 ] || fail "AUTH_RATE_LIMIT_PER_MINUTE должен быть в диапазоне 10..120"
 
 AUTH_TOKEN_TTL=${AUTH_TOKEN_TTL:-12h}
@@ -56,8 +57,20 @@ case "$AUTH_TOKEN_TTL" in
   *h) AUTH_TOKEN_HOURS=${AUTH_TOKEN_TTL%h} ;;
   *) fail "AUTH_TOKEN_TTL задаётся в часах, например 8h или 12h" ;;
 esac
-case "$AUTH_TOKEN_HOURS" in ''|*[!0-9]*) fail "AUTH_TOKEN_TTL должен содержать целое число часов";; esac
+positive_int AUTH_TOKEN_TTL "$AUTH_TOKEN_HOURS"
 [ "$AUTH_TOKEN_HOURS" -ge 1 ] && [ "$AUTH_TOKEN_HOURS" -le 24 ] || fail "AUTH_TOKEN_TTL должен быть от 1h до 24h"
+
+AUTH_FAILURE_LIMIT=${AUTH_FAILURE_LIMIT:-10}
+positive_int AUTH_FAILURE_LIMIT "$AUTH_FAILURE_LIMIT"
+[ "$AUTH_FAILURE_LIMIT" -ge 3 ] && [ "$AUTH_FAILURE_LIMIT" -le 20 ] || fail "AUTH_FAILURE_LIMIT должен быть в диапазоне 3..20"
+
+AUTH_FAILURE_WINDOW_MINUTES=${AUTH_FAILURE_WINDOW_MINUTES:-10}
+positive_int AUTH_FAILURE_WINDOW_MINUTES "$AUTH_FAILURE_WINDOW_MINUTES"
+[ "$AUTH_FAILURE_WINDOW_MINUTES" -ge 1 ] && [ "$AUTH_FAILURE_WINDOW_MINUTES" -le 60 ] || fail "AUTH_FAILURE_WINDOW_MINUTES должен быть в диапазоне 1..60"
+
+AUTH_LOCK_MINUTES=${AUTH_LOCK_MINUTES:-15}
+positive_int AUTH_LOCK_MINUTES "$AUTH_LOCK_MINUTES"
+[ "$AUTH_LOCK_MINUTES" -ge 1 ] && [ "$AUTH_LOCK_MINUTES" -le 120 ] || fail "AUTH_LOCK_MINUTES должен быть в диапазоне 1..120"
 
 if [ -n "${WHATSAPP_TOKEN:-}" ] || [ -n "${WHATSAPP_PHONE_NUMBER_ID:-}" ]; then
   [ -n "${WHATSAPP_TOKEN:-}" ] && [ -n "${WHATSAPP_PHONE_NUMBER_ID:-}" ] || fail "WHATSAPP_TOKEN и WHATSAPP_PHONE_NUMBER_ID задаются вместе"
@@ -65,4 +78,4 @@ fi
 
 case "$JWT_SECRET" in *profi24*|*password*|*qwerty*) fail "JWT_SECRET выглядит предсказуемым";; esac
 
-echo "preflight_ok node_env=$NODE_ENV public_base_url=$PUBLIC_BASE_URL backup_retention_days=$BACKUP_RETENTION_DAYS auth_token_ttl=$AUTH_TOKEN_TTL"
+echo "preflight_ok node_env=$NODE_ENV public_base_url=$PUBLIC_BASE_URL backup_retention_days=$BACKUP_RETENTION_DAYS auth_token_ttl=$AUTH_TOKEN_TTL auth_failure_limit=$AUTH_FAILURE_LIMIT"
