@@ -1,7 +1,10 @@
+import {authenticate,installOrderAccess} from './access.js';
+import {roleAllowed} from './rbac.js';
 import Fastify from'fastify';import cors from'@fastify/cors';import helmet from'@fastify/helmet';import jwt from'@fastify/jwt';import pg from'pg';
-const app=Fastify({logger:true});await app.register(cors,{origin:true,credentials:true});await app.register(helmet,{contentSecurityPolicy:false});await app.register(jwt,{secret:process.env.JWT_SECRET||'dev-secret-change-me'});const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,max:Number(process.env.DB_POOL_MAX||10)}),q=(s,p=[])=>pool.query(s,p),fail=(r,c,m,s=422)=>r.code(s).send({data:null,error:{code:c,message:m}});const auth=async(req,r)=>{try{await req.jwtVerify()}catch{return fail(r,'UNAUTHORIZED','Требуется авторизация',401)}};const ops=async(req,r)=>{await auth(req,r);if(r.sent)return;if(!['OWNER','MANAGER'].includes(req.user.role))return fail(r,'FORBIDDEN','Доступно руководителю и менеджеру',403)};
+const app=Fastify({logger:true});await app.register(cors,{origin:true,credentials:true});await app.register(helmet,{contentSecurityPolicy:false});await app.register(jwt,{secret:process.env.JWT_SECRET||'dev-secret-change-me'});const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,max:Number(process.env.DB_POOL_MAX||10)}),q=(s,p=[])=>pool.query(s,p),fail=(r,c,m,s=422)=>r.code(s).send({data:null,error:{code:c,message:m}});const auth=async(req,r)=>{if(!await authenticate(req,r,pool))return;};const ops=async(req,r)=>{await auth(req,r);if(r.sent)return;if(!roleAllowed(req.user.role,['OWNER','MANAGER']))return fail(r,'FORBIDDEN','Доступно руководителю и менеджеру',403)};
 const stageSql=`CASE WHEN r.status='ACCEPTED' AND EXISTS(SELECT 1 FROM request_stage_events se WHERE se.request_id=r.id AND se.event='DEPART') AND NOT EXISTS(SELECT 1 FROM request_stage_events se WHERE se.request_id=r.id AND se.event='ARRIVE') THEN 'ON_ROUTE' ELSE r.status END`;
-app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'profi24-operations-center',version:'1.2.0'}});
+installOrderAccess(app,pool,'operations-center');
+app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'profi24-operations-center',version:'1.3-rbac'}});
 app.get('/api/v1/operations/live',{preHandler:ops},async()=>{const now=new Date();
  const metrics=(await q(`SELECT
  count(*) FILTER(WHERE status NOT IN('CLOSED','CANCELLED'))::int active,

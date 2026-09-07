@@ -7,6 +7,9 @@
     catch { return ''; }
   }
   function token() { return localStorage.token || ''; }
+  function operationKey() {
+    return globalThis.crypto?.randomUUID?.() || `crm-${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+  }
   function money(n) { return new Intl.NumberFormat('ru-KZ', { maximumFractionDigits: 0 }).format(Number(n || 0)) + ' ₸'; }
   function safe(s) {
     return String(s ?? '').replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
@@ -149,15 +152,22 @@
   async function refund() {
     if (role() !== 'OWNER') return alert('Возврат оплаты доступен только владельцу');
     const r = await loadOrder();
-    const pays = (r?.payments || []).filter(x => x.kind === 'PAYMENT');
+    const pays = (r?.payments || []).filter(x => x.kind === 'PAYMENT').map(x => {
+      const linked = (r.payments || []).filter(y => y.kind === 'REFUND' && (Number(y.source_payment_id) === Number(x.id) || y.reference === 'refund:' + x.id)).reduce((sum, y) => sum + Number(y.amount || 0), 0);
+      return { ...x, available: Number(x.amount || 0) - Number(x.refunded_amount ?? linked) };
+    }).filter(x => x.available > 0.001);
     if (!pays.length) return alert('Нет платежей для возврата');
-    const opts = pays.map(x => `<option value="${x.id}">${money(x.amount)} · ${new Date(x.created_at).toLocaleString('ru-RU')}</option>`).join('');
-    modal('Возврат оплаты', `<label>Исходный платёж<select name="payment">${opts}</select></label><label>Сумма возврата<input name="amount" type="number" min="1" step="1"></label><label>Причина<textarea name="reason" placeholder="Причина возврата"></textarea></label>`, async box => {
+    const opts = pays.map(x => `<option value="${x.id}">№${x.id} · ${safe(x.account_name || x.method)} · доступно ${money(x.available)}</option>`).join('');
+    const key = operationKey();
+    modal('Возврат оплаты', `<label>Исходный платёж<select name="payment">${opts}</select></label><label>Сумма возврата<input name="amount" type="number" min="0.01" step="0.01"></label><label>Причина<textarea name="reason" minlength="3" placeholder="Причина возврата"></textarea></label><label>Документ возврата<input name="document_reference" maxlength="200" placeholder="Чек возврата / платёжное поручение"></label><p>Деньги спишутся с исходного счёта. Первоначальная оплата сохранится.</p>`, async box => {
       const id = box.querySelector('[name="payment"]').value;
       const amount = Number(box.querySelector('[name="amount"]').value);
-      const reason = box.querySelector('[name="reason"]').value;
+      const reason = box.querySelector('[name="reason"]').value.trim();
+      const document_reference = box.querySelector('[name="document_reference"]').value.trim();
       if (amount <= 0) throw new Error('Укажите сумму возврата');
-      await api('/payments/' + id + '/refund', { method: 'POST', body: JSON.stringify({ amount, reason }) });
+      if (reason.length < 3) throw new Error('Укажите причину возврата');
+      if (document_reference.length < 2) throw new Error('Укажите документ возврата');
+      await api('/payments/' + id + '/refund', { method: 'POST', headers: { 'Idempotency-Key': key }, body: JSON.stringify({ amount, reason, document_reference }) });
     });
   }
 
@@ -165,18 +175,25 @@
     if (role() !== 'OWNER') return alert('Служебный расход доступен только владельцу');
     const r = await loadOrder();
     if (!r) return;
-    modal('Служебный расход', `<label>Сумма<input name="amount" type="number" min="1"></label><label>Категория<input name="category" value="Расход по заказу ${safe(r.number)}"></label><label>Способ оплаты<select name="method"><option value="CASH">Наличные</option><option value="BANK">Банк</option><option value="KASPI">Kaspi</option><option value="CARD">Карта</option></select></label><label>Комментарий<textarea name="comment">Заказ ${safe(r.number)}</textarea></label>`, async box => {
+    const accounts = (await api('/finance-api/v1/accounts')).filter(a => a.is_active);
+    if (!accounts.length) return alert('Нет активного денежного счёта. Сначала создайте его в разделе «Финансы».');
+    const opts = accounts.map(a => `<option value="${a.id}">${safe(a.name)}</option>`).join('');
+    const key = operationKey();
+    modal('Служебный расход', `<label>Сумма<input name="amount" type="number" min="0.01" step="0.01"></label><label>Категория<input name="category" value="Расход по заказу ${safe(r.number)}"></label><label>Источник оплаты<select required name="account_id"><option value="">Выберите денежный счёт</option>${opts}</select></label><label>Комментарий<textarea name="comment">Заказ ${safe(r.number)}</textarea></label><label>Чек / документ<input name="document_reference"></label>`, async box => {
       const amount = Number(box.querySelector('[name="amount"]').value);
       if (amount <= 0) throw new Error('Укажите сумму');
-      await api('/finance-api/v1/transactions', {
+      const account_id = Number(box.querySelector('[name="account_id"]').value);
+      if (!account_id) throw new Error('Выберите денежный счёт');
+      await api('/finance-api/v1/requests/' + r.id + '/expenses', {
         method: 'POST',
+        headers: { 'Idempotency-Key': key },
         body: JSON.stringify({
-          type: 'EXPENSE',
           category: box.querySelector('[name="category"]').value,
           amount,
-          payment_method: box.querySelector('[name="method"]').value,
+          account_id,
           occurred_at: new Date().toISOString().slice(0, 10),
-          comment: box.querySelector('[name="comment"]').value
+          comment: box.querySelector('[name="comment"]').value,
+          document_reference: box.querySelector('[name="document_reference"]').value.trim() || null
         })
       });
     });

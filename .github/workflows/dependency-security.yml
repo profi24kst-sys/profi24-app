@@ -1,0 +1,40 @@
+name: Dependency Security
+
+on:
+  push:
+    branches: [main, 'feature/**', 'fix/**']
+  pull_request:
+    branches: [main, 'feature/**', 'fix/**']
+
+jobs:
+  backend_audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - name: Install production backend dependencies exactly from lockfile
+        working-directory: server
+        run: npm ci --omit=dev
+      - name: Reject critical production dependency vulnerabilities
+        working-directory: server
+        run: npm audit --omit=dev --audit-level=critical
+
+  web_audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install web dependencies exactly from lockfile
+        working-directory: web
+        run: npm ci
+      - name: Reject critical web dependency vulnerabilities
+        working-directory: web
+        run: npm audit --audit-level=critical
