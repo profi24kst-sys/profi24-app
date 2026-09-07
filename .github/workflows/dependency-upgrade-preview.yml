@@ -1,61 +1,70 @@
-name: Dependency Upgrade Preview
+name: Final Dependency Cleanup
 
 on:
   push:
     branches: ['feature/production-acceptance']
-  pull_request:
-    branches: [main, 'feature/**', 'fix/**']
 
 permissions:
   contents: write
 
 jobs:
-  generate:
+  finalize:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'push' && github.ref_name || github.sha }}
+          ref: feature/production-acceptance
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Keep backend security-sensitive dependencies on audited versions
+      - name: Remove temporary preview job and require lockfiles in CRM CI
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('.github/workflows/ci.yml')
+          s=p.read_text()
+          marker='  dependency_upgrade_preview:\n'
+          if marker in s:
+              start=s.index(marker)
+              end=s.index('\n  validate:\n',start)
+              s=s[:start]+s[end+1:]
+          old_api="      - name: Install API dependencies\n        working-directory: server\n        run: npm install\n"
+          new_api="      - name: Install API dependencies from lockfile\n        working-directory: server\n        run: npm ci\n"
+          old_web="      - name: Install web dependencies\n        working-directory: web\n        run: npm install\n"
+          new_web="      - name: Install web dependencies from lockfile\n        working-directory: web\n        run: npm ci\n"
+          if old_api in s:
+              s=s.replace(old_api,new_api,1)
+          if old_web in s:
+              s=s.replace(old_web,new_web,1)
+          if 'dependency_upgrade_preview:' in s or 'run: npm install\n' in s:
+              raise SystemExit('CRM CI cleanup incomplete')
+          p.write_text(s)
+          PY
+      - name: Verify deterministic backend dependencies
         working-directory: server
-        run: npm install --save fastify@^5.12.2 @fastify/jwt@^10.2.2
-      - name: Verify backend critical advisories are gone
-        working-directory: server
-        run: npm audit --omit=dev --audit-level=critical
-      - name: Show resolved backend security-sensitive versions
-        working-directory: server
-        run: npm ls fastify @fastify/jwt fast-jwt --depth=2
-      - name: Pin deterministic frontend dependencies and build
+        run: |
+          npm ci
+          npm audit --omit=dev --audit-level=critical
+          npm ls fastify @fastify/jwt fast-jwt --depth=2
+      - name: Verify deterministic frontend dependencies and build
         working-directory: web
         run: |
-          npm install --save-exact @vitejs/plugin-react@6.1.1 vite@8.2.2 lucide-react@1.41.0 react@19.2.8 react-dom@19.2.8
+          npm ci
           npm audit --audit-level=critical
           npm run build
-      - name: Upload audited manifests
-        uses: actions/upload-artifact@v4
-        with:
-          name: audited-dependency-manifests
-          path: |
-            server/package.json
-            server/package-lock.json
-            web/package.json
-            web/package-lock.json
-          if-no-files-found: error
-          retention-days: 1
-      - name: Commit audited manifests back to feature branch
-        if: github.event_name == 'push' && github.ref_name == 'feature/production-acceptance'
+      - name: Verify production Docker build uses frontend lockfile
+        run: grep -Fxq 'RUN npm ci' web/Dockerfile
+      - name: Remove temporary cleanup workflow and commit final pipeline
         run: |
-          CHANGES=$(git status --porcelain -- server/package.json server/package-lock.json web/package.json web/package-lock.json)
-          if [ -z "$CHANGES" ]; then
-            echo 'Audited manifests already committed.'
-            exit 0
-          fi
-          printf '%s\n' "$CHANGES"
+          rm .github/workflows/dependency-upgrade-preview.yml
+          git diff --check
+          git diff -- .github/workflows/ci.yml web/Dockerfile
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add server/package.json server/package-lock.json web/package.json web/package-lock.json
-          git commit -m 'fix: pin audited frontend dependencies'
+          git add .github/workflows/ci.yml .github/workflows/dependency-upgrade-preview.yml
+          if git diff --cached --quiet; then
+            echo 'Final dependency pipeline is already clean.'
+            exit 0
+          fi
+          git commit -m 'ci: finalize locked dependency pipeline'
           git push origin HEAD:feature/production-acceptance
