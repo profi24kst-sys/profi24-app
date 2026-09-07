@@ -2,7 +2,16 @@ const ROLE_LABELS={OWNER:'Собственник',SUPERVISOR:'Управляющ
 const getUser=()=>{try{return JSON.parse(localStorage.user||'null')}catch{return null}};
 const getRole=()=>getUser()?.role||'';
 const nodeText=node=>(node?.textContent||'').trim();
-const setVisible=(node,visible)=>{if(node)node.hidden=!visible};
+const RBAC_HIDDEN='data-rbac-hidden';
+const setVisible=(node,visible)=>{if(!node)return;if(visible){node.removeAttribute(RBAC_HIDDEN);node.hidden=false}else{node.setAttribute(RBAC_HIDDEN,'1');node.hidden=true}};
+
+(function installRbacVisibilityGuard(){
+  if(document.getElementById('profi24-rbac-visibility'))return;
+  const style=document.createElement('style');
+  style.id='profi24-rbac-visibility';
+  style.textContent='[data-rbac-hidden="1"]{display:none!important}';
+  document.head.appendChild(style);
+})();
 
 function updateNavigation(){
   const role=getRole();
@@ -74,4 +83,5 @@ function schedule(){if(scheduled)return;scheduled=true;queueMicrotask(apply)}
 new MutationObserver(schedule).observe(document.documentElement,{childList:true,subtree:true});
 window.addEventListener('storage',schedule);
 window.addEventListener('profi24:session-role-changed',schedule);
+window.addEventListener('profi24:core-ui-ready',schedule);
 schedule();
