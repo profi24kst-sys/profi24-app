@@ -13,12 +13,18 @@ async function source(url){return fs.readFile(url,'utf8')}
 
 function extractKinds(text){
   const out=new Set();
-  for(const re of [
-    /upload\([^)]*?['"]([A-Z][A-Z_]+)['"]\)/g,
-    /<option\s+value=\\?['"]([A-Z][A-Z_]+)\\?['"]/g,
-    /<option\s+value=['"]([A-Z][A-Z_]+)['"]/g
-  ]){
-    let match;while((match=re.exec(text)))out.add(match[1]);
+  let match;
+  const upload=/upload\([^)]*?['"]([A-Z][A-Z_]+)['"]\)/g;
+  while((match=upload.exec(text)))out.add(match[1]);
+
+  // The direct order-files widget passes kind.value into uploadFiles, so its
+  // attachment kinds live in the dedicated data-kind select. Do not scan
+  // unrelated selects (for example CLIENT/ENGINEER signature type options).
+  const kindSelect=/<select[^>]*\bdata-kind\b[^>]*>([\s\S]*?)<\/select>/g;
+  while((match=kindSelect.exec(text))){
+    const block=match[1];
+    const option=/<option\s+value=\\?['"]([A-Z][A-Z_]+)\\?['"]/g;
+    let item;while((item=option.exec(block)))out.add(item[1]);
   }
   return [...out];
 }
