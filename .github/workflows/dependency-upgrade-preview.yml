@@ -6,11 +6,16 @@ on:
   pull_request:
     branches: [main, 'feature/**', 'fix/**']
 
+permissions:
+  contents: write
+
 jobs:
   generate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref_name || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -32,3 +37,15 @@ jobs:
             server/package-lock.json
           if-no-files-found: error
           retention-days: 1
+      - name: Commit audited manifests back to feature branch
+        if: github.event_name == 'push' && github.ref_name == 'feature/production-acceptance'
+        run: |
+          if git diff --quiet -- server/package.json server/package-lock.json; then
+            echo 'Audited manifests already committed.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add server/package.json server/package-lock.json
+          git commit -m 'fix: upgrade security-sensitive backend dependencies'
+          git push origin HEAD:feature/production-acceptance
