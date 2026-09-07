@@ -28,10 +28,10 @@ jobs:
       - name: Show resolved backend security-sensitive versions
         working-directory: server
         run: npm ls fastify @fastify/jwt fast-jwt --depth=2
-      - name: Generate deterministic web lockfile and build it
+      - name: Pin deterministic frontend dependencies and build
         working-directory: web
         run: |
-          npm install
+          npm install --save-exact @vitejs/plugin-react@6.1.1 vite@8.2.2 lucide-react@1.41.0 react@19.2.8 react-dom@19.2.8
           npm audit --audit-level=critical
           npm run build
       - name: Upload audited manifests
@@ -57,5 +57,5 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add server/package.json server/package-lock.json web/package.json web/package-lock.json
-          git commit -m 'fix: lock audited frontend dependencies'
+          git commit -m 'fix: pin audited frontend dependencies'
           git push origin HEAD:feature/production-acceptance
