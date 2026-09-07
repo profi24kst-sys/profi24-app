@@ -140,7 +140,7 @@ app.post('/api/v1/requests/:id/signatures',async(req,r)=>{
 });
 
 app.get('/api/v1/requests/:id/document-data',async(req,r)=>{
-  if(!await requestAccess(req,r,req.params.id))return;
+  if(!await requestAccess(req,r))return;
   const x=(await q(`SELECT r.*,c.name customer_name,c.phone,c.address,e.category,e.brand,e.model,e.serial_number,eng.name engineer_name FROM requests r JOIN customers c ON c.id=r.customer_id LEFT JOIN equipment e ON e.id=r.equipment_id LEFT JOIN users eng ON eng.id=r.engineer_id WHERE r.id=$1`,[req.params.id])).rows[0];
   const [w,p,s]=await Promise.all([
     q('SELECT * FROM request_works WHERE request_id=$1 ORDER BY id',[req.params.id]),
@@ -155,7 +155,7 @@ app.post('/api/v1/requests/:id/documents',async(req,r)=>{
   const type=req.body?.document_type;
   if(!['WORK_ORDER','DEFECT_ACT','COMPLETION_ACT','WARRANTY'].includes(type))return fail(r,'VALIDATION','Некорректный тип документа');
   const no=`${type}-${req.params.id}-${Date.now().toString().slice(-8)}`;
-  const x=(await q('INSERT INTO generated_documents(request_id,document_type,document_number,created_by) VALUES($1,$2,$3,$4,$5) RETURNING *',[req.params.id,type,no,req.user.id])).rows[0];
+  const x=(await q('INSERT INTO generated_documents(request_id,document_type,document_number,created_by) VALUES($1,$2,$3,$4) RETURNING *',[req.params.id,type,no,req.user.id])).rows[0];
   await hist(req.params.id,req.user.id,'DOCUMENT_GENERATED',{document_type:type,document_number:no});
   return r.code(201).send({data:x});
 });
