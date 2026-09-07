@@ -41,12 +41,12 @@ async function openOrder(page,number){
   const target=page.getByText(number,{exact:true}).first();
   await target.waitFor({state:'visible',timeout:8000});
   await target.click();
-  const currentLayout=page.locator('.hcHeroLeft strong').filter({hasText:number}).first();
-  const legacyLayout=page.locator('.ordertitle h2').filter({hasText:number}).first();
-  await Promise.race([
-    currentLayout.waitFor({state:'visible',timeout:8000}),
-    legacyLayout.waitFor({state:'visible',timeout:8000})
-  ]);
+  const layouts=[
+    page.locator('.o360Hero small').filter({hasText:number}).first(),
+    page.locator('.ordertitle h2').filter({hasText:number}).first(),
+    page.locator('.engScreen header h1').filter({hasText:number}).first()
+  ];
+  await Promise.any(layouts.map(locator=>locator.waitFor({state:'visible',timeout:8000})));
 }
 async function visibleNav(page,label){return page.getByRole('button',{name:new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}`)}).first().isVisible().catch(()=>false)}
 async function assertVisible(page,label,want=true){const got=await visibleNav(page,label);if(got!==want)fail(`${label} visibility expected ${want}, got ${got}`)}
