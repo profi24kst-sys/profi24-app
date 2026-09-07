@@ -19,7 +19,7 @@ const pool=new pg.Pool({connectionString:process.env.DATABASE_URL});
 const q=(s,p=[])=>pool.query(s,p);
 const fail=(r,c,m,s=422)=>r.code(s).send({data:null,error:{code:c,message:m}});
 const root=path.resolve(process.env.UPLOAD_DIR||'/data/uploads');
-const allowedKinds=new Set(['DEFECT_PHOTO','NAMEPLATE','PHOTO_AFTER','RECEIPT','OTHER']);
+const allowedKinds=new Set(['DEFECT_PHOTO','PHOTO_BEFORE','NAMEPLATE','PHOTO_AFTER','RECEIPT','OTHER']);
 await fs.mkdir(root,{recursive:true});
 
 for(const s of[
@@ -155,7 +155,7 @@ app.post('/api/v1/requests/:id/documents',async(req,r)=>{
   const type=req.body?.document_type;
   if(!['WORK_ORDER','DEFECT_ACT','COMPLETION_ACT','WARRANTY'].includes(type))return fail(r,'VALIDATION','Некорректный тип документа');
   const no=`${type}-${req.params.id}-${Date.now().toString().slice(-8)}`;
-  const x=(await q('INSERT INTO generated_documents(request_id,document_type,document_number,created_by) VALUES($1,$2,$3,$4) RETURNING *',[req.params.id,type,no,req.user.id])).rows[0];
+  const x=(await q('INSERT INTO generated_documents(request_id,document_type,document_number,created_by) VALUES($1,$2,$3,$4,$5) RETURNING *',[req.params.id,type,no,req.user.id])).rows[0];
   await hist(req.params.id,req.user.id,'DOCUMENT_GENERATED',{document_type:type,document_number:no});
   return r.code(201).send({data:x});
 });
