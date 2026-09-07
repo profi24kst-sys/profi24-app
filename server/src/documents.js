@@ -1,4 +1,5 @@
 import {authenticate,installOrderAccess,protectOrderTables} from './access.js';
+import {ATTACHMENT_KIND_SET} from './attachment-policy.js';
 import {contentDispositionAttachment,decodeDataUrl,inspectUpload,fileSecurityError} from './file-security.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
@@ -19,7 +20,6 @@ const pool=new pg.Pool({connectionString:process.env.DATABASE_URL});
 const q=(s,p=[])=>pool.query(s,p);
 const fail=(r,c,m,s=422)=>r.code(s).send({data:null,error:{code:c,message:m}});
 const root=path.resolve(process.env.UPLOAD_DIR||'/data/uploads');
-const allowedKinds=new Set(['DEFECT_PHOTO','PHOTO_BEFORE','NAMEPLATE','PHOTO_AFTER','RECEIPT','OTHER']);
 await fs.mkdir(root,{recursive:true});
 
 for(const s of[
@@ -62,7 +62,7 @@ app.post('/api/v1/requests/:id/files',async(req,r)=>{
   const b=req.body||{};
   if(!b.name||!b.data)return fail(r,'VALIDATION','Файл не передан');
   const kind=String(b.kind||'OTHER').toUpperCase();
-  if(!allowedKinds.has(kind))return fail(r,'VALIDATION','Некорректный тип вложения');
+  if(!ATTACHMENT_KIND_SET.has(kind))return fail(r,'VALIDATION','Некорректный тип вложения');
   let decoded,meta;
   try{
     decoded=decodeDataUrl(b.data);
