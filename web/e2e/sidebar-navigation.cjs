@@ -56,7 +56,23 @@ async function clickBase(page, label, expectedHeading) {
 
     await clickBase(page, 'Клиенты', 'Клиенты');
     await clickBase(page, 'Техника', 'Техника');
+    await clickBase(page, 'Финансы', 'Финансы');
+
+    // Staff used to freeze the browser: rbac-ui-v2 rewrote option.textContent on
+    // every MutationObserver pass, which scheduled itself forever. Exercise the
+    // exact Finance -> Staff path from manual localhost acceptance and prove the
+    // page remains responsive after the role select is mounted.
+    await clickBase(page, 'Сотрудники', 'Сотрудники');
+    await page.getByText('Добавить сотрудника', { exact: true }).waitFor({ state: 'visible', timeout: 6000 });
+    const roleSelect = page.locator('main select').first();
+    await roleSelect.waitFor({ state: 'visible', timeout: 6000 });
+    const roleValues = await roleSelect.locator('option').evaluateAll(opts => opts.map(o => o.value));
+    for (const role of ['OWNER','SUPERVISOR','ACCOUNTANT','MANAGER','ENGINEER','TRAINEE']) {
+      if (!roleValues.includes(role)) fail(`staff role option missing: ${role}`);
+    }
+    await page.waitForTimeout(800);
     await clickBase(page, 'Заказы', 'Заказы');
+    console.log('staff_navigation=ok');
 
     await page.getByRole('button', { name: /Новый заказ/ }).click({ timeout: 6000 });
     await page.locator('.drawer').waitFor({ state: 'visible', timeout: 6000 });
