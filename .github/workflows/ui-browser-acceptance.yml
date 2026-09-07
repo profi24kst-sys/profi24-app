@@ -33,17 +33,18 @@ jobs:
           AUTH_LOCK_MINUTES=15
           EOF
       - name: Start browser acceptance stack
-        run: docker compose up -d --build db api auth branchadmin web
-      - name: Wait for web, auth and branch services
+        run: docker compose up -d --build db api auth branchadmin notifications web
+      - name: Wait for web, auth, branch and notifications services
         run: |
           for i in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:5173/health >/dev/null \
               && curl -fsS http://127.0.0.1:5173/auth-health >/dev/null \
-              && curl -fsS http://127.0.0.1:5173/branch-health >/dev/null; then exit 0; fi
+              && curl -fsS http://127.0.0.1:5173/branch-health >/dev/null \
+              && curl -fsS http://127.0.0.1:5173/notifications-health >/dev/null; then exit 0; fi
             sleep 3
           done
           docker compose ps
-          docker compose logs --tail=150 api auth branchadmin web
+          docker compose logs --tail=150 api auth branchadmin notifications web
           exit 1
       - name: Bootstrap browser OWNER
         run: docker compose exec -T api node src/bootstrap-owner.js browser-owner@test.invalid 'BrowserOwner2026Kst9' 'Browser Owner'
@@ -72,7 +73,7 @@ jobs:
         if: failure()
         run: |
           docker compose ps
-          docker compose logs --tail=200 api auth branchadmin web
+          docker compose logs --tail=200 api auth branchadmin notifications web
       - name: Stop browser acceptance stack
         if: always()
         run: docker compose down -v
