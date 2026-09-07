@@ -48,10 +48,12 @@ jobs:
       - name: Commit audited manifests back to feature branch
         if: github.event_name == 'push' && github.ref_name == 'feature/production-acceptance'
         run: |
-          if git diff --quiet -- server/package.json server/package-lock.json web/package.json web/package-lock.json; then
+          CHANGES=$(git status --porcelain -- server/package.json server/package-lock.json web/package.json web/package-lock.json)
+          if [ -z "$CHANGES" ]; then
             echo 'Audited manifests already committed.'
             exit 0
           fi
+          printf '%s\n' "$CHANGES"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add server/package.json server/package-lock.json web/package.json web/package-lock.json
