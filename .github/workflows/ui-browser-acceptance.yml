@@ -2,7 +2,7 @@ name: UI Browser Acceptance
 
 on:
   push:
-    branches: [main, 'fix/**', 'hotfix/**']
+    branches: [main]
   pull_request:
     branches: [main]
 
