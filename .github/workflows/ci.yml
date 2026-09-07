@@ -34,6 +34,19 @@ jobs:
           PUBLIC_BASE_URL='https://crm.profi24.kz' \
           DB_POOL_MAX=10 WEB_PORT=443 BACKUP_RETENTION_DAYS=14 \
           sh ops/preflight.sh
+      - name: Validate Windows recovery PowerShell syntax
+        shell: pwsh
+        run: |
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path './ops/repair-local.ps1'),
+            [ref]$null,
+            [ref]$errors
+          )
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
       - name: Install API dependencies from lockfile
         working-directory: server
         run: npm ci
