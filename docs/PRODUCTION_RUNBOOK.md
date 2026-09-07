@@ -1,7 +1,7 @@
 # PROFI24 CRM — Production Runbook
 
 ## Purpose
-This is the supported path for provisioning, starting, checking, backing up and recovering the production CRM. Do not bypass preflight, account-security, attachment-security or restore safeguards.
+This is the supported path for provisioning, starting, checking, backing up and recovering the production CRM. Do not bypass the preflight, account-security or restore safeguards.
 
 ## 1. Prepare production environment
 Create a production env file outside source control, for example `.env.production`.
@@ -12,20 +12,7 @@ Required minimum:
 - strong `JWT_SECRET` (32+ characters, different from database password);
 - HTTPS `PUBLIC_BASE_URL`;
 - HTTPS `CORS_ORIGIN` without wildcard/localhost;
-- `BACKUP_RETENTION_DAYS>=7`;
-- bounded authentication settings.
-
-Recommended authentication defaults:
-
-```text
-AUTH_RATE_LIMIT_PER_MINUTE=30
-AUTH_TOKEN_TTL=12h
-AUTH_FAILURE_LIMIT=10
-AUTH_FAILURE_WINDOW_MINUTES=10
-AUTH_LOCK_MINUTES=15
-```
-
-Production preflight enforces safe ranges: token TTL 1–24 hours, rate limit 10–120 requests/minute, failure threshold 3–20, failure window 1–60 minutes and lock duration 1–120 minutes.
+- `BACKUP_RETENTION_DAYS>=7`.
 
 Validate without starting application services:
 
@@ -36,29 +23,9 @@ set +a
 sh ops/preflight.sh
 ```
 
-`.env.example` intentionally contains placeholders/localhost values and is expected to fail the production check.
+`.env.example` intentionally contains placeholders/localhost values and is expected to fail this production check.
 
-## 2. Public HTTPS/TLS edge
-The Docker `web` container listens on HTTP inside the host/network. Production must terminate TLS in front of it (for example at the hosting reverse proxy, load balancer or managed HTTPS edge).
-
-The public edge must:
-- redirect HTTP to HTTPS;
-- use a valid production certificate;
-- forward the original host, scheme and client address;
-- set HSTS after HTTPS has been verified (`Strict-Transport-Security`, normally with a long max-age; add `includeSubDomains` only when every subdomain is HTTPS-ready);
-- expose PostgreSQL and internal backend ports to no public network.
-
-The internal nginx already sets:
-- `X-Content-Type-Options: nosniff`;
-- `X-Frame-Options: DENY`;
-- `Referrer-Policy: no-referrer`;
-- restrictive `Permissions-Policy`;
-- CSP with `script-src 'self'`, `object-src 'none'` and `frame-ancestors 'none'`;
-- `X-Real-IP` and `X-Forwarded-*` metadata toward backend services.
-
-Do not add HSTS only to the internal plain-HTTP hop and consider that sufficient; HSTS belongs on the public HTTPS response.
-
-## 3. Bootstrap the first OWNER on a clean database
+## 2. Bootstrap the first OWNER on a clean database
 Current migrations do not seed demo users or default credentials.
 
 For a new database:
@@ -79,7 +46,7 @@ docker compose --env-file .env.production run --rm api \
 
 For an existing database, do not bootstrap again. Use normal user administration or `npm run set-password`.
 
-## 4. Account-security check
+## 3. Account-security check
 The supported production start executes:
 
 ```sh
@@ -99,31 +66,7 @@ docker compose --env-file .env.production run --rm api \
 
 The backend and CLI both enforce at least 10 characters, letters + digits, and reject known weak values.
 
-## 5. Authentication gateway and brute-force protection
-Normal browser login at `/api/v1/auth/login` is routed by nginx to the internal `auth` service. It issues JWTs compatible with all existing CRM services; the core API continues to verify the same shared `JWT_SECRET`.
-
-Security controls:
-- proxy-aware request IP handling;
-- per-IP authentication rate limit;
-- database-backed lockout by normalized email, independent of client IP;
-- dummy bcrypt comparison for unknown users to reduce account-enumeration timing differences;
-- generic invalid-credentials responses;
-- successful and failed login audit events with IP and user-agent;
-- default access-token TTL 12 hours, with production preflight maximum 24 hours.
-
-With the default lockout policy, 10 failed attempts within 10 minutes block new logins for 15 minutes. A successful login clears the failure state.
-
-OWNER can inspect recent authentication events through:
-
-```text
-GET /auth-api/v1/auth/security-events?limit=100
-```
-
-using a valid OWNER Bearer token.
-
-Disabling an employee remains effective immediately for normal authenticated CRM calls because shared authorization reloads the active user from PostgreSQL on each request.
-
-## 6. Start production
+## 4. Start production
 
 ```sh
 ENV_FILE=.env.production sh ops/start-production.sh
@@ -136,20 +79,17 @@ This sequence:
 4. starts PostgreSQL only;
 5. builds the API image and runs migration/account-security validation;
 6. requires a safe active OWNER;
-7. starts the complete CRM stack, including the auth gateway;
-8. exposes application traffic only through the web/nginx edge.
+7. only then starts the complete CRM stack.
 
 Do not use raw `docker compose up` as the normal production release path.
 
-## 7. Post-start acceptance
+## 5. Post-start acceptance
 
 ```sh
 BASE_URL=https://crm.example.kz sh ops/acceptance.sh
 ```
 
-Acceptance probes the auth gateway and every CRM backend service through nginx: core API, warehouse, procurement, payroll, analytics, finance, documents, notifications, communications, approvals, workflow, operations, performance, KPI, profitability, pricing, pricebook, diagnostics, parts, completion, reliability, warranty, discipline, owner control, directory admin, order tasks, branches, cash registers and lifecycle.
-
-It also verifies the browser-edge anti-sniffing, anti-framing, referrer and CSP requirements.
+Acceptance probes all CRM backend services through nginx, including core API, auth gateway, warehouse, procurement, payroll, analytics, finance, documents, notifications, communications, approvals, workflow, operations, performance, KPI, profitability, pricing, pricebook, diagnostics, parts, completion, reliability, warranty, discipline, owner control, directory admin, order tasks, branches, cash registers and lifecycle. It also checks browser-facing security headers such as `nosniff`, anti-framing and CSP restrictions.
 
 For an additional authenticated core check, pass an already issued owner/service token:
 
@@ -157,25 +97,48 @@ For an additional authenticated core check, pass an already issued owner/service
 BASE_URL=https://crm.example.kz ACCEPTANCE_TOKEN='<token>' sh ops/acceptance.sh
 ```
 
-The independent `Production Acceptance` CI workflow starts every CRM service except the periodic backup worker, probes all services through nginx, verifies backend containers run as non-root and confirms that the document volume remains writable.
+The independent `Production Acceptance` CI workflow also verifies that backend containers run as non-root and the document volume remains writable.
 
-## 8. Attachment and signature security
-Order attachments are intentionally limited to formats needed by service operations:
-- JPEG;
-- PNG;
-- WebP;
-- HEIC/HEIF;
-- PDF.
+## 6. Authentication and brute-force protection
+Normal browser login goes through the dedicated auth gateway. Production configuration controls:
+- `AUTH_RATE_LIMIT_PER_MINUTE`;
+- `AUTH_TOKEN_TTL`;
+- `AUTH_FAILURE_LIMIT`;
+- `AUTH_FAILURE_WINDOW_MINUTES`;
+- `AUTH_LOCK_MINUTES`.
 
-The server determines the type from file bytes (magic signature), not from browser MIME or filename. MIME spoofing, extension spoofing, HTML, SVG, JavaScript and unsupported binary files are rejected. Downloads are revalidated, returned with `nosniff`, private/no-store caching and attachment disposition.
+The default account protection locks repeated failures by normalized email in PostgreSQL, so protection does not depend only on source IP. Successful login clears the failure state. OWNER can review recent login security events through the protected auth API.
 
-Digital signature payloads accept only actual PNG/JPEG/WebP and are limited separately in size; SVG signatures are not accepted.
+Do not expose the internal API container directly to the public network. External traffic must enter through the supported HTTPS edge/nginx path so proxy metadata and login controls remain effective.
 
-TRAINEE attachment rights are append-only: a participating trainee may upload evidence to an allowed order but cannot delete attachments or create signatures. Attachment deletion is limited to OWNER/SUPERVISOR/MANAGER.
+## 7. Uploaded-file security
+Order attachments are intentionally restricted to formats validated by file signature, not only by filename or browser MIME. Supported operational formats are JPEG, PNG, WebP, HEIC/HEIF and PDF. HTML, SVG, script content and MIME spoofing are rejected.
 
-The `Operational Safety` workflow includes a real Docker/API attachment test covering safe JPEG upload, hardened download headers, HTML/SVG/MIME-spoof rejection and trainee append-only permissions.
+Downloads are served with `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, private/no-store caching and a sandbox CSP. Trainees have append-only attachment access on eligible participating orders; they cannot delete evidence or create signatures.
 
-## 9. Backup
+Do not bypass the documents service by exposing the upload volume through nginx or a static-file server.
+
+## 8. TLS and public edge
+The application nginx container sets application security headers, but production TLS termination may live at a reverse proxy/load balancer outside this repository. The public edge must:
+- terminate HTTPS with a valid certificate;
+- redirect HTTP to HTTPS;
+- preserve `X-Forwarded-For`, `X-Forwarded-Proto` and host metadata;
+- add HSTS after HTTPS is verified and stable;
+- expose only the intended public web endpoint, not PostgreSQL or internal service ports.
+
+Verify the actual public URL with `ops/acceptance.sh` after every edge/proxy change.
+
+## 9. Deterministic dependency security
+Production dependency manifests are locked and must be installed reproducibly:
+- backend CI and production images use the committed backend lockfile;
+- frontend CI and Docker build use `npm ci` with `web/package-lock.json`;
+- `Dependency Security` CI rejects critical backend or frontend npm advisories;
+- do not replace `npm ci` with `npm install` in production build paths;
+- dependency upgrades must update and commit the corresponding lockfile, pass `npm audit`, build, regression tests and full production acceptance before release.
+
+At the Stage E acceptance point the security-sensitive backend stack resolves to Fastify 5.12.3, `@fastify/jwt` 10.2.2 and `fast-jwt` 6.3.3; frontend versions are pinned in `web/package.json` and its lockfile.
+
+## 10. Backup
 The backup worker runs daily in Docker Compose. A manual backup should be created before a release or risky maintenance:
 
 ```sh
@@ -189,7 +152,7 @@ Each backup set contains:
 
 Default retention is 14 days and production preflight rejects retention shorter than 7 days.
 
-## 10. Verify backup freshness and integrity
+## 11. Verify backup freshness and integrity
 
 ```sh
 docker compose --env-file .env.production run --rm \
@@ -201,7 +164,7 @@ docker compose --env-file .env.production run --rm \
 
 The check fails when the latest set is missing, older than the allowed age or fails `SHA256SUMS`.
 
-## 11. Export backup off the application server
+## 12. Export backup off the application server
 A backup in the local Docker volume does not protect against loss of the whole host/disk.
 
 Mount a NAS/external/off-site destination and export the verified set:
@@ -226,7 +189,7 @@ docker compose --env-file .env.production run --rm \
 
 For real disaster protection the external mount should live on different storage/host infrastructure from the CRM server.
 
-## 12. Identify latest backup
+## 13. Identify latest backup
 
 ```sh
 docker compose --env-file .env.production run --rm backup sh -c 'ls -1dt /backups/* | head -1'
@@ -234,7 +197,7 @@ docker compose --env-file .env.production run --rm backup sh -c 'ls -1dt /backup
 
 Record the exact backup-set path before recovery.
 
-## 13. Safe database restore — preferred procedure
+## 14. Safe database restore — preferred procedure
 Never test recovery by overwriting the live database. Restore into a separate empty database first.
 
 Example:
@@ -254,7 +217,7 @@ docker compose --env-file .env.production run --rm \
 
 `restore.sh` verifies `SHA256SUMS`, verifies the target connection and refuses a non-empty target by default.
 
-## 14. Restore uploaded files
+## 15. Restore uploaded files
 File restoration is opt-in and requires an explicit target root:
 
 ```sh
@@ -270,9 +233,7 @@ docker compose --env-file .env.production run --rm \
 
 A non-empty upload target is refused unless `RESTORE_ALLOW_NONEMPTY_UPLOADS=YES` is explicitly set.
 
-After a restore, uploaded files that fail the current safe-file signature policy will not be served as trusted attachments. Preserve them for forensic/manual review rather than weakening the download policy.
-
-## 15. In-place restore — emergency only
+## 16. In-place restore — emergency only
 The supported normal path is restore to a new database, verify it, then perform a controlled cutover.
 
 `restore.sh` refuses to overwrite a non-empty database. `RESTORE_ALLOW_NONEMPTY=YES` exists only for a deliberate disaster-recovery procedure during a maintenance window. Before using it:
@@ -284,7 +245,7 @@ The supported normal path is restore to a new database, verify it, then perform 
 6. restore;
 7. run `ops/acceptance.sh` before reopening traffic.
 
-## 16. Automated safety proof
+## 17. Automated recovery proof
 CRM CI contains a `recovery` job that:
 1. migrates a clean source database;
 2. writes a recovery marker;
@@ -293,30 +254,25 @@ CRM CI contains a `recovery` job that:
 5. verifies the marker and critical CRM tables;
 6. proves a second restore into the now non-empty database is rejected.
 
-`Operational Safety` separately verifies:
-- first OWNER bootstrap and weak-password rejection;
-- authentication lockout and login audit;
-- backup freshness/off-site export/corruption handling;
-- attachment format and trainee append-only controls.
+The `Operational Safety` workflow independently exercises account security, auth brute-force lockout/audit, backup export/integrity and attachment security. The `Dependency Security` workflow audits locked backend and frontend dependencies. The `Production Acceptance` workflow starts every CRM service except the periodic backup worker and probes all services through nginx.
 
-`Production Acceptance` starts the complete service stack and checks it through nginx, including auth and browser security headers.
-
-## 17. Release acceptance checklist
+## 18. Release acceptance checklist
 A production release is accepted only when:
-- normal CRM CI validate + smoke are green;
-- recovery drill is green;
-- all Operational Safety jobs are green;
+- normal CRM CI is green, including validate, recovery and authenticated smoke;
+- Operational Safety is green;
+- Dependency Security is green for backend and frontend lockfiles;
 - Production Acceptance is green;
 - `ops/preflight.sh` passes the real production env;
 - `npm run production-user-check` passes;
-- public HTTPS certificate/redirect/HSTS are verified at the actual external edge;
 - latest local backup exists, is fresh and checksum-valid;
 - latest critical backup has an off-server copy;
-- `ops/acceptance.sh` passes against the deployed public HTTPS URL;
-- login/auth security-events and core authenticated operations are verified;
+- `ops/acceptance.sh` passes after deployment on the real public HTTPS URL;
+- login and core authenticated operations are verified after deployment;
 - no parent stacked PR is skipped during merge/rebase.
 
-## 18. Current stacked merge order
+CI acceptance proves repository/runtime behavior in an isolated environment. It does not replace the final checks against the actual production host, TLS edge, persistent production database and off-site backup destination.
+
+## 19. Current stacked merge order
 Until the stack is flattened, preserve dependency order:
 1. Stage B — PR #3;
 2. Stage B.2 — PR #5;
