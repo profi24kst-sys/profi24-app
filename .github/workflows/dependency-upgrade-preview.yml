@@ -19,33 +19,41 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Upgrade security-sensitive backend dependencies
+      - name: Keep backend security-sensitive dependencies on audited versions
         working-directory: server
         run: npm install --save fastify@^5.12.2 @fastify/jwt@^10.2.2
-      - name: Verify resolved critical advisories are gone
+      - name: Verify backend critical advisories are gone
         working-directory: server
         run: npm audit --omit=dev --audit-level=critical
-      - name: Show resolved security-sensitive versions
+      - name: Show resolved backend security-sensitive versions
         working-directory: server
         run: npm ls fastify @fastify/jwt fast-jwt --depth=2
-      - name: Upload audited package manifests
+      - name: Generate deterministic web lockfile and build it
+        working-directory: web
+        run: |
+          npm install
+          npm audit --audit-level=critical
+          npm run build
+      - name: Upload audited manifests
         uses: actions/upload-artifact@v4
         with:
-          name: audited-server-dependencies
+          name: audited-dependency-manifests
           path: |
             server/package.json
             server/package-lock.json
+            web/package.json
+            web/package-lock.json
           if-no-files-found: error
           retention-days: 1
       - name: Commit audited manifests back to feature branch
         if: github.event_name == 'push' && github.ref_name == 'feature/production-acceptance'
         run: |
-          if git diff --quiet -- server/package.json server/package-lock.json; then
+          if git diff --quiet -- server/package.json server/package-lock.json web/package.json web/package-lock.json; then
             echo 'Audited manifests already committed.'
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add server/package.json server/package-lock.json
-          git commit -m 'fix: upgrade security-sensitive backend dependencies'
+          git add server/package.json server/package-lock.json web/package.json web/package-lock.json
+          git commit -m 'fix: lock audited frontend dependencies'
           git push origin HEAD:feature/production-acceptance
