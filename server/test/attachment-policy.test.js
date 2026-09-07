@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import {ATTACHMENT_KINDS,isAttachmentKind} from '../src/attachment-policy.js';
+import {ATTACHMENT_KINDS,isAttachmentKind,normalizeAttachmentKind} from '../src/attachment-policy.js';
 
 const webFiles=[
   new URL('../../web/documents-addon.jsx',import.meta.url),
@@ -32,6 +32,14 @@ function extractKinds(text){
 test('attachment business kinds include before/after evidence',()=>{
   for(const kind of ['DEFECT_PHOTO','PHOTO_BEFORE','NAMEPLATE','PHOTO_AFTER','RECEIPT','OTHER'])assert.equal(isAttachmentKind(kind),true,kind);
   assert.equal(new Set(ATTACHMENT_KINDS).size,ATTACHMENT_KINDS.length,'attachment kinds must be unique');
+});
+
+test('legacy Order360 attachment aliases normalize to canonical kinds',()=>{
+  assert.equal(normalizeAttachmentKind('DEFECT'),'DEFECT_PHOTO');
+  assert.equal(normalizeAttachmentKind('AFTER'),'PHOTO_AFTER');
+  assert.equal(normalizeAttachmentKind('photo_before'),'PHOTO_BEFORE');
+  assert.equal(isAttachmentKind('DEFECT'),true);
+  assert.equal(isAttachmentKind('AFTER'),true);
 });
 
 test('frontend attachment kinds are accepted by documents service',async()=>{

@@ -7,7 +7,7 @@ import jwt from '@fastify/jwt';
 import pg from 'pg';
 
 const app=Fastify({logger:true});
-await app.register(cors,{origin:true});
+await app.register(cors,{origin:(process.env.CORS_ORIGIN||'http://localhost:5173').split(',').map(x=>x.trim()),credentials:true});
 await app.register(helmet,{contentSecurityPolicy:false});
 await app.register(jwt,{secret:process.env.JWT_SECRET||'dev-secret-change-me'});
 const pool=new pg.Pool({connectionString:process.env.DATABASE_URL});

@@ -141,8 +141,27 @@ jobs:
     needs: validate
     steps:
       - uses: actions/checkout@v4
-      - name: Prepare environment
-        run: cp .env.example .env
+      - name: Prepare hardened smoke environment
+        run: |
+          DB_PASSWORD=$(openssl rand -hex 16)
+          JWT_SECRET_VALUE=$(openssl rand -hex 32)
+          cat > .env <<EOF
+          POSTGRES_DB=profi24
+          POSTGRES_USER=profi24
+          POSTGRES_PASSWORD=$DB_PASSWORD
+          JWT_SECRET=$JWT_SECRET_VALUE
+          NODE_ENV=production
+          CORS_ORIGIN=http://127.0.0.1:5173
+          PUBLIC_BASE_URL=http://127.0.0.1:5173
+          DB_POOL_MAX=10
+          WEB_PORT=5173
+          BACKUP_RETENTION_DAYS=14
+          AUTH_RATE_LIMIT_PER_MINUTE=60
+          AUTH_TOKEN_TTL=12h
+          AUTH_FAILURE_LIMIT=20
+          AUTH_FAILURE_WINDOW_MINUTES=10
+          AUTH_LOCK_MINUTES=15
+          EOF
       - name: Start core CRM, auth, lifecycle, payroll and KPI
         run: docker compose up -d --build db api auth ownercontrol lifecycle payroll kpi web
       - name: Wait for core, auth, lifecycle, payroll and KPI health

@@ -1,5 +1,5 @@
 import {authenticate,installOrderAccess,protectOrderTables} from './access.js';
-import {ATTACHMENT_KIND_SET} from './attachment-policy.js';
+import {ATTACHMENT_KIND_SET,normalizeAttachmentKind} from './attachment-policy.js';
 import {contentDispositionAttachment,decodeDataUrl,inspectUpload,fileSecurityError} from './file-security.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
@@ -61,7 +61,7 @@ app.post('/api/v1/requests/:id/files',async(req,r)=>{
   if(!await requestAccess(req,r,req.params.id))return;
   const b=req.body||{};
   if(!b.name||!b.data)return fail(r,'VALIDATION','Файл не передан');
-  const kind=String(b.kind||'OTHER').toUpperCase();
+  const kind=normalizeAttachmentKind(b.kind);
   if(!ATTACHMENT_KIND_SET.has(kind))return fail(r,'VALIDATION','Некорректный тип вложения');
   let decoded,meta;
   try{
