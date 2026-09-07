@@ -1,0 +1,56 @@
+name: Windows Recovery Validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  powershell_safety:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse recovery script with Windows PowerShell
+        shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path '.\ops\repair-local.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          )
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+      - name: Enforce non-destructive recovery invariants
+        shell: powershell
+        run: |
+          $text = Get-Content '.\ops\repair-local.ps1' -Raw
+          $forbidden = @(
+            'docker compose down -v',
+            'docker volume prune',
+            'docker system prune --volumes',
+            'Copy-Item ''.env.example'' ''.env'''
+          )
+          foreach ($pattern in $forbidden) {
+            if ($text.Contains($pattern)) {
+              Write-Error "Forbidden recovery behavior found: $pattern"
+              exit 1
+            }
+          }
+          foreach ($required in @(
+            "Compose down '--remove-orphans'",
+            "Compose up '-d' 'db'",
+            'PGPASSWORD=',
+            'git pull --ff-only origin main',
+            "Test-Path '.env'",
+            "Compose up '-d' 'backup'"
+          )) {
+            if (-not $text.Contains($required)) {
+              Write-Error "Required recovery guard missing: $required"
+              exit 1
+            }
+          }
