@@ -140,7 +140,7 @@ app.post('/api/v1/requests/:id/signatures',async(req,r)=>{
 });
 
 app.get('/api/v1/requests/:id/document-data',async(req,r)=>{
-  if(!await requestAccess(req,r))return;
+  if(!await requestAccess(req,r,req.params.id))return;
   const x=(await q(`SELECT r.*,c.name customer_name,c.phone,c.address,e.category,e.brand,e.model,e.serial_number,eng.name engineer_name FROM requests r JOIN customers c ON c.id=r.customer_id LEFT JOIN equipment e ON e.id=r.equipment_id LEFT JOIN users eng ON eng.id=r.engineer_id WHERE r.id=$1`,[req.params.id])).rows[0];
   const [w,p,s]=await Promise.all([
     q('SELECT * FROM request_works WHERE request_id=$1 ORDER BY id',[req.params.id]),
