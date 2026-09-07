@@ -3,7 +3,7 @@ const getUser=()=>{try{return JSON.parse(localStorage.user||'null')}catch{return
 const getRole=()=>getUser()?.role||'';
 const nodeText=node=>(node?.textContent||'').trim();
 const RBAC_HIDDEN='data-rbac-hidden';
-const setVisible=(node,visible)=>{if(!node)return;if(visible){node.removeAttribute(RBAC_HIDDEN);node.hidden=false}else{node.setAttribute(RBAC_HIDDEN,'1');node.hidden=true}};
+const setVisible=(node,visible)=>{if(!node)return;if(visible){node.removeAttribute(RBAC_HIDDEN);node.hidden=false;node.style.removeProperty('display')}else{node.setAttribute(RBAC_HIDDEN,'1');node.hidden=true;node.style.setProperty('display','none','important')}};
 
 (function installRbacVisibilityGuard(){
   if(document.getElementById('profi24-rbac-visibility'))return;
@@ -15,9 +15,13 @@ const setVisible=(node,visible)=>{if(!node)return;if(visible){node.removeAttribu
 
 function updateNavigation(){
   const role=getRole();
+  const financeAllowed=['OWNER','SUPERVISOR','ACCOUNTANT','MANAGER'].includes(role);
   document.querySelectorAll('aside nav button').forEach(button=>{
     const name=nodeText(button.querySelector('span'));
-    if(name==='Финансы')setVisible(button,['OWNER','SUPERVISOR','ACCOUNTANT','MANAGER'].includes(role));
+    if(name==='Финансы'){
+      if(!financeAllowed&&!button.dataset.coreNavId){button.remove();return}
+      setVisible(button,financeAllowed);
+    }
     if(name==='Сотрудники')setVisible(button,role==='OWNER');
     if(name==='Отчеты'&&role==='TRAINEE')setVisible(button,false);
   });
