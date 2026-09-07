@@ -2,9 +2,9 @@ name: Operational Safety
 
 on:
   push:
-    branches: [main, 'feature/**', 'fix/**']
+    branches: [main]
   pull_request:
-    branches: [main, 'feature/**', 'fix/**']
+    branches: [main]
 
 jobs:
   account_security:
