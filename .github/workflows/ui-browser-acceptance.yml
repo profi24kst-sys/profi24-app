@@ -7,8 +7,9 @@ on:
     branches: [main]
 
 jobs:
-  browser_navigation:
+  browser_acceptance:
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Prepare browser acceptance environment
@@ -26,25 +27,35 @@ jobs:
           DB_POOL_MAX=10
           WEB_PORT=5173
           BACKUP_RETENTION_DAYS=14
-          AUTH_RATE_LIMIT_PER_MINUTE=30
+          AUTH_RATE_LIMIT_PER_MINUTE=60
           AUTH_TOKEN_TTL=12h
-          AUTH_FAILURE_LIMIT=10
+          AUTH_FAILURE_LIMIT=20
           AUTH_FAILURE_WINDOW_MINUTES=10
           AUTH_LOCK_MINUTES=15
           EOF
-      - name: Start browser acceptance stack
-        run: docker compose up -d --build db api auth branchadmin notifications web
-      - name: Wait for web, auth, branch and notifications services
+      - name: Start full browser acceptance stack
         run: |
-          for i in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:5173/health >/dev/null \
-              && curl -fsS http://127.0.0.1:5173/auth-health >/dev/null \
-              && curl -fsS http://127.0.0.1:5173/branch-health >/dev/null \
-              && curl -fsS http://127.0.0.1:5173/notifications-health >/dev/null; then exit 0; fi
+          docker compose up -d --build \
+            db api auth warehouse procurement payroll analytics finance documents notifications communications approvals workflow \
+            operations performance kpi profitability pricing pricebook diagnostic parts completion reliability warranty discipline \
+            ownercontrol directoryadmin ordertasks branchadmin cashregister lifecycle web
+      - name: Wait for all proxied CRM services
+        run: |
+          paths=(
+            /health /auth-health /warehouse-health /procurement-health /payroll-health /analytics-health /finance-health
+            /documents-health /notifications-health /communications-health /approvals-health /workflow-health /operations-health
+            /performance-health /kpi-health /profitability-health /pricing-health /pricebook-health /diagnostic-health /parts-health
+            /completion-health /reliability-health /warranty-health /discipline-health /owner-health /directory-health /order-tasks-health
+            /branch-health /cash-health /lifecycle-health
+          )
+          for i in $(seq 1 100); do
+            missing=0
+            for p in "${paths[@]}"; do curl -fsS "http://127.0.0.1:5173$p" >/dev/null || missing=1; done
+            if [ "$missing" -eq 0 ]; then exit 0; fi
             sleep 3
           done
           docker compose ps
-          docker compose logs --tail=150 api auth branchadmin notifications web
+          docker compose logs --tail=120
           exit 1
       - name: Bootstrap browser OWNER
         run: docker compose exec -T api node src/bootstrap-owner.js browser-owner@test.invalid 'BrowserOwner2026Kst9' 'Browser Owner'
@@ -55,13 +66,20 @@ jobs:
           npm init -y >/dev/null
           npm install --save-exact playwright@1.55.0
           npx playwright install --with-deps chromium
-      - name: Exercise real sidebar clicks in Chromium
+      - name: Exercise native and addon navigation in Chromium
         env:
           NODE_PATH: /tmp/profi24-playwright/node_modules
           BASE_URL: http://127.0.0.1:5173
           E2E_EMAIL: browser-owner@test.invalid
           E2E_PASSWORD: BrowserOwner2026Kst9
         run: node web/e2e/sidebar-navigation.cjs
+      - name: Exercise full six-role CRM regression in Chromium
+        env:
+          NODE_PATH: /tmp/profi24-playwright/node_modules
+          BASE_URL: http://127.0.0.1:5173
+          E2E_EMAIL: browser-owner@test.invalid
+          E2E_PASSWORD: BrowserOwner2026Kst9
+        run: node web/e2e/full-regression.cjs
       - name: Upload browser diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
@@ -73,7 +91,7 @@ jobs:
         if: failure()
         run: |
           docker compose ps
-          docker compose logs --tail=200 api auth branchadmin notifications web
+          docker compose logs --tail=250
       - name: Stop browser acceptance stack
         if: always()
         run: docker compose down -v
