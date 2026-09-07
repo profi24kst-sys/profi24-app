@@ -2,6 +2,7 @@ import React,{useEffect,useRef,useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {Camera,Wallet,ShieldCheck,PackageCheck} from 'lucide-react';
 import {coreMoneyApi,financeApi,financeKey,financeMoney,financeUser} from './finance-client.js';
+import {can,P} from './rbac-client.js';
 import './completion.css';
 
 const A='/completion-api/v1';
@@ -27,7 +28,11 @@ function currentOrderNumber(){
 }
 
 function App(){
-  const user=financeUser(),[open,setOpen]=useState(false),[id,setId]=useState(null),[data,setData]=useState(null);
+  const user=financeUser();
+  const canTechnical=can(P.ORDERS_TECHNICAL,user?.role);
+  const canReceivePayment=can(P.FINANCE_RECEIVE_PAYMENT,user?.role);
+  const canClose=can(P.ORDERS_CLOSE,user?.role);
+  const [open,setOpen]=useState(false),[id,setId]=useState(null),[data,setData]=useState(null);
   const [accounts,setAccounts]=useState([]),[repair,setRepair]=useState(''),[test,setTest]=useState(''),[amount,setAmount]=useState('');
   const [accountId,setAccountId]=useState(''),[message,setMessage]=useState('');
   const paymentKey=useRef(financeKey());
@@ -42,19 +47,25 @@ function App(){
       setMessage('');const number=detail.number||currentOrderNumber();
       const requestId=detail.id||detail.request_id||(number?await resolveOrderId(number):null);
       if(!requestId)throw new Error('Сначала откройте заказ');
-      const sources=await financeApi('/accounts');
-      setId(requestId);setAccounts((sources||[]).filter(value=>value.is_active));setAccountId('');setOpen(true);await load(requestId);
+      setId(requestId);setAccountId('');setOpen(true);
+      const accountPromise=canReceivePayment?financeApi('/accounts').catch(error=>{setMessage(error.message);return[]}):Promise.resolve([]);
+      const [sources]=await Promise.all([accountPromise,load(requestId)]);
+      setAccounts((sources||[]).filter(value=>value.is_active));
     }catch(error){setMessage(error.message);setOpen(true);}
   }
   async function act(path,body={}){
     try{
       let result;
       if(path==='payment'){
-        if(user?.role==='ENGINEER')throw new Error('Инженер не может проводить оплату клиента');
+        if(!canReceivePayment)throw new Error('У вашей роли нет права принимать оплату клиента');
         if(!body.account_id)throw new Error('Выберите денежный счёт');
         result=await coreMoneyApi('/requests/'+id+'/payment',{amount:body.amount,account_id:Number(body.account_id),method:'ACCOUNT',reference:body.reference||null},paymentKey.current);
         paymentKey.current=financeKey();
-      }else result=await completionApi('/requests/'+id+'/'+path,{method:'POST',body:JSON.stringify(body)});
+      }else{
+        if(['repair-done','test'].includes(path)&&!canTechnical)throw new Error('У вашей роли нет права изменять техническое завершение ремонта');
+        if(path==='close'&&!canClose)throw new Error('У вашей роли нет права закрывать заказ');
+        result=await completionApi('/requests/'+id+'/'+path,{method:'POST',body:JSON.stringify(body)});
+      }
       setMessage('Готово');await load();window.dispatchEvent(new CustomEvent('profi24:request-updated',{detail:{id}}));return result;
     }catch(error){setMessage(error.message);}
   }
@@ -70,10 +81,10 @@ function App(){
   return <div className="co"><header><div><h1>Завершение ремонта</h1><p>{request?'Заказ '+request.number+' · списание → проверка → оплата → гарантия':'Открытие заказа...'}</p></div><button onClick={()=>setOpen(false)}>×</button></header>
     {message&&<div className="coMsg">{message}</div>}
     {data&&<main><section className="coCard"><h2>Заказ {request.number}</h2><div className="coState"><span>Статус <b>{request.status}</b></span><span>Сумма <b>{financeMoney(request.total)}</b></span><span>Оплачено <b>{financeMoney(request.paid)}</b></span><span>Остаток <b>{financeMoney(balance)}</b></span></div>
-      <h3><PackageCheck/> 1. Ремонт выполнен</h3><textarea placeholder="Что выполнено" value={repair} onChange={e=>setRepair(e.target.value)}/><button onClick={()=>act('repair-done',{repair_result:repair})}>Зафиксировать ремонт и списать резерв</button><p className="hint">Зарезервированные запчасти списываются со склада и входят в фактическую себестоимость заказа.</p>
-      <h3><Camera/> 2. Контрольная проверка</h3><textarea placeholder="Результат проверки" value={test} onChange={e=>setTest(e.target.value)}/><div className={after?'ok':'warn'}>Фото после ремонта: {after}</div><button onClick={()=>act('test',{test_result:test})}>Проверка пройдена</button></section>
-      <section className="coCard"><h3><Wallet/> 3. Оплата</h3>{user?.role==='ENGINEER'?<p className="hint">Оплату клиента проводит менеджер или OWNER.</p>:<><div className="payRow"><input type="number" min="0.01" step="0.01" value={amount} onChange={e=>{setAmount(e.target.value);paymentKey.current=financeKey();}}/><select required value={accountId} onChange={e=>{setAccountId(e.target.value);paymentKey.current=financeKey();}}><option value="">Выберите денежный счёт</option>{accounts.map(value=><option key={value.id} value={value.id}>{value.name} · {financeMoney(value.balance)}</option>)}</select></div>{!accounts.length&&<p className="warn">Нет доступного активного счёта. OWNER должен назначить счёт ответственному сотруднику.</p>}<button disabled={!balance||!accountId} onClick={()=>act('payment',{amount:Number(amount),account_id:accountId})}>Принять оплату</button></>}
-        <h3><ShieldCheck/> 4. Закрытие и гарантия</h3><div className={repairReady?'ok':'warn'}>Ремонт и списание деталей: {repairReady?'зафиксированы':'не завершены'}</div><div className={testReady?'ok':'warn'}>Контрольная проверка: {testReady?'зафиксирована':'не завершена'}</div><div className={clientSignature?'ok':'warn'}>Подпись клиента: {clientSignature?'есть':'нет'}</div><div className={after?'ok':'warn'}>Фото после ремонта: {after?'есть':'нет'}</div><div className={balance<=0&&overpayment<=0.01?'ok':'warn'}>Оплата: {overpayment>0.01?'переплата '+financeMoney(overpayment):balance<=0?'полная':'осталось '+financeMoney(balance)}</div>{user?.role!=='ENGINEER'&&<button className="closeOrder" disabled={!closeReady} onClick={()=>act('close')}>{request.status==='CLOSED'?'Заказ закрыт':'Закрыть заказ и выпустить документы'}</button>}{request.warranty_until&&<div className="warranty"><ShieldCheck/><span>Гарантия до <b>{new Date(request.warranty_until).toLocaleDateString('ru-RU')}</b></span></div>}</section></main>}
+      <h3><PackageCheck/> 1. Ремонт выполнен</h3><textarea disabled={!canTechnical} placeholder="Что выполнено" value={repair} onChange={e=>setRepair(e.target.value)}/>{canTechnical?<button disabled={!repair.trim()} onClick={()=>act('repair-done',{repair_result:repair})}>Зафиксировать ремонт и списать резерв</button>:<p className="hint">Техническое завершение доступно инженеру и операционным ролям.</p>}<p className="hint">Зарезервированные запчасти списываются со склада и входят в фактическую себестоимость заказа.</p>
+      <h3><Camera/> 2. Контрольная проверка</h3><textarea disabled={!canTechnical} placeholder="Результат проверки" value={test} onChange={e=>setTest(e.target.value)}/><div className={after?'ok':'warn'}>Фото после ремонта: {after}</div>{canTechnical&&<button disabled={!test.trim()} onClick={()=>act('test',{test_result:test})}>Проверка пройдена</button>}</section>
+      <section className="coCard"><h3><Wallet/> 3. Оплата</h3>{!canReceivePayment?<p className="hint">У вашей роли нет права проводить оплату клиента.</p>:<><div className="payRow"><input type="number" min="0.01" step="0.01" value={amount} onChange={e=>{setAmount(e.target.value);paymentKey.current=financeKey();}}/><select required value={accountId} onChange={e=>{setAccountId(e.target.value);paymentKey.current=financeKey();}}><option value="">Выберите денежный счёт</option>{accounts.map(value=><option key={value.id} value={value.id}>{value.name} · {financeMoney(value.balance)}</option>)}</select></div>{!accounts.length&&<p className="warn">Нет доступного активного счёта для вашей роли.</p>}<button disabled={!balance||!accountId||Number(amount)<=0} onClick={()=>act('payment',{amount:Number(amount),account_id:accountId})}>Принять оплату</button></>}
+        <h3><ShieldCheck/> 4. Закрытие и гарантия</h3><div className={repairReady?'ok':'warn'}>Ремонт и списание деталей: {repairReady?'зафиксированы':'не завершены'}</div><div className={testReady?'ok':'warn'}>Контрольная проверка: {testReady?'зафиксирована':'не завершена'}</div><div className={clientSignature?'ok':'warn'}>Подпись клиента: {clientSignature?'есть':'нет'}</div><div className={after?'ok':'warn'}>Фото после ремонта: {after?'есть':'нет'}</div><div className={balance<=0&&overpayment<=0.01?'ok':'warn'}>Оплата: {overpayment>0.01?'переплата '+financeMoney(overpayment):balance<=0?'полная':'осталось '+financeMoney(balance)}</div>{canClose?<button className="closeOrder" disabled={!closeReady} onClick={()=>act('close')}>{request.status==='CLOSED'?'Заказ закрыт':'Закрыть заказ и выпустить документы'}</button>:<p className="hint">Закрытие заказа выполняет менеджер, управляющий или собственник.</p>}{request.warranty_until&&<div className="warranty"><ShieldCheck/><span>Гарантия до <b>{new Date(request.warranty_until).toLocaleDateString('ru-RU')}</b></span></div>}</section></main>}
   </div>;
 }
 const host=document.createElement('div');document.body.appendChild(host);createRoot(host).render(<App/>);

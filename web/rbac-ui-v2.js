@@ -12,7 +12,10 @@ function updateNavigation(){
     if(name==='Сотрудники')setVisible(button,role==='OWNER');
     if(name==='Отчеты'&&role==='TRAINEE')setVisible(button,false);
   });
-  document.querySelectorAll('.profile small').forEach(node=>{const code=nodeText(node);if(ROLE_LABELS[code])node.textContent=ROLE_LABELS[code]});
+  document.querySelectorAll('.profile small').forEach(node=>{
+    const code=nodeText(node),label=ROLE_LABELS[code];
+    if(label&&node.textContent!==label)node.textContent=label;
+  });
 }
 
 function updateOrderActions(){
@@ -45,7 +48,13 @@ function updateStaffRoleSelect(){
     if(!(codes.includes('ENGINEER')&&codes.includes('MANAGER')&&codes.includes('OWNER')))return;
     for(const option of select.options){
       const code=option.value||option.textContent;
-      if(ROLE_LABELS[code]){option.value=code;option.textContent=ROLE_LABELS[code]}
+      const label=ROLE_LABELS[code];
+      if(!label)continue;
+      if(option.value!==code)option.value=code;
+      // IMPORTANT: MutationObserver watches childList. Rewriting the same
+      // option text on every pass creates an endless microtask loop and
+      // freezes the Staff screen. Only mutate DOM when the label differs.
+      if(option.textContent!==label)option.textContent=label;
     }
     for(const code of ['SUPERVISOR','ACCOUNTANT','TRAINEE']){
       if([...select.options].some(o=>o.value===code))continue;
@@ -53,7 +62,10 @@ function updateStaffRoleSelect(){
       const before=[...select.options].find(o=>o.value==='MANAGER');select.insertBefore(option,before||null);
     }
   });
-  document.querySelectorAll('.staffrow span').forEach(node=>{const code=nodeText(node);if(ROLE_LABELS[code])node.textContent=ROLE_LABELS[code]});
+  document.querySelectorAll('.staffrow span').forEach(node=>{
+    const code=nodeText(node),label=ROLE_LABELS[code];
+    if(label&&node.textContent!==label)node.textContent=label;
+  });
 }
 
 let scheduled=false;
