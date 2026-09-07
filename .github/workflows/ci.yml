@@ -28,6 +28,7 @@ jobs:
         run: |
           npm run test:orders
           npm run test:crm
+          npm run test:setup
       - name: Install web dependencies
         working-directory: web
         run: npm install
@@ -57,14 +58,13 @@ jobs:
           docker compose ps
           docker compose logs api ownercontrol web
           exit 1
-      - name: Create ephemeral smoke owner
-        run: |
-          docker compose exec -T api node --input-type=module -e "import bcrypt from 'bcryptjs';import pg from 'pg';const p=new pg.Pool({connectionString:process.env.DATABASE_URL});const h=await bcrypt.hash('profi24',10);await p.query(\"INSERT INTO users(name,email,password_hash,role,active) VALUES('Smoke Owner','owner@profi24.kz',\$1,'OWNER',true) ON CONFLICT(email) DO UPDATE SET password_hash=EXCLUDED.password_hash,role='OWNER',active=true\",[h]);await p.end();"
+      - name: Create ephemeral smoke owner through supported setup
+        run: docker compose exec -T api npm run setup:owner -- owner@profi24.kz 'profi24-smoke-2026' 'Smoke Owner'
       - name: Verify authenticated core API
         run: |
           LOGIN=$(curl -fsS -X POST http://localhost:5173/api/v1/auth/login \
             -H 'Content-Type: application/json' \
-            -d '{"email":"owner@profi24.kz","password":"profi24"}')
+            -d '{"email":"owner@profi24.kz","password":"profi24-smoke-2026"}')
           TOKEN=$(printf '%s' "$LOGIN" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);if(!j.data?.access_token)process.exit(1);process.stdout.write(j.data.access_token)})")
           curl -fsS http://localhost:5173/api/v1/me -H "Authorization: Bearer $TOKEN" | grep -q OWNER
           curl -fsS http://localhost:5173/api/v1/requests -H "Authorization: Bearer $TOKEN" | grep -q '"data"'
