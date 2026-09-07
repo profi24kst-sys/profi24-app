@@ -9,6 +9,8 @@
     "test:finance": "node --test test/finance.test.js",
     "test:orders": "node --test test/order-close.test.js",
     "test:crm": "node --test test/crm-regression.test.js",
+    "test:setup": "node --test test/bootstrap-owner.test.js",
+    "setup:owner": "node src/bootstrap-owner.js",
     "set-password": "node src/set-password.js"
   },
   "dependencies": {
