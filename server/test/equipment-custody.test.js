@@ -1,0 +1,36 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import Fastify from 'fastify';
+import jwt from '@fastify/jwt';
+import {PGlite} from '@electric-sql/pglite';
+import {migrateCore} from '../src/migrate.js';
+import {installEquipmentCustody} from '../src/equipment-custody.js';
+
+test('physical equipment custody is branch-scoped, append-only and follows accountable handovers',async()=>{
+ const db=await PGlite.create(),query=(sql,p=[])=>p.length?db.query(sql,p):db.exec(sql).then(r=>r.at(-1));let chain=Promise.resolve();
+ const pool={query,connect:async()=>{const before=chain;let release;chain=new Promise(r=>release=r);await before;return{query,release}},end:async()=>{}};await migrateCore(pool);
+ await query("INSERT INTO users(name,email,password_hash,role) VALUES('Owner','owner@custody.test','x','OWNER'),('Manager','manager@custody.test','x','MANAGER'),('Supervisor','supervisor@custody.test','x','SUPERVISOR'),('Engineer','engineer@custody.test','x','ENGINEER'),('Other Engineer','other-engineer@custody.test','x','ENGINEER'),('Other Manager','other-manager@custody.test','x','MANAGER')");
+ const kst=(await query("SELECT id FROM branches WHERE code='KST'")).rows[0].id;await query("INSERT INTO branches(code,name,address) VALUES('ALT','Другой филиал','Другой адрес')");const alt=(await query("SELECT id FROM branches WHERE code='ALT'")).rows[0].id;
+ await query('UPDATE users SET primary_branch_id=$1 WHERE id=6',[alt]);await query('DELETE FROM user_branches WHERE user_id=6 AND branch_id<>$1',[alt]);
+ await query("INSERT INTO customers(name,phone) VALUES('Custody Client','77000000303')");await query("INSERT INTO equipment(customer_id,category,brand,model,serial_number) VALUES(1,'Стиральная машина','LG','F2','SN-CUST-1')");
+ const request=(await query("INSERT INTO requests(number,customer_id,equipment_id,manager_id,engineer_id,branch_id,status,complaint) VALUES('CUST-1',1,1,2,4,$1,'NEW','Не включается') RETURNING id",[kst])).rows[0];
+ const app=Fastify({logger:false});await app.register(jwt,{secret:'c'.repeat(64)});installEquipmentCustody(app,pool);await app.ready();
+ const tokens={owner:app.jwt.sign({id:1,role:'OWNER'}),manager:app.jwt.sign({id:2,role:'MANAGER'}),engineer:app.jwt.sign({id:4,role:'ENGINEER'}),otherEngineer:app.jwt.sign({id:5,role:'ENGINEER'}),otherManager:app.jwt.sign({id:6,role:'MANAGER'})};
+ const call=async(method,url,payload,token)=>{const r=await app.inject({method,url,payload,headers:{authorization:'Bearer '+token}});return{status:r.statusCode,...r.json()}};
+ let r=await call('POST',`/api/v1/requests/${request.id}/custody/events`,{event_type:'CUSTOMER_TO_OFFICE',location_text:'Приёмка, стеллаж A1',condition_text:'Царапина справа',accessories:['шланг','кабель']},tokens.manager);assert.equal(r.status,201);assert.equal(r.data.to_holder,'OFFICE');assert.deepEqual(r.data.accessories,['шланг','кабель']);
+ r=await call('POST',`/api/v1/requests/${request.id}/custody/events`,{event_type:'OFFICE_TO_STORAGE',location_text:'Склад S-12'},tokens.manager);assert.equal(r.status,201);assert.equal(r.data.to_holder,'STORAGE');
+ r=await call('POST',`/api/v1/requests/${request.id}/custody/events`,{event_type:'STORAGE_TO_ENGINEER',to_user_id:5},tokens.manager);assert.equal(r.status,409);assert.equal(r.error.code,'PRIMARY_ENGINEER_REQUIRED');
+ r=await call('POST',`/api/v1/requests/${request.id}/custody/events`,{event_type:'STORAGE_TO_ENGINEER',to_user_id:4,note:'Передано на диагностику'},tokens.manager);assert.equal(r.status,201);assert.equal(Number(r.data.to_user_id),4);
+ r=await call('POST',`/api/v1/requests/${request.id}/custody/events`,{event_type:'ENGINEER_TO_STORAGE',location_text:'Склад S-12'},tokens.otherEngineer);assert.equal(r.status,403);assert.equal(r.error.code,'FORBIDDEN');
+ r=await call('POST',`/api/v1/requests/${request.id}/custody/events`,{event_type:'ENGINEER_TO_STORAGE',location_text:'Склад S-12',condition_text:'После ремонта без новых повреждений'},tokens.engineer);assert.equal(r.status,201);assert.equal(r.data.to_holder,'STORAGE');
+ r=await call('POST',`/api/v1/requests/${request.id}/custody/events`,{event_type:'STORAGE_TO_OFFICE',location_text:'Зона выдачи'},tokens.manager);assert.equal(r.status,201);
+ r=await call('POST',`/api/v1/requests/${request.id}/custody/events`,{event_type:'OFFICE_TO_CUSTOMER',note:'Выдача клиенту'},tokens.manager);assert.equal(r.status,409);assert.equal(r.error.code,'ORDER_NOT_CLOSED');
+ await query("UPDATE requests SET status='CLOSED',closed_at=now() WHERE id=$1",[request.id]);
+ r=await call('POST',`/api/v1/requests/${request.id}/custody/events`,{event_type:'OFFICE_TO_CUSTOMER',note:'Получил клиент'},tokens.manager);assert.equal(r.status,201);assert.equal(r.data.to_holder,'CUSTOMER');
+ r=await call('POST',`/api/v1/requests/${request.id}/custody/events`,{event_type:'OFFICE_TO_STORAGE'},tokens.manager);assert.equal(r.status,409);assert.equal(r.error.code,'CUSTODY_TRANSITION_INVALID');
+ r=await call('GET',`/api/v1/requests/${request.id}/custody`,undefined,tokens.manager);assert.equal(r.status,200);assert.equal(r.data.current.to_holder,'CUSTOMER');assert.equal(r.data.events.length,6);
+ r=await call('GET',`/api/v1/requests/${request.id}/custody`,undefined,tokens.otherManager);assert.equal(r.status,403);
+ const audit=(await query("SELECT action,details FROM request_history WHERE request_id=$1 AND action='EQUIPMENT_CUSTODY_EVENT' ORDER BY id",[request.id])).rows;assert.equal(audit.length,6);assert.equal(audit[0].details.event_type,'CUSTOMER_TO_OFFICE');assert.equal(audit.at(-1).details.event_type,'OFFICE_TO_CUSTOMER');
+ const active=await call('GET','/api/v1/custody',undefined,tokens.owner);assert.equal(active.status,200);assert.equal(active.data.length,0);
+ await app.close();await db.close();
+});

@@ -38,7 +38,7 @@ jobs:
           docker compose up -d --build \
             db api auth warehouse procurement payroll analytics finance documents notifications communications approvals workflow \
             operations performance kpi profitability pricing pricebook diagnostic parts completion reliability warranty discipline \
-            ownercontrol directoryadmin ordertasks branchadmin cashregister lifecycle web
+            ownercontrol directoryadmin ordertasks branchadmin cashregister lifecycle custody web
       - name: Wait for all proxied CRM services
         run: |
           paths=(
@@ -46,7 +46,7 @@ jobs:
             /documents-health /notifications-health /communications-health /approvals-health /workflow-health /operations-health
             /performance-health /kpi-health /profitability-health /pricing-health /pricebook-health /diagnostic-health /parts-health
             /completion-health /reliability-health /warranty-health /discipline-health /owner-health /directory-health /order-tasks-health
-            /branch-health /cash-health /lifecycle-health
+            /branch-health /cash-health /lifecycle-health /custody-health
           )
           for i in $(seq 1 100); do
             missing=0
@@ -101,6 +101,13 @@ jobs:
           E2E_EMAIL: browser-owner@test.invalid
           E2E_PASSWORD: BrowserOwner2026Kst9
         run: node web/e2e/service-contracts-regression.cjs
+      - name: Exercise physical equipment custody in Chromium
+        env:
+          NODE_PATH: /tmp/profi24-playwright/node_modules
+          BASE_URL: http://127.0.0.1:5173
+          E2E_EMAIL: browser-owner@test.invalid
+          E2E_PASSWORD: BrowserOwner2026Kst9
+        run: node web/e2e/equipment-custody-regression.cjs
       - name: Upload browser diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
