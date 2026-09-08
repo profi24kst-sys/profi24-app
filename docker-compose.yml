@@ -41,6 +41,7 @@ services:
   cashregister: {build: ./server, restart: unless-stopped, command: ["node","src/cash-register.js"], environment: {<<: *env, PORT: 8107}, depends_on: {api: {condition: service_healthy}, finance: {condition: service_healthy}}, healthcheck: *hc}
   lifecycle: {build: ./server, restart: unless-stopped, command: ["node","src/order-lifecycle-v2.js"], environment: {<<: *env, PORT: 8108}, depends_on: {api: {condition: service_healthy}}, healthcheck: *hc}
   custody: {build: ./server, restart: unless-stopped, command: ["node","src/equipment-custody.js"], environment: {<<: *env, PORT: 8110}, depends_on: {api: {condition: service_healthy}}, healthcheck: *hc}
+  suppliercatalog: {build: ./server, restart: unless-stopped, command: ["node","src/supplier-catalog.js"], environment: {<<: *env, PORT: 8111}, depends_on: {procurement: {condition: service_healthy}, warehouse: {condition: service_healthy}}, healthcheck: *hc}
   backup:
     image: postgres:16-alpine
     restart: unless-stopped
