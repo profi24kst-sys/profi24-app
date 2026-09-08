@@ -40,6 +40,7 @@ services:
   branchadmin: {build: ./server, restart: unless-stopped, command: ["node","src/branch-admin.js"], environment: {<<: *env, PORT: 8106}, depends_on: {api: {condition: service_healthy}}, healthcheck: *hc}
   cashregister: {build: ./server, restart: unless-stopped, command: ["node","src/cash-register.js"], environment: {<<: *env, PORT: 8107}, depends_on: {api: {condition: service_healthy}, finance: {condition: service_healthy}}, healthcheck: *hc}
   lifecycle: {build: ./server, restart: unless-stopped, command: ["node","src/order-lifecycle-v2.js"], environment: {<<: *env, PORT: 8108}, depends_on: {api: {condition: service_healthy}}, healthcheck: *hc}
+  custody: {build: ./server, restart: unless-stopped, command: ["node","src/equipment-custody.js"], environment: {<<: *env, PORT: 8110}, depends_on: {api: {condition: service_healthy}}, healthcheck: *hc}
   backup:
     image: postgres:16-alpine
     restart: unless-stopped
