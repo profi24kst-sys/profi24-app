@@ -7,6 +7,7 @@ import {migrateCore} from '../src/migrate.js';
 import {authenticate} from '../src/access.js';
 import {roleAllowed} from '../src/rbac.js';
 import {installServiceContracts} from '../src/service-contracts.js';
+const dateOnly=v=>v instanceof Date?v.toISOString().slice(0,10):String(v||'').slice(0,10);
 
 test('service contract creates reminders, respects branches and advances only after closed maintenance order',async()=>{
  const db=await PGlite.create(),query=(sql,p=[])=>p.length?db.query(sql,p):db.exec(sql).then(r=>r.at(-1));let chain=Promise.resolve();
@@ -24,7 +25,7 @@ test('service contract creates reminders, respects branches and advances only af
  r=await call('GET','/api/v1/service-contracts/'+contractId,undefined,tokens.manager);assert.equal(r.status,200);assert.equal(r.data.assets.length,1);r=await call('GET','/api/v1/service-contracts/'+contractId,undefined,tokens.other);assert.equal(r.status,403);
  const order=(await query("INSERT INTO requests(number,customer_id,equipment_id,manager_id,branch_id,status,complaint) VALUES('SC-ORDER-1',1,1,3,$1,'NEW','Плановое ТО') RETURNING id",[kst])).rows[0];r=await call('POST',`/api/v1/service-contracts/cycles/${cycle.id}/plan`,{request_id:order.id},tokens.manager);assert.equal(r.status,200);assert.equal(r.data.status,'PLANNED');
  r=await call('POST',`/api/v1/service-contracts/cycles/${cycle.id}/complete`,{note:'Выполнено'},tokens.manager);assert.equal(r.status,409);await query("UPDATE requests SET status='CLOSED',closed_at=now() WHERE id=$1",[order.id]);r=await call('POST',`/api/v1/service-contracts/cycles/${cycle.id}/complete`,{note:'Выполнено по регламенту'},tokens.manager);assert.equal(r.status,200,r.error?.message||JSON.stringify(r));assert.equal(r.data.status,'COMPLETED');assert.notEqual(r.data.next_service_date,today);
- const asset=(await query('SELECT * FROM service_contract_assets WHERE contract_id=$1',[contractId])).rows[0];assert.equal(String(asset.last_service_date).slice(0,10),today);assert.equal(Number((await query("SELECT count(*) c FROM service_maintenance_cycles WHERE contract_asset_id=$1 AND status='DUE'",[asset.id])).rows[0].c),1);assert.equal((await query('SELECT status FROM tasks WHERE id=$1',[cycle.task_id])).rows[0].status,'DONE');
+ const asset=(await query('SELECT * FROM service_contract_assets WHERE contract_id=$1',[contractId])).rows[0];assert.equal(dateOnly(asset.last_service_date),today);assert.equal(Number((await query("SELECT count(*) c FROM service_maintenance_cycles WHERE contract_asset_id=$1 AND status='DUE'",[asset.id])).rows[0].c),1);assert.equal((await query('SELECT status FROM tasks WHERE id=$1',[cycle.task_id])).rows[0].status,'DONE');
  const actions=(await query('SELECT action FROM service_contract_audit WHERE contract_id=$1 ORDER BY id',[contractId])).rows.map(x=>x.action);assert.equal(actions.includes('CONTRACT_CREATED'),true);assert.equal(actions.includes('MAINTENANCE_REMINDER_CREATED'),true);assert.equal(actions.includes('MAINTENANCE_PLANNED'),true);assert.equal(actions.includes('MAINTENANCE_COMPLETED'),true);
  const summary=await call('GET','/api/v1/service-contracts/summary',undefined,tokens.owner);assert.equal(summary.status,200);assert.equal(summary.data.active_contracts,1);
  await flow.ensureCycles();await app.close();await db.close();
