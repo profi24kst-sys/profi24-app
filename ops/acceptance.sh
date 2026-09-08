@@ -31,6 +31,7 @@ check auth /auth-health
 check warehouse /warehouse-health
 check procurement /procurement-health
 check suppliercatalog /supplier-catalog-health
+check knowledge /knowledge-health
 check payroll /payroll-health
 check analytics /analytics-health
 check finance /finance-health
