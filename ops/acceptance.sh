@@ -30,6 +30,7 @@ check api /health
 check auth /auth-health
 check warehouse /warehouse-health
 check procurement /procurement-health
+check suppliercatalog /supplier-catalog-health
 check payroll /payroll-health
 check analytics /analytics-health
 check finance /finance-health
@@ -56,6 +57,7 @@ check ordertasks /order-tasks-health
 check branchadmin /branch-health
 check cashregister /cash-health
 check lifecycle /lifecycle-health
+check custody /custody-health
 
 check_header x_content_type_options '^x-content-type-options: nosniff$'
 check_header x_frame_options '^x-frame-options: DENY$'
