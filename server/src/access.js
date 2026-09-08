@@ -1,4 +1,5 @@
 import {canAccessAllOrders,canMutateOrder,isAssignedOnly,isKnownRole} from './rbac.js';
+import {registerComplaintRoutes} from './complaints-routes.js';
 
 // Shared authentication and order authorization for every API service.
 const authenticated = Symbol('active-user');
@@ -204,6 +205,8 @@ export function installOrderAccess(app, db, service) {
     const order = await requireOrder(db, req.user, requestId, {mutable:!readOnly && !allowTerminal,allowHold});
     req.order = order;
   });
+
+  if(service==='index2')registerComplaintRoutes(app,db,{authenticate,requireOrder,accessError});
 }
 
 // Modules create some tables after core migrations. Attach the same database guard then.
