@@ -51,5 +51,16 @@ export const serviceContractStatements=[
   )`,
   `CREATE INDEX IF NOT EXISTS idx_service_maintenance_cycles_status ON service_maintenance_cycles(status,due_date)`,
   `CREATE INDEX IF NOT EXISTS idx_service_maintenance_cycles_task ON service_maintenance_cycles(task_id) WHERE task_id IS NOT NULL`,
-  `CREATE INDEX IF NOT EXISTS idx_service_maintenance_cycles_request ON service_maintenance_cycles(request_id) WHERE request_id IS NOT NULL`
+  `CREATE INDEX IF NOT EXISTS idx_service_maintenance_cycles_request ON service_maintenance_cycles(request_id) WHERE request_id IS NOT NULL`,
+  `CREATE TABLE IF NOT EXISTS service_contract_audit(
+    id BIGSERIAL PRIMARY KEY,
+    contract_id BIGINT NOT NULL REFERENCES service_contracts(id) ON DELETE CASCADE,
+    asset_id BIGINT REFERENCES service_contract_assets(id) ON DELETE SET NULL,
+    cycle_id BIGINT REFERENCES service_maintenance_cycles(id) ON DELETE SET NULL,
+    user_id INT REFERENCES users(id),
+    action TEXT NOT NULL,
+    details JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_service_contract_audit_contract ON service_contract_audit(contract_id,created_at DESC)`
 ];
