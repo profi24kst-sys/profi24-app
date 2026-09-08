@@ -42,7 +42,7 @@ export function installEquipmentCustody(app,pool){
   const order=await requireOrder(pool,req.user,req.params.id),events=await history(pool,order.id);return{data:{order_id:order.id,request_number:order.number,request_status:order.status,current:events[0]||null,events}};
  });
  app.get('/api/v1/custody',{preHandler:auth},async(req,reply)=>{
-  if(!can(req.user.role,PERMISSIONS.ORDERS_VIEW))return fail(reply,'FORBIDDEN','Недостаточно прав',403);
+  if(!can(req.user.role,PERMISSIONS.ORDERS_VIEW_ALL)&&!can(req.user.role,PERMISSIONS.ORDERS_VIEW_ASSIGNED))return fail(reply,'FORBIDDEN','Недостаточно прав',403);
   const params=[];let where=`WHERE cur.holder<>'CUSTOMER'`;
   if(req.query?.holder){params.push(String(req.query.holder).toUpperCase());where+=` AND cur.holder=$${params.length}`}
   if(req.user.role==='MANAGER'){params.push(req.user.id);where+=` AND EXISTS(SELECT 1 FROM user_branches ub WHERE ub.user_id=$${params.length} AND ub.branch_id=r.branch_id)`}
