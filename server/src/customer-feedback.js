@@ -1,4 +1,5 @@
 import {createHash,createHmac,randomBytes} from 'node:crypto';
+import {installServiceContracts} from './service-contracts.js';
 
 const q=(pool,sql,params=[])=>pool.query(sql,params);
 const feedbackSecret=()=>process.env.FEEDBACK_TOKEN_SECRET||process.env.JWT_SECRET||'dev-feedback-secret-change-me';
@@ -200,5 +201,10 @@ export async function installCustomerFeedback(app,pool,{enqueue,requestData,vars
     return reply.code(201).send({data:{feedback_id:feedback.id,queued:Boolean(result.queued),status:result.queued?.status||result.skipped||null}});
   });
 
-  return {enqueueInvite,ensureFeedback,npsGroup};
+  const maintenance=await installServiceContracts(app,pool,{enqueue,roles});
+  let maintenanceBusy=false;
+  const maintenanceTimer=setInterval(async()=>{if(maintenanceBusy)return;maintenanceBusy=true;try{await maintenance.syncMaintenance()}catch(error){app.log?.error?.(error)}finally{maintenanceBusy=false}},60000);
+  maintenanceTimer.unref?.();
+  await maintenance.syncMaintenance();
+  return {enqueueInvite,ensureFeedback,npsGroup,maintenance};
 }
