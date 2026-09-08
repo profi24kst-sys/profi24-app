@@ -3,7 +3,7 @@ import{createRoot}from'react-dom/client';
 import{CalendarClock,RefreshCw,X,Plus,FileText,Wrench,CheckCircle2,SkipForward,ExternalLink}from'lucide-react';
 import'./service-contracts.css';
 const BASE='/communications-api/v1/service-contracts',tok=()=>localStorage.token;
-async function call(url,opt={}){const r=await fetch(url,{...opt,headers:{'Content-Type':'application/json',Authorization:`Bearer ${tok()}`,...(opt.headers||{})}}),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error?.message||'Ошибка запроса');return j.data}
+async function call(url,opt={}){for(let attempt=0;attempt<5;attempt++){const r=await fetch(url,{...opt,headers:{'Content-Type':'application/json',Authorization:`Bearer ${tok()}`,...(opt.headers||{})}}),j=await r.json().catch(()=>({}));if(r.status===429&&attempt<4){const retry=Math.max(1,Number(r.headers.get('retry-after')||1));await new Promise(resolve=>setTimeout(resolve,retry*1000+150));continue}if(!r.ok)throw new Error(j.error?.message||'Ошибка запроса');return j.data}}
 const api=(p='',o)=>call(BASE+p,o),core=(p,o)=>call('/api/v1'+p,o),branch=(p,o)=>call('/branch-api/v1'+p,o);
 const user=()=>{try{return JSON.parse(localStorage.user||'null')}catch{return null}};
 const d=v=>v?new Date(String(v).slice(0,10)+'T12:00:00Z').toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric',timeZone:'UTC'}):'—';
