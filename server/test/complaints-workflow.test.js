@@ -30,6 +30,7 @@ async function setup(){
   const kst=(await query("SELECT id FROM branches WHERE code='KST'")).rows[0].id;
   const other=(await query("INSERT INTO branches(code,name,address) VALUES('CMP2','Другой филиал','Другой адрес') RETURNING id")).rows[0].id;
   await query('UPDATE users SET primary_branch_id=$1 WHERE id IN (7,8)',[other]);
+  await query('DELETE FROM user_branches WHERE user_id IN (7,8) AND branch_id=$1',[kst]);
   const own=(await query("INSERT INTO requests(number,customer_id,manager_id,engineer_id,branch_id,status,complaint,total,paid,closed_at) VALUES('CMP-CLOSED',1,4,5,$1,'CLOSED','Исходный закрытый ремонт',15000,15000,now()) RETURNING id",[kst])).rows[0].id;
   const foreign=(await query("INSERT INTO requests(number,customer_id,manager_id,engineer_id,branch_id,status,complaint,total,paid,closed_at) VALUES('CMP-FOREIGN',1,7,8,$1,'CLOSED','Чужой закрытый ремонт',12000,12000,now()) RETURNING id",[other])).rows[0].id;
   await query('INSERT INTO user_mentors(trainee_id,mentor_id,assigned_by) VALUES(6,5,1)');
