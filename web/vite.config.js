@@ -8,7 +8,8 @@ export default defineConfig({
       input: {
         main: 'index.html',
         approve: 'approve.html',
-        warranty: 'warranty.html'
+        warranty: 'warranty.html',
+        feedback: 'feedback.html'
       }
     }
   }
