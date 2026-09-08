@@ -4,7 +4,7 @@ import helmet from '@fastify/helmet';
 import jwt from '@fastify/jwt';
 import pg from 'pg';
 import {pathToFileURL} from 'node:url';
-import {authenticate,installOrderAccess,requireOrder} from './access.js';
+import {authenticate,requireOrder} from './access.js';
 import {can,PERMISSIONS} from './rbac.js';
 
 const fail=(reply,code,message,status=422,details)=>reply.code(status).send({data:null,error:{code,message,details}});
@@ -25,7 +25,7 @@ const transitions={
 
 export function installEquipmentCustody(app,pool){
  const tx=async fn=>{const c=await pool.connect();try{await c.query('BEGIN');const out=await fn(c);await c.query('COMMIT');return out}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}};
- installOrderAccess(app,pool,'custody');
+ app.setErrorHandler((e,req,reply)=>{const status=({P2400:422,P2401:409,P2403:403,P2409:409,23505:409,23503:409,23514:422})[e.code]||e.statusCode||e.status||500;if(status>=500)req.log.error(e);return reply.code(status).send({data:null,error:{code:e.code||'INTERNAL_ERROR',message:status>=500?'Не удалось выполнить действие. Обновите страницу и повторите.':e.message}})});
  const auth=async(req,reply)=>{if(!await authenticate(req,reply,pool))return};
  async function sameBranchUser(c,userId,branchId,{engineer=false}={}){
   if(!userId)return null;const role=engineer?"AND u.role='ENGINEER'":'';
