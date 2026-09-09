@@ -6,7 +6,6 @@ const fallbacks=[
   [/\/api\/v1\/equipment(?:\?|$)/,{data:[]}],
   [/\/api\/v1\/users(?:\?|$)/,{data:[]}],
   [/\/api\/v1\/tasks(?:\?|$)/,{data:[]}],
-  [/\/api\/v1\/complaints(?:\?|$)/,{data:[]}],
   [/\/api\/v1\/dashboard\/finance(?:\?|$)/,{data:{totals:{}}}],
   [/\/api\/v1\/dashboard(?:\?|$)/,{data:{}}]
 ];
@@ -19,7 +18,6 @@ function retryAfterMs(response,attempt){
   const raw=response.headers.get('Retry-After');let base=null;
   if(raw){const seconds=Number(raw);if(Number.isFinite(seconds))base=Math.min(5000,Math.max(100,Math.ceil(seconds*1000)));else{const at=Date.parse(raw);if(Number.isFinite(at))base=Math.min(5000,Math.max(100,at-Date.now()))}}
   if(base==null)base=Math.min(4000,500*(attempt+1));
-  // Concurrent read panels often hit the same rate window together. Small jitter prevents a retry herd.
   return base+Math.floor(Math.random()*250);
 }
 async function idempotentFetch(input,init,method){
@@ -36,7 +34,7 @@ async function idempotentFetch(input,init,method){
 async function stripDeleted(response){if(!response.ok)return response;try{const j=await response.clone().json();if(!Array.isArray(j?.data))return response;const data=j.data.filter(x=>!x?.deleted_at);if(data.length===j.data.length)return response;const h=new Headers(response.headers);h.set('Content-Type','application/json');h.set('X-Profi24-Deleted-Filtered',String(j.data.length-data.length));return new Response(JSON.stringify({...j,data}),{status:response.status,statusText:response.statusText,headers:h})}catch{return response}}
 window.fetch=async function(input,init){
   const url=target(input),method=String(init?.method||'GET').toUpperCase();
-  const critical=/\/api\/v1\/(?:requests|auth|me)(?:\/|\?|$)/.test(url)||url.includes('/owner-api/');
+  const critical=/\/api\/v1\/(?:requests|auth|me|complaints)(?:\/|\?|$)/.test(url)||url.includes('/owner-api/');
   const fb=method==='GET'&&!critical?fallbackFor(url):null;
   try{
     let response=await idempotentFetch(input,init,method);
