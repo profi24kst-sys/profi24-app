@@ -1,6 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import {runSchemaStatements} from './schema-retry.js';
 import {procurementReplenishmentStatements} from './procurement-replenishment-schema.js';
+import {buildSmartSupplierSelections} from './smart-supplier-selection.js';
 
 const n=v=>Number(v||0);
 const clean=(v,max=500)=>String(v??'').trim().slice(0,max);
@@ -11,33 +12,7 @@ export async function prepareProcurementReplenishment(pool,{logger=console}={}){
   await runSchemaStatements(pool,procurementReplenishmentStatements,{logger});
 }
 
-async function bestOffers(db,itemIds){
-  const catalog=new Map(),fallback=new Map();
-  if(!itemIds.length)return{catalog,fallback};
-  try{
-    const rows=(await db.query(`SELECT DISTINCT ON (scl.warehouse_item_id)
-      scl.warehouse_item_id item_id,ci.supplier_id,s.name supplier_name,ci.purchase_price unit_cost,
-      ci.available_qty supplier_available_qty,ci.lead_time_days,ci.currency
-      FROM supplier_catalog_links scl
-      JOIN warehouse_items w ON w.id=scl.warehouse_item_id AND w.branch_id=scl.branch_id
-      JOIN supplier_catalog_items ci ON ci.id=scl.catalog_item_id AND ci.active=true
-      JOIN suppliers s ON s.id=ci.supplier_id AND s.active=true
-      WHERE scl.warehouse_item_id=ANY($1::int[])
-      ORDER BY scl.warehouse_item_id,
-        CASE WHEN ci.available_qty IS NULL OR ci.available_qty>0 THEN 0 ELSE 1 END,
-        ci.purchase_price ASC,ci.lead_time_days NULLS LAST,ci.id`,[itemIds])).rows;
-    for(const row of rows)catalog.set(Number(row.item_id),row);
-  }catch(error){
-    if(error?.code!=='42P01'&&error?.code!=='42703')throw error;
-  }
-  const rows=(await db.query(`SELECT DISTINCT ON (w.id) w.id item_id,s.id supplier_id,s.name supplier_name,w.purchase_price unit_cost
-    FROM warehouse_items w JOIN suppliers s ON s.active=true AND w.supplier IS NOT NULL AND lower(s.name)=lower(w.supplier)
-    WHERE w.id=ANY($1::int[]) ORDER BY w.id,s.id`,[itemIds])).rows;
-  for(const row of rows)fallback.set(Number(row.item_id),row);
-  return{catalog,fallback};
-}
-
-function decorateRow(row,offer){
+function decorateDemand(row){
   const stock=n(row.stock_quantity),reserved=n(row.reserved_quantity),service=n(row.service_demand_quantity),pending=n(row.pending_order_quantity),minimum=n(row.min_quantity);
   const free=stock-reserved,gross=Math.max(0,minimum+reserved+service-stock),recommended=Math.max(0,gross-pending),c30=n(row.consumption_30d),c90=n(row.consumption_90d),daily=c90/90;
   const daysCover=daily>0?Math.max(0,free)/daily:null;
@@ -45,8 +20,33 @@ function decorateRow(row,offer){
   if(service>0&&recommended>0)priority='CRITICAL';
   else if(recommended>0||free<minimum)priority='HIGH';
   else if(daysCover!==null&&daysCover<14)priority='MEDIUM';
-  const unitCost=n(offer?.unit_cost||row.purchase_price);
-  return{...row,stock_quantity:stock,reserved_quantity:reserved,service_demand_quantity:service,pending_order_quantity:pending,min_quantity:minimum,free_quantity:free,gross_need_quantity:gross,recommended_quantity:recommended,consumption_30d:c30,consumption_90d:c90,avg_daily_consumption:daily,days_cover:daysCover,priority,best_supplier_id:offer?.supplier_id?Number(offer.supplier_id):null,best_supplier_name:offer?.supplier_name||null,best_unit_cost:unitCost,supplier_available_qty:offer?.supplier_available_qty==null?null:n(offer.supplier_available_qty),lead_time_days:offer?.lead_time_days==null?null:Number(offer.lead_time_days),currency:offer?.currency||'KZT',estimated_value:recommended*unitCost};
+  return{...row,stock_quantity:stock,reserved_quantity:reserved,service_demand_quantity:service,pending_order_quantity:pending,min_quantity:minimum,free_quantity:free,gross_need_quantity:gross,recommended_quantity:recommended,consumption_30d:c30,consumption_90d:c90,avg_daily_consumption:daily,days_cover:daysCover,priority};
+}
+
+function withSelection(row,decision){
+  const selected=decision?.selected||null,unitCost=selected?n(selected.unit_cost):n(row.purchase_price);
+  return{...row,
+    best_supplier_id:selected?Number(selected.supplier_id):null,
+    best_supplier_name:selected?.supplier_name||null,
+    best_unit_cost:unitCost,
+    supplier_available_qty:selected?.supplier_available_qty==null?null:n(selected.supplier_available_qty),
+    lead_time_days:selected?.lead_time_days==null?null:Number(selected.lead_time_days),
+    currency:selected?.currency||'KZT',
+    selection_strategy:selected?.selection_strategy||decision?.strategy||null,
+    selection_score:selected?.selection_score==null?null:n(selected.selection_score),
+    supplier_performance_score:selected?.supplier_performance_score==null?null:n(selected.supplier_performance_score),
+    supplier_rating:selected?.supplier_rating||null,
+    supplier_confidence:selected?.supplier_confidence||null,
+    supplier_recommendation_code:selected?.supplier_recommendation_code||null,
+    selection_reason:selected?.selection_reason||null,
+    cheapest_supplier_id:selected?.cheapest_supplier_id?Number(selected.cheapest_supplier_id):null,
+    cheapest_supplier_name:selected?.cheapest_supplier_name||null,
+    cheapest_unit_cost:selected?.cheapest_unit_cost==null?null:n(selected.cheapest_unit_cost),
+    price_premium_pct:selected?.price_premium_pct==null?null:n(selected.price_premium_pct),
+    alternatives_count:selected?.alternatives_count||0,
+    supplier_alternatives:(decision?.alternatives||[]).map(x=>({supplier_id:Number(x.supplier_id),supplier_name:x.supplier_name,unit_cost:n(x.unit_cost),supplier_available_qty:x.supplier_available_qty==null?null:n(x.supplier_available_qty),lead_time_days:x.lead_time_days==null?null:Number(x.lead_time_days),currency:x.currency||'KZT',source:x.source,selection_score:x.selection_score==null?null:n(x.selection_score),supplier_performance_score:x.supplier_performance_score==null?null:n(x.supplier_performance_score),supplier_rating:x.supplier_rating||null,supplier_confidence:x.supplier_confidence||null,supplier_recommendation_code:x.supplier_recommendation_code||null,auto_eligible:x.auto_eligible!==false,auto_exclusion_reason:x.auto_exclusion_reason||null})),
+    estimated_value:row.recommended_quantity*unitCost
+  };
 }
 
 export async function buildReplenishmentPlan(db,{branchIds=null,branchId=null,itemIds=null,needOnly=false}={}){
@@ -85,8 +85,7 @@ export async function buildReplenishmentPlan(db,{branchIds=null,branchId=null,it
     FROM warehouse_items w JOIN branches b ON b.id=w.branch_id
     LEFT JOIN reserved r ON r.item_id=w.id LEFT JOIN demand d ON d.item_id=w.id LEFT JOIN pending p ON p.item_id=w.id LEFT JOIN consumption c ON c.item_id=w.id
     WHERE ${where.join(' AND ')} ORDER BY b.name,w.name,w.id`,params)).rows;
-  const ids=rows.map(x=>Number(x.id)),offers=await bestOffers(db,ids);
-  const decorated=rows.map(row=>decorateRow(row,offers.catalog.get(Number(row.id))||offers.fallback.get(Number(row.id))));
+  const demandRows=rows.map(decorateDemand),decisions=await buildSmartSupplierSelections(db,demandRows),decorated=demandRows.map(row=>withSelection(row,decisions.get(Number(row.id))));
   return needOnly?decorated.filter(x=>x.recommended_quantity>0.000001):decorated;
 }
 
@@ -117,12 +116,17 @@ async function batchDetail(db,id){
 }
 
 async function supplierFor(db,row,requestedSupplierId){
-  if(!requestedSupplierId)return row.best_supplier_id?{supplier_id:Number(row.best_supplier_id),supplier_name:row.best_supplier_name,unit_cost:n(row.best_unit_cost),lead_time_days:row.lead_time_days}:null;
+  if(!requestedSupplierId){
+    if(!row.best_supplier_id)return null;
+    return{supplier_id:Number(row.best_supplier_id),supplier_name:row.best_supplier_name,unit_cost:n(row.best_unit_cost),lead_time_days:row.lead_time_days,selection_strategy:row.selection_strategy,selection_score:row.selection_score,supplier_performance_score:row.supplier_performance_score,supplier_rating:row.supplier_rating,supplier_confidence:row.supplier_confidence,selection_reason:row.selection_reason,cheapest_supplier_id:row.cheapest_supplier_id,cheapest_supplier_name:row.cheapest_supplier_name,cheapest_unit_cost:row.cheapest_unit_cost,price_premium_pct:row.price_premium_pct,alternatives_count:row.alternatives_count,manual_supplier_override:false};
+  }
   const supplier=(await db.query('SELECT id,name FROM suppliers WHERE id=$1 AND active=true',[Number(requestedSupplierId)])).rows[0];
   if(!supplier)throw businessError('SUPPLIER_NOT_FOUND','Поставщик не найден или отключён',404,{supplier_id:requestedSupplierId});
-  let offer=null;
-  try{offer=(await db.query(`SELECT ci.purchase_price unit_cost,ci.lead_time_days FROM supplier_catalog_links l JOIN supplier_catalog_items ci ON ci.id=l.catalog_item_id AND ci.active=true WHERE l.warehouse_item_id=$1 AND l.branch_id=$2 AND ci.supplier_id=$3 ORDER BY ci.purchase_price,ci.lead_time_days NULLS LAST LIMIT 1`,[row.id,row.branch_id,supplier.id])).rows[0]}catch(error){if(error?.code!=='42P01'&&error?.code!=='42703')throw error}
-  return{supplier_id:Number(supplier.id),supplier_name:supplier.name,unit_cost:n(offer?.unit_cost||row.purchase_price),lead_time_days:offer?.lead_time_days==null?null:Number(offer.lead_time_days)};
+  const alternative=(row.supplier_alternatives||[]).find(x=>Number(x.supplier_id)===Number(supplier.id));
+  if(alternative&&String(alternative.currency||'KZT').toUpperCase()!=='KZT')throw businessError('UNSUPPORTED_CURRENCY','Автоматический план закупок не проводит предложения в иностранной валюте без конвертации в KZT',409,{supplier_id:supplier.id,currency:alternative.currency});
+  if(!alternative&&String(row.supplier||'').trim().toLowerCase()!==String(supplier.name).trim().toLowerCase())throw businessError('SUPPLIER_NOT_LINKED','Выбранный поставщик не связан с этой складской позицией. Сначала свяжите его прайс или укажите поставщика в карточке склада.',409,{supplier_id:supplier.id,item_id:row.id});
+  const unitCost=alternative?n(alternative.unit_cost):n(row.purchase_price),lead=alternative?.lead_time_days==null?null:Number(alternative.lead_time_days),premium=row.cheapest_unit_cost>0?(unitCost-row.cheapest_unit_cost)/row.cheapest_unit_cost*100:null;
+  return{supplier_id:Number(supplier.id),supplier_name:supplier.name,unit_cost:unitCost,lead_time_days:lead,selection_strategy:'MANUAL_OVERRIDE',selection_score:alternative?.selection_score??null,supplier_performance_score:alternative?.supplier_performance_score??null,supplier_rating:alternative?.supplier_rating||null,supplier_confidence:alternative?.supplier_confidence||null,selection_reason:`Ручной выбор пользователя вместо авто-рекомендации${row.best_supplier_name?` «${row.best_supplier_name}»`:''}.`,cheapest_supplier_id:row.cheapest_supplier_id,cheapest_supplier_name:row.cheapest_supplier_name,cheapest_unit_cost:row.cheapest_unit_cost,price_premium_pct:premium,alternatives_count:row.alternatives_count,manual_supplier_override:true};
 }
 
 export function installProcurementReplenishment(app,pool,{view,manage,branchIds}={}){
@@ -133,8 +137,8 @@ export function installProcurementReplenishment(app,pool,{view,manage,branchIds}
       const scope=await branchIds(req.user),branchId=req.query?.branch_id?Number(req.query.branch_id):null;
       if(branchId&&Array.isArray(scope)&&!scope.map(Number).includes(branchId))throw businessError('FORBIDDEN','Нет доступа к закупкам этого филиала',403);
       const rows=await buildReplenishmentPlan(pool,{branchIds:scope,branchId,needOnly:String(req.query?.all||'')!=='1'}),attention=await attentionOrders(pool,{branchIds:scope});
-      const summary={positions:rows.length,critical:rows.filter(x=>x.priority==='CRITICAL').length,high:rows.filter(x=>x.priority==='HIGH').length,recommended_units:rows.reduce((s,x)=>s+x.recommended_quantity,0),estimated_value:rows.reduce((s,x)=>s+x.estimated_value,0),missing_supplier:rows.filter(x=>x.recommended_quantity>0&&!x.best_supplier_id).length,overdue_orders:attention.filter(x=>x.overdue).length,stale_orders:attention.filter(x=>x.stale_without_eta).length};
-      return{data:{generated_at:new Date().toISOString(),summary,rows,attention_orders:attention}};
+      const summary={positions:rows.length,critical:rows.filter(x=>x.priority==='CRITICAL').length,high:rows.filter(x=>x.priority==='HIGH').length,recommended_units:rows.reduce((s,x)=>s+x.recommended_quantity,0),estimated_value:rows.reduce((s,x)=>s+x.estimated_value,0),missing_supplier:rows.filter(x=>x.recommended_quantity>0&&!x.best_supplier_id).length,overdue_orders:attention.filter(x=>x.overdue).length,stale_orders:attention.filter(x=>x.stale_without_eta).length,smart_selected:rows.filter(x=>x.best_supplier_id&&x.selection_strategy).length,critical_not_cheapest:rows.filter(x=>x.priority==='CRITICAL'&&n(x.price_premium_pct)>0.01).length};
+      return{data:{generated_at:new Date().toISOString(),summary,rows,attention_orders:attention,selection_policy:{critical:'Критичный ремонт: 20% цена + 30% срок + 35% история поставщика + 15% наличие',stock:'Пополнение склада: 65% цена + 10% срок + 20% история + 5% наличие',currency:'Автоматически сравниваются только предложения в KZT'}}};
     }catch(error){return fail(reply,error)}
   });
 
@@ -178,7 +182,10 @@ export function installProcurementReplenishment(app,pool,{view,manage,branchIds}
         const branchId=Number(group[0].row.branch_id),supplier=group[0].supplier,maxLead=group.reduce((m,x)=>Math.max(m,Number(x.supplier.lead_time_days||0)),0),expected=maxLead>0?new Date(Date.now()+maxLead*86400000).toISOString().slice(0,10):null;
         const poNumber=`PO-RPL-${new Date().getFullYear()}-${randomUUID().slice(0,8).toUpperCase()}`;
         const po=(await client.query(`INSERT INTO purchase_orders(number,supplier_id,branch_id,status,expected_at,comment,created_by) VALUES($1,$2,$3,'ORDERED',$4,$5,$6) RETURNING *`,[poNumber,supplier.supplier_id,branchId,expected,`Автопополнение по плану ${batchNumber}`,req.user.id])).rows[0];
-        for(const x of group){await client.query(`INSERT INTO purchase_order_items(purchase_order_id,item_id,name,qty,unit_cost) VALUES($1,$2,$3,$4,$5)`,[po.id,x.row.id,x.row.name,x.qty,x.supplier.unit_cost]);await client.query(`INSERT INTO procurement_replenishment_lines(batch_id,warehouse_item_id,branch_id,item_name,sku,oem_code,min_quantity,stock_quantity,reserved_quantity,service_demand_quantity,pending_order_quantity,recommended_quantity,ordered_quantity,supplier_id,supplier_name,unit_cost,purchase_order_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,[batch.id,x.row.id,x.row.branch_id,x.row.name,x.row.sku,x.row.oem_code,x.row.min_quantity,x.row.stock_quantity,x.row.reserved_quantity,x.row.service_demand_quantity,x.row.pending_order_quantity,x.row.recommended_quantity,x.qty,x.supplier.supplier_id,x.supplier.supplier_name,x.supplier.unit_cost,po.id])}
+        for(const x of group){
+          await client.query(`INSERT INTO purchase_order_items(purchase_order_id,item_id,name,qty,unit_cost) VALUES($1,$2,$3,$4,$5)`,[po.id,x.row.id,x.row.name,x.qty,x.supplier.unit_cost]);
+          await client.query(`INSERT INTO procurement_replenishment_lines(batch_id,warehouse_item_id,branch_id,item_name,sku,oem_code,min_quantity,stock_quantity,reserved_quantity,service_demand_quantity,pending_order_quantity,recommended_quantity,ordered_quantity,supplier_id,supplier_name,unit_cost,purchase_order_id,priority,selection_strategy,selection_score,supplier_performance_score,supplier_rating,supplier_confidence,selection_reason,cheapest_supplier_id,cheapest_supplier_name,cheapest_unit_cost,price_premium_pct,alternatives_count,manual_supplier_override) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)`,[batch.id,x.row.id,x.row.branch_id,x.row.name,x.row.sku,x.row.oem_code,x.row.min_quantity,x.row.stock_quantity,x.row.reserved_quantity,x.row.service_demand_quantity,x.row.pending_order_quantity,x.row.recommended_quantity,x.qty,x.supplier.supplier_id,x.supplier.supplier_name,x.supplier.unit_cost,po.id,x.row.priority,x.supplier.selection_strategy,x.supplier.selection_score,x.supplier.supplier_performance_score,x.supplier.supplier_rating,x.supplier.supplier_confidence,x.supplier.selection_reason,x.supplier.cheapest_supplier_id,x.supplier.cheapest_supplier_name,x.supplier.cheapest_unit_cost,x.supplier.price_premium_pct,x.supplier.alternatives_count,x.supplier.manual_supplier_override]);
+        }
       }
       await client.query('COMMIT');return reply.code(201).send({data:await batchDetail(pool,batch.id)});
     }catch(error){await client.query('ROLLBACK').catch(()=>{});return fail(reply,error)}finally{client.release()}
