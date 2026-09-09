@@ -4,6 +4,8 @@ import {recalculateOrder} from './order-totals.js';
 import {authenticate,installOrderAccess} from './access.js';
 import {can,PERMISSIONS} from './rbac.js';
 import {warehouseBranchStatements} from './warehouse-branch-schema.js';
+import {runSchemaStatements} from './schema-retry.js';
+import {prepareWarehouseInventory,installWarehouseInventory} from './warehouse-inventory.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
@@ -58,11 +60,11 @@ const schema=[
 )`,
 `CREATE INDEX IF NOT EXISTS idx_warehouse_movements_item ON warehouse_movements(item_id,created_at DESC)`,
 `CREATE INDEX IF NOT EXISTS idx_warehouse_movements_engineer ON warehouse_movements(engineer_id,created_at DESC)`,
-`CREATE INDEX IF NOT EXISTS idx_warehouse_movements_request ON warehouse_movements(request_id,created_at DESC)`
+`CREATE INDEX IF NOT EXISTS idx_warehouse_movements_request ON warehouse_movements(request_id,created_at DESC)`,
+`CREATE TABLE IF NOT EXISTS stock_reservations(id SERIAL PRIMARY KEY,item_id INT REFERENCES warehouse_items(id),request_id INT REFERENCES requests(id),quantity NUMERIC(14,3) NOT NULL,status TEXT DEFAULT 'ACTIVE',created_by INT REFERENCES users(id),created_at TIMESTAMPTZ DEFAULT now(),released_at TIMESTAMPTZ)`
 ];
-for(const s of schema)await q(s);
-await q(`CREATE TABLE IF NOT EXISTS stock_reservations(id SERIAL PRIMARY KEY,item_id INT REFERENCES warehouse_items(id),request_id INT REFERENCES requests(id),quantity NUMERIC(14,3) NOT NULL,status TEXT DEFAULT 'ACTIVE',created_by INT REFERENCES users(id),created_at TIMESTAMPTZ DEFAULT now(),released_at TIMESTAMPTZ)`);
-for(const s of warehouseBranchStatements)await q(s);
+await runSchemaStatements(pool,[...schema,...warehouseBranchStatements],{logger:app.log});
+await prepareWarehouseInventory(pool,{logger:app.log});
 
 const auth=async(req,reply)=>{if(!await authenticate(req,reply,pool))return;};
 const permit=permission=>async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,permission))return fail(reply,'FORBIDDEN','Недостаточно прав для этой операции склада',403)};
@@ -100,7 +102,8 @@ async function engineerBalance(c,itemId,engineerId){
 async function recalcRequest(c,id){return recalculateOrder(c,id)}
 
 installOrderAccess(app,pool,'warehouse');
-app.get('/health',async()=>{await q('SELECT 1');return {ok:true,service:'profi24-warehouse',version:'1.2-branches'}});
+installWarehouseInventory(app,pool);
+app.get('/health',async()=>{await q('SELECT 1');return {ok:true,service:'profi24-warehouse',version:'1.3-inventory'}});
 
 app.get('/api/v1/stock',{preHandler:warehouseView},async req=>{
  const search=String(req.query?.search||'').trim(),requested=req.query?.branch_id?n(req.query.branch_id):null;
