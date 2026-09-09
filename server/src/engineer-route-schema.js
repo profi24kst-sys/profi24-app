@@ -1,4 +1,5 @@
 export const engineerRouteStatements=[
+  `ALTER TABLE requests ADD COLUMN IF NOT EXISTS visit_type TEXT DEFAULT 'FIELD'`,
   `ALTER TABLE customers ADD COLUMN IF NOT EXISTS latitude NUMERIC(9,6)`,
   `ALTER TABLE customers ADD COLUMN IF NOT EXISTS longitude NUMERIC(9,6)`,
   `ALTER TABLE customers ADD COLUMN IF NOT EXISTS location_source TEXT`,
