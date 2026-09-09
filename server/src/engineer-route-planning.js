@@ -71,6 +71,9 @@ export async function buildEngineerRouteSuggestion(db,{branchIds=null,branchId,e
 async function tx(pool,fn){const c=await pool.connect();try{await c.query('BEGIN');const out=await fn(c);await c.query('COMMIT');return out}catch(e){try{await c.query('ROLLBACK')}catch{}throw e}finally{c.release()}}
 export async function publishEngineerRoutePlan(pool,{branchIds=null,branchId,engineerId,date,actorId,now=new Date()}={}){
  return tx(pool,async c=>{
+   assertScope(branchIds,branchId);if(!validDate(date))throw businessError('VALIDATION','Дата должна быть YYYY-MM-DD',422);await assertEngineer(c,engineerId,branchId);
+   await c.query(`SELECT id FROM requests WHERE engineer_id=$1 AND branch_id=$2 AND deleted_at IS NULL AND status NOT IN('CLOSED','CANCELLED') AND COALESCE(visit_type,'FIELD')='FIELD' FOR UPDATE`,[Number(engineerId),Number(branchId)]);
+   await c.query('SELECT id FROM users WHERE id=$1 FOR UPDATE',[Number(engineerId)]);
    const suggestion=await buildEngineerRouteSuggestion(c,{branchIds,branchId,engineerId,date,now});if(!suggestion.stops.length)throw businessError('NO_STOPS','На выбранный день нет назначенных выездов',409);
    const current=(await c.query('SELECT id,revision FROM engineer_route_plans WHERE engineer_id=$1 AND branch_id=$2 AND plan_date=$3::date ORDER BY revision DESC LIMIT 1 FOR UPDATE',[Number(engineerId),Number(branchId),date])).rows[0];const rev=Number(current?.revision||0)+1;
    const snapshot={generated_at:suggestion.generated_at,method_version:suggestion.method_version,request_ids:suggestion.stops.map(x=>x.request_id),scheduled_at:suggestion.stops.map(x=>[x.request_id,x.planned_at])};
