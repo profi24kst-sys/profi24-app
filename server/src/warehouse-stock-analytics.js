@@ -29,6 +29,7 @@ export async function buildWarehouseStockAnalytics(db,{branchIds=null,branchId=n
   if(Array.isArray(branchIds)){if(!branchIds.length)return{summary:{positions:0,stock_value:0,excess_value:0,dead_stock_value:0,turnover:0,days_inventory:null,no_consumption_90:0,no_consumption_180:0,no_consumption_365:0,transfer_opportunities:0},rows:[],abc:{A:0,B:0,C:0},xyz:{X:0,Y:0,Z:0},generated_at:now.toISOString()};params.push(branchIds.map(Number));where.push(`w.branch_id=ANY($${params.length}::int[])`)}
   if(branchId){params.push(Number(branchId));where.push(`w.branch_id=$${params.length}`)}
   const term=String(search||'').trim();if(term){params.push(`%${term}%`);where.push(`(w.name ILIKE $${params.length} OR COALESCE(w.sku,'') ILIKE $${params.length} OR COALESCE(w.oem_code,'') ILIKE $${params.length} OR COALESCE(w.supplier,'') ILIKE $${params.length})`)}
+  const nowParam=params.length+1;
   const rows=(await db.query(`WITH reserved AS(
       SELECT sr.item_id,COALESCE(sum(sr.quantity),0)::numeric qty FROM stock_reservations sr
       LEFT JOIN requests r ON r.id=sr.request_id WHERE sr.status='ACTIVE' AND (r.id IS NULL OR (r.deleted_at IS NULL AND r.status NOT IN('CLOSED','CANCELLED'))) GROUP BY sr.item_id
@@ -40,15 +41,15 @@ export async function buildWarehouseStockAnalytics(db,{branchIds=null,branchId=n
       WHERE po.status NOT IN('RECEIVED','CANCELLED') GROUP BY i.item_id
     ), activity AS(
       SELECT m.item_id,max(m.created_at) last_movement_at,max(m.created_at) FILTER(WHERE m.movement_type='INSTALL') last_consumption_at,
-        COALESCE(sum(m.quantity) FILTER(WHERE m.movement_type='INSTALL' AND m.created_at>=$1::timestamptz-interval '365 days'),0)::numeric usage_qty_365,
-        COALESCE(sum(m.quantity*CASE WHEN m.unit_cost>0 THEN m.unit_cost ELSE w2.purchase_price END) FILTER(WHERE m.movement_type='INSTALL' AND m.created_at>=$1::timestamptz-interval '365 days'),0)::numeric usage_value_365
+        COALESCE(sum(m.quantity) FILTER(WHERE m.movement_type='INSTALL' AND m.created_at>=$${nowParam}::timestamptz-interval '365 days'),0)::numeric usage_qty_365,
+        COALESCE(sum(m.quantity*CASE WHEN m.unit_cost>0 THEN m.unit_cost ELSE w2.purchase_price END) FILTER(WHERE m.movement_type='INSTALL' AND m.created_at>=$${nowParam}::timestamptz-interval '365 days'),0)::numeric usage_value_365
       FROM warehouse_movements m JOIN warehouse_items w2 ON w2.id=m.item_id GROUP BY m.item_id
     )
     SELECT w.id,w.branch_id,b.code branch_code,b.name branch_name,w.name,w.sku,w.oem_code,w.supplier,w.location,w.purchase_price,w.sale_price,w.quantity,w.min_quantity,w.created_at,w.updated_at,
       COALESCE(r.qty,0)::numeric reserved_quantity,COALESCE(d.qty,0)::numeric service_demand_quantity,COALESCE(p.qty,0)::numeric pending_order_quantity,
       a.last_movement_at,a.last_consumption_at,COALESCE(a.usage_qty_365,0)::numeric usage_qty_365,COALESCE(a.usage_value_365,0)::numeric usage_value_365
     FROM warehouse_items w JOIN branches b ON b.id=w.branch_id LEFT JOIN reserved r ON r.item_id=w.id LEFT JOIN demand d ON d.item_id=w.id LEFT JOIN pending p ON p.item_id=w.id LEFT JOIN activity a ON a.item_id=w.id
-    WHERE ${where.join(' AND ')} ORDER BY b.name,w.name,w.id`,[now.toISOString(),...params])).rows;
+    WHERE ${where.join(' AND ')} ORDER BY b.name,w.name,w.id`,[...params,now.toISOString()])).rows;
   if(!rows.length)return{summary:{positions:0,stock_value:0,excess_value:0,dead_stock_value:0,turnover:0,days_inventory:null,no_consumption_90:0,no_consumption_180:0,no_consumption_365:0,transfer_opportunities:0},rows:[],abc:{A:0,B:0,C:0},xyz:{X:0,Y:0,Z:0},generated_at:now.toISOString()};
   const ids=rows.map(x=>Number(x.id));
   const moves=(await db.query(`SELECT id,item_id,movement_type,quantity,engineer_id,unit_cost,comment,created_at FROM warehouse_movements WHERE item_id=ANY($1::int[]) AND created_at>=$2::timestamptz-interval '365 days' ORDER BY item_id,created_at DESC,id DESC`,[ids,now.toISOString()])).rows;
