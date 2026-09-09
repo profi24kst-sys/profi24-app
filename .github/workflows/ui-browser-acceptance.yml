@@ -122,6 +122,13 @@ jobs:
           E2E_EMAIL: browser-owner@test.invalid
           E2E_PASSWORD: BrowserOwner2026Kst9
         run: node web/e2e/procurement-replenishment-regression.cjs
+      - name: Exercise warehouse stock analytics in Chromium
+        env:
+          NODE_PATH: /tmp/profi24-playwright/node_modules
+          BASE_URL: http://127.0.0.1:5173
+          E2E_EMAIL: browser-owner@test.invalid
+          E2E_PASSWORD: BrowserOwner2026Kst9
+        run: node web/e2e/warehouse-stock-analytics-regression.cjs
       - name: Exercise warehouse inventory reconciliation in Chromium
         env:
           NODE_PATH: /tmp/profi24-playwright/node_modules
