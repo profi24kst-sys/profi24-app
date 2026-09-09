@@ -5,12 +5,12 @@ export const engineerRouteStatements=[
   `ALTER TABLE customers ADD COLUMN IF NOT EXISTS location_source TEXT`,
   `ALTER TABLE customers ADD COLUMN IF NOT EXISTS location_verified_at TIMESTAMPTZ`,
   `ALTER TABLE customers DROP CONSTRAINT IF EXISTS customers_location_range`,
-  `ALTER TABLE customers ADD CONSTRAINT customers_location_range CHECK((latitude IS NULL AND longitude IS NULL) OR (latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180)) NOT VALID`,
+  `ALTER TABLE customers ADD CONSTRAINT customers_location_range CHECK((latitude IS NULL AND longitude IS NULL) OR (latitude IS NOT NULL AND longitude IS NOT NULL AND latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180)) NOT VALID`,
   `ALTER TABLE customers VALIDATE CONSTRAINT customers_location_range`,
   `ALTER TABLE branches ADD COLUMN IF NOT EXISTS latitude NUMERIC(9,6)`,
   `ALTER TABLE branches ADD COLUMN IF NOT EXISTS longitude NUMERIC(9,6)`,
   `ALTER TABLE branches DROP CONSTRAINT IF EXISTS branches_location_range`,
-  `ALTER TABLE branches ADD CONSTRAINT branches_location_range CHECK((latitude IS NULL AND longitude IS NULL) OR (latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180)) NOT VALID`,
+  `ALTER TABLE branches ADD CONSTRAINT branches_location_range CHECK((latitude IS NULL AND longitude IS NULL) OR (latitude IS NOT NULL AND longitude IS NOT NULL AND latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180)) NOT VALID`,
   `ALTER TABLE branches VALIDATE CONSTRAINT branches_location_range`,
   `CREATE TABLE IF NOT EXISTS engineer_route_plans(
     id BIGSERIAL PRIMARY KEY,
@@ -49,6 +49,16 @@ export const engineerRouteStatements=[
     UNIQUE(plan_id,request_id)
   )`,
   `CREATE INDEX IF NOT EXISTS idx_engineer_route_stops_request ON engineer_route_plan_stops(request_id,plan_id)`,
+  `CREATE TABLE IF NOT EXISTS engineer_route_location_audit(
+    id BIGSERIAL PRIMARY KEY,
+    customer_id INT NOT NULL REFERENCES customers(id),
+    branch_id INT NOT NULL REFERENCES branches(id),
+    actor_id INT NOT NULL REFERENCES users(id),
+    before_location JSONB NOT NULL DEFAULT '{}',
+    after_location JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_engineer_route_location_audit_customer ON engineer_route_location_audit(customer_id,id DESC)`,
   `CREATE OR REPLACE FUNCTION engineer_route_plan_immutable() RETURNS trigger AS $$
    BEGIN
      RAISE EXCEPTION 'Опубликованный маршрут является аудиторским документом и не может быть изменён или удалён' USING ERRCODE='P2401';
@@ -56,5 +66,7 @@ export const engineerRouteStatements=[
   `DROP TRIGGER IF EXISTS trg_engineer_route_plan_immutable ON engineer_route_plans`,
   `CREATE TRIGGER trg_engineer_route_plan_immutable BEFORE UPDATE OR DELETE ON engineer_route_plans FOR EACH ROW EXECUTE FUNCTION engineer_route_plan_immutable()`,
   `DROP TRIGGER IF EXISTS trg_engineer_route_stop_immutable ON engineer_route_plan_stops`,
-  `CREATE TRIGGER trg_engineer_route_stop_immutable BEFORE UPDATE OR DELETE ON engineer_route_plan_stops FOR EACH ROW EXECUTE FUNCTION engineer_route_plan_immutable()`
+  `CREATE TRIGGER trg_engineer_route_stop_immutable BEFORE UPDATE OR DELETE ON engineer_route_plan_stops FOR EACH ROW EXECUTE FUNCTION engineer_route_plan_immutable()`,
+  `DROP TRIGGER IF EXISTS trg_engineer_route_location_audit_immutable ON engineer_route_location_audit`,
+  `CREATE TRIGGER trg_engineer_route_location_audit_immutable BEFORE UPDATE OR DELETE ON engineer_route_location_audit FOR EACH ROW EXECUTE FUNCTION engineer_route_plan_immutable()`
 ];
