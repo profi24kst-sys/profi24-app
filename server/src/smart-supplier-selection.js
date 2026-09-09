@@ -39,7 +39,7 @@ export async function readSupplierOffers(db,itemIds){
   const fallback=(await db.query(`SELECT w.id item_id,s.id supplier_id,s.name supplier_name,w.purchase_price unit_cost
     FROM warehouse_items w JOIN suppliers s ON s.active=true AND w.supplier IS NOT NULL AND lower(s.name)=lower(w.supplier)
     WHERE w.id=ANY($1::int[]) AND w.purchase_price>=0 ORDER BY w.id,s.id`,[itemIds])).rows;
-  for(const row of fallback)push({...row,supplier_available_qty:null,lead_time_days:null,currency:'KZT',source:'WAREHOUSE_CARD',auto_eligible:true,auto_exclusion_reason:null});
+  for(const row of fallback){const existing=byItem.get(Number(row.item_id));if(existing?.size)continue;push({...row,supplier_available_qty:null,lead_time_days:null,currency:'KZT',source:'WAREHOUSE_CARD',auto_eligible:true,auto_exclusion_reason:null})}
   const out=new Map();for(const [itemId,map] of byItem)out.set(itemId,[...map.values()].map(x=>({...x,item_id:Number(x.item_id),supplier_id:Number(x.supplier_id),unit_cost:n(x.unit_cost),supplier_available_qty:x.supplier_available_qty==null?null:n(x.supplier_available_qty),lead_time_days:x.lead_time_days==null?null:Number(x.lead_time_days),currency:String(x.currency||'KZT').toUpperCase()})));
   return out;
 }
@@ -80,7 +80,7 @@ function strategyLabel(strategy){
 
 export function chooseSupplierOffer({row,offers=[],profiles=new Map()}={}){
   const priority=row?.priority||'NORMAL',need=n(row?.recommended_quantity),w=weights[priority]||weights.NORMAL;
-  const all=offers.map(o=>({...o,profile:profiles.get(Number(o.supplier_id))||null})),eligible=all.filter(o=>o.auto_eligible&&n(o.unit_cost)>=0);
+  const all=offers.map(o=>({...o,profile:profiles.get(Number(o.supplier_id))||null})),eligible=all.filter(o=>o.auto_eligible&&n(o.unit_cost)>=0),excluded=all.filter(o=>!o.auto_eligible).map(o=>({...o,selection_score:null,profile:undefined}));
   if(!eligible.length)return{selected:null,alternatives:all.map(o=>({...o,selection_score:null,profile:undefined})),strategy:w.strategy};
   const positivePrices=eligible.map(o=>n(o.unit_cost)).filter(x=>x>0),minPrice=positivePrices.length?Math.min(...positivePrices):0,knownLeads=eligible.map(o=>o.lead_time_days).filter(x=>x!=null).map(Number),minLead=knownLeads.length?Math.min(...knownLeads):null;
   const scored=eligible.map(o=>{
@@ -91,7 +91,7 @@ export function chooseSupplierOffer({row,offers=[],profiles=new Map()}={}){
   }).sort((a,b)=>b.selection_score-a.selection_score||n(a.unit_cost)-n(b.unit_cost)||(a.lead_time_days??99999)-(b.lead_time_days??99999)||a.supplier_name.localeCompare(b.supplier_name));
   const selected=scored[0],cheapest=[...eligible].sort((a,b)=>n(a.unit_cost)-n(b.unit_cost)||(a.lead_time_days??99999)-(b.lead_time_days??99999))[0],premium=pct(n(selected.unit_cost),n(cheapest.unit_cost));
   const reason=`Автовыбор: ${strategyLabel(w.strategy)}. ${selected.supplier_name}: итог ${round(selected.selection_score,1)}/100, срок ${selected.lead_time_days==null?'не указан':selected.lead_time_days+' дн.'}, рейтинг ${selected.supplier_rating||'—'} (${round(selected.supplier_performance_score,0)}/100, ${selected.supplier_confidence}), цена ${round(selected.unit_cost,2)} KZT${premium>0.01?` (+${round(premium,1)}% к минимуму ${round(cheapest.unit_cost,2)} KZT)`: ' — минимальная среди сопоставимых'}.`;
-  return{selected:{...selected,selection_strategy:w.strategy,selection_reason:reason,cheapest_supplier_id:Number(cheapest.supplier_id),cheapest_supplier_name:cheapest.supplier_name,cheapest_unit_cost:n(cheapest.unit_cost),price_premium_pct:round(premium,2),alternatives_count:scored.length},alternatives:scored,strategy:w.strategy};
+  return{selected:{...selected,selection_strategy:w.strategy,selection_reason:reason,cheapest_supplier_id:Number(cheapest.supplier_id),cheapest_supplier_name:cheapest.supplier_name,cheapest_unit_cost:n(cheapest.unit_cost),price_premium_pct:round(premium,2),alternatives_count:scored.length},alternatives:[...scored,...excluded],strategy:w.strategy};
 }
 
 export async function buildSmartSupplierSelections(db,rows){
