@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {PGlite} from '@electric-sql/pglite';
 import {engineerRouteStatements} from '../src/engineer-route-schema.js';
-import {buildEngineerRouteSuggestion,publishEngineerRoutePlan,resolveEngineerRouteBranchIds} from '../src/engineer-route-planning.js';
+import {buildEngineerRouteSuggestion,publishEngineerRoutePlan,resolveEngineerRouteBranchIds,updateRouteCustomerLocation} from '../src/engineer-route-planning.js';
 
 function harness(db){
  const query=(sql,p=[])=>p.length?db.query(sql,p):db.exec(sql).then(r=>r.at(-1));
@@ -39,12 +39,18 @@ CREATE TABLE requests(id SERIAL PRIMARY KEY,number TEXT UNIQUE,customer_id INT,e
   await q("INSERT INTO requests(number,customer_id,equipment_id,engineer_id,status,priority,complaint,branch_id) VALUES('BACKLOG',$1,$2,$3,'ASSIGNED','CRITICAL','D',$4)",[c4,e4,engineer,kst]);
 
   const scope=await resolveEngineerRouteBranchIds(pool,{id:manager,role:'MANAGER'});assert.deepEqual(scope,[Number(kst)]);
+  const engineerScope=await resolveEngineerRouteBranchIds(pool,{id:engineer,role:'ENGINEER'});assert.deepEqual(engineerScope,[Number(kst)]);
   const route=await buildEngineerRouteSuggestion(pool,{branchIds:scope,branchId:kst,engineerId:engineer,date:'2026-09-10',now:new Date('2026-09-09T16:00:00Z')});
   assert.deepEqual(route.stops.map(x=>x.number),['R1','R2','R3']);
   assert.equal(route.summary.stops,3);assert.equal(route.summary.unresolved_locations,1);assert.ok(route.summary.total_distance_km>0);assert.ok(route.summary.total_travel_minutes>0);
   assert.equal(route.stops[1].arrival_risk,true);assert.equal(route.stops[2].travel_estimate_available,false);
   assert.equal(route.backlog_candidates[0].number,'BACKLOG');assert.ok(route.backlog_candidates[0].nearest_route_km<1);assert.match(route.backlog_candidates[0].reason,/согласовать время/i);
   await assert.rejects(buildEngineerRouteSuggestion(pool,{branchIds:scope,branchId:other,engineerId:engineer,date:'2026-09-10'}),e=>e.code==='FORBIDDEN');
+
+  const located=await updateRouteCustomerLocation(pool,{branchIds:scope,branchId:kst,customerId:c3,latitude:53.2400,longitude:63.6600,actorId:manager});assert.equal(Number(located.latitude),53.24);
+  const audit=(await q('SELECT * FROM engineer_route_location_audit WHERE customer_id=$1',[c3])).rows[0];assert.ok(audit);assert.equal(audit.before_location.latitude,null);assert.equal(Number(audit.after_location.latitude),53.24);
+  await assert.rejects(q("UPDATE engineer_route_location_audit SET after_location='{}' WHERE id=$1",[audit.id]),e=>e.code==='P2401');
+  const resolvedRoute=await buildEngineerRouteSuggestion(pool,{branchIds:scope,branchId:kst,engineerId:engineer,date:'2026-09-10',now:new Date('2026-09-09T16:00:00Z')});assert.equal(resolvedRoute.summary.unresolved_locations,0);assert.equal(resolvedRoute.stops[2].travel_estimate_available,true);
 
   const first=await publishEngineerRoutePlan(pool,{branchIds:scope,branchId:kst,engineerId:engineer,date:'2026-09-10',actorId:manager,now:new Date('2026-09-09T16:00:00Z')});
   assert.equal(Number(first.plan.revision),1);assert.equal(first.stops.length,3);
