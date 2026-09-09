@@ -32,6 +32,7 @@ export const PERMISSIONS=Object.freeze({
   WAREHOUSE_RECEIVE:'warehouse.receive',
   WAREHOUSE_ISSUE:'warehouse.issue',
   WAREHOUSE_WRITEOFF:'warehouse.writeoff',
+  WAREHOUSE_INVENTORY:'warehouse.inventory',
   PROCUREMENT_VIEW:'procurement.view',
   PROCUREMENT_MANAGE:'procurement.manage',
   BRANCHES_VIEW:'branches.view',
@@ -63,7 +64,7 @@ const ROLE_PERMISSION_MAP=Object.freeze({
   SUPERVISOR:new Set([
     P.ORDERS_VIEW_ALL,P.ORDERS_CREATE,P.ORDERS_ASSIGN,P.ORDERS_EDIT,P.ORDERS_TECHNICAL,P.ORDERS_NOTES,P.ORDERS_FILES,P.ORDERS_CLOSE,P.ORDERS_CANCEL,
     P.FINANCE_VIEW,P.FINANCE_AUDIT,P.CASH_SHIFTS_VIEW,
-    P.WAREHOUSE_VIEW,P.WAREHOUSE_RECEIVE,P.WAREHOUSE_ISSUE,P.WAREHOUSE_WRITEOFF,P.PROCUREMENT_VIEW,P.PROCUREMENT_MANAGE,
+    P.WAREHOUSE_VIEW,P.WAREHOUSE_RECEIVE,P.WAREHOUSE_ISSUE,P.WAREHOUSE_WRITEOFF,P.WAREHOUSE_INVENTORY,P.PROCUREMENT_VIEW,P.PROCUREMENT_MANAGE,
     P.BRANCHES_VIEW,P.BRANCHES_MANAGE,
     P.STAFF_VIEW,P.STAFF_MANAGE,P.ANALYTICS_VIEW,P.PAYROLL_SUMMARY_VIEW,P.KPI_VIEW_ALL,P.KPI_MANAGE,
     P.OPERATIONS_MANAGE,P.COMMUNICATIONS_MANAGE,P.APPROVALS_MANAGE,
@@ -93,13 +94,7 @@ const ROLE_PERMISSION_MAP=Object.freeze({
 
 const KNOWN=new Set(ROLE_CODES);
 const ASSIGNED_ONLY=new Set(['ENGINEER','TRAINEE']);
-
-// Temporary compatibility inheritance while legacy services are migrated to can().
-const LEGACY_INHERITANCE=Object.freeze({
-  SUPERVISOR:new Set(['MANAGER']),
-  ACCOUNTANT:new Set(),
-  TRAINEE:new Set()
-});
+const LEGACY_INHERITANCE=Object.freeze({SUPERVISOR:new Set(['MANAGER']),ACCOUNTANT:new Set(),TRAINEE:new Set()});
 
 export function isKnownRole(role){return KNOWN.has(role)}
 export function can(role,permission){return Boolean(isKnownRole(role)&&ROLE_PERMISSION_MAP[role]?.has(permission))}
@@ -112,43 +107,15 @@ export function canAdminStaff(role){return can(role,P.ROLES_MANAGE)}
 export function canManageOperations(role){return can(role,P.OPERATIONS_MANAGE)}
 export function isTechnicalRole(role){return role==='ENGINEER'||role==='TRAINEE'}
 
-export function roleAllowed(role,allowed=[]){
-  if(allowed.includes(role))return true;
-  const inherited=LEGACY_INHERITANCE[role];
-  return Boolean(inherited&&allowed.some(x=>inherited.has(x)));
-}
+export function roleAllowed(role,allowed=[]){if(allowed.includes(role))return true;const inherited=LEGACY_INHERITANCE[role];return Boolean(inherited&&allowed.some(x=>inherited.has(x)))}
 
 export function canMutateOrder(role,{service='',route='',method='GET'}={}){
   if(['GET','HEAD'].includes(method))return true;
   if(role==='OWNER'||role==='SUPERVISOR'||role==='MANAGER')return true;
-  if(role==='ENGINEER'){
-    if(/\/(payment|refund|schedule|assign|cancel|close)(?:\/|$)/.test(route))return false;
-    return can(role,P.ORDERS_TECHNICAL)||can(role,P.ORDERS_NOTES)||can(role,P.ORDERS_FILES);
-  }
-  if(role==='ACCOUNTANT'){
-    if(service!=='index2')return false;
-    if(/\/payment$/.test(route))return can(role,P.FINANCE_RECEIVE_PAYMENT);
-    if(/\/refund$/.test(route))return can(role,P.FINANCE_REFUND);
-    return false;
-  }
-  if(role==='TRAINEE'){
-    if(/\/(notes|comment)$/.test(route))return can(role,P.ORDERS_NOTES);
-    return service==='documents'&&method==='POST'&&/\/requests\/:id\/files$/.test(route)&&can(role,P.ORDERS_FILES);
-  }
+  if(role==='ENGINEER'){if(/\/(payment|refund|schedule|assign|cancel|close)(?:\/|$)/.test(route))return false;return can(role,P.ORDERS_TECHNICAL)||can(role,P.ORDERS_NOTES)||can(role,P.ORDERS_FILES)}
+  if(role==='ACCOUNTANT'){if(service!=='index2')return false;if(/\/payment$/.test(route))return can(role,P.FINANCE_RECEIVE_PAYMENT);if(/\/refund$/.test(route))return can(role,P.FINANCE_REFUND);return false}
+  if(role==='TRAINEE'){if(/\/(notes|comment)$/.test(route))return can(role,P.ORDERS_NOTES);return service==='documents'&&method==='POST'&&/\/requests\/:id\/files$/.test(route)&&can(role,P.ORDERS_FILES)}
   return false;
 }
 
-export function roleDescriptor(role){
-  if(!isKnownRole(role))return null;
-  return {
-    code:role,
-    label:ROLE_LABELS[role],
-    permissions:permissionsForRole(role),
-    all_orders:canAccessAllOrders(role),
-    assigned_only:isAssignedOnly(role),
-    finance_view:canViewFinance(role),
-    finance_admin:canAdminFinance(role),
-    staff_admin:canAdminStaff(role),
-    operations_admin:canManageOperations(role)
-  };
-}
+export function roleDescriptor(role){if(!isKnownRole(role))return null;return{code:role,label:ROLE_LABELS[role],permissions:permissionsForRole(role),all_orders:canAccessAllOrders(role),assigned_only:isAssignedOnly(role),finance_view:canViewFinance(role),finance_admin:canAdminFinance(role),staff_admin:canAdminStaff(role),operations_admin:canManageOperations(role)}}
