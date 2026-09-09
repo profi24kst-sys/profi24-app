@@ -61,11 +61,33 @@ jobs:
         run: docker compose exec -T api node src/bootstrap-owner.js browser-owner@test.invalid 'BrowserOwner2026Kst9' 'Browser Owner'
       - name: Install isolated Playwright Chromium
         run: |
+          set -euo pipefail
           mkdir -p /tmp/profi24-playwright
           cd /tmp/profi24-playwright
           npm init -y >/dev/null
-          npm install --save-exact playwright@1.55.0
-          npx playwright install --with-deps chromium
+          retry() {
+            local attempts="$1"; shift
+            local delay="$1"; shift
+            local n=1
+            until "$@"; do
+              if [ "$n" -ge "$attempts" ]; then return 1; fi
+              echo "Attempt $n failed; retrying in ${delay}s..."
+              sleep "$delay"
+              n=$((n+1))
+            done
+          }
+          retry 3 5 npm install --save-exact playwright@1.55.0
+          for n in 1 2 3; do
+            if npx playwright install --with-deps chromium; then
+              exit 0
+            fi
+            if [ "$n" -eq 3 ]; then
+              exit 1
+            fi
+            echo "Chromium install attempt $n failed; cleaning partial download and retrying..."
+            rm -rf "$HOME/.cache/ms-playwright" /tmp/profi24-playwright/node_modules/.cache/ms-playwright || true
+            sleep 8
+          done
       - name: Exercise native and addon navigation in Chromium
         env:
           NODE_PATH: /tmp/profi24-playwright/node_modules
