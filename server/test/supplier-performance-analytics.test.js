@@ -7,7 +7,7 @@ import {migrateCore} from '../src/migrate.js';
 import {buildSupplierPerformanceAnalytics,installSupplierPerformanceAnalytics} from '../src/supplier-performance-analytics.js';
 
 test('рейтинг поставщиков сравнивает одинаковые позиции, сроки, переплату и branch scope',async()=>{
- const db=await PGlite.create();const query=(sql,params=[])=>params.length?db.query(sql,params):db.exec(sql).then(r=>r.at(-1));const pool={query,end:async()=>{}};
+ const db=await PGlite.create();const query=(sql,params=[])=>params.length?db.query(sql,params):db.exec(sql).then(r=>r.at(-1));let chain=Promise.resolve();const pool={query,connect:async()=>{const before=chain;let release;chain=new Promise(r=>release=r);await before;return{query,release}},end:async()=>{}};
  try{
   await migrateCore(pool);const kst=(await query("SELECT id FROM branches WHERE code='KST'")).rows[0].id;const alt=(await query("INSERT INTO branches(code,name,timezone) VALUES('ALT','Другой филиал','Asia/Qostanay') RETURNING id")).rows[0].id;
   const owner=(await query("INSERT INTO users(name,email,password_hash,role,primary_branch_id) VALUES('Supplier Owner','supplier-owner@test.invalid','x','OWNER',$1) RETURNING id",[kst])).rows[0].id;
