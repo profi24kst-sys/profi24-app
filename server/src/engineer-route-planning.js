@@ -4,7 +4,6 @@ const ROAD_FACTOR=1.25;
 const AVG_CITY_SPEED_KMH=28;
 const SERVICE_MINUTES=90;
 const globalRoles=new Set(['OWNER','SUPERVISOR']);
-const n=v=>Number(v||0);
 const clamp=(v,min,max)=>Math.min(max,Math.max(min,v));
 const businessError=(code,message,statusCode=409,details)=>Object.assign(new Error(message),{code,statusCode,details});
 const fail=(reply,error)=>reply.code(error?.statusCode||422).send({data:null,error:{code:error?.code||'VALIDATION',message:error?.message||'Ошибка построения маршрута',details:error?.details}});
@@ -32,7 +31,7 @@ function reasonFor(x,score,now){const bits=[`время выезда ${new Date(
 
 async function allowedBranches(pool,user){
  if(!user||globalRoles.has(user.role))return null;
- if(user.role!=='MANAGER')return[];
+ if(!['MANAGER','ENGINEER'].includes(user.role))return[];
  return(await pool.query('SELECT branch_id FROM user_branches WHERE user_id=$1 ORDER BY branch_id',[user.id])).rows.map(x=>Number(x.branch_id));
 }
 function assertScope(branchIds,branchId){if(!Number.isSafeInteger(Number(branchId))||Number(branchId)<1)throw businessError('VALIDATION','Укажите филиал',422);if(Array.isArray(branchIds)&&!branchIds.map(Number).includes(Number(branchId)))throw businessError('FORBIDDEN','Филиал недоступен пользователю',403)}
@@ -81,9 +80,9 @@ export async function publishEngineerRoutePlan(pool,{branchIds=null,branchId,eng
  });
 }
 
-export function installEngineerRoutePlanning(app,pool,{operationsView,branchIdsResolver=allowedBranches}={}){
+export function installEngineerRoutePlanning(app,pool,{operationsView,routeView=operationsView,branchIdsResolver=allowedBranches}={}){
  app.get('/api/v1/engineer-route/suggest',{preHandler:operationsView},async(req,reply)=>{try{const branches=await branchIdsResolver(pool,req.user);return{data:await buildEngineerRouteSuggestion(pool,{branchIds:branches,branchId:Number(req.query?.branch_id),engineerId:Number(req.query?.engineer_id),date:req.query?.date})}}catch(e){return fail(reply,e)}});
- app.get('/api/v1/engineer-route/published',{preHandler:operationsView},async(req,reply)=>{try{const branches=await branchIdsResolver(pool,req.user),branchId=Number(req.query?.branch_id),engineerId=Number(req.query?.engineer_id),date=String(req.query?.date||'');assertScope(branches,branchId);if(!validDate(date))throw businessError('VALIDATION','Дата должна быть YYYY-MM-DD',422);await assertEngineer(pool,engineerId,branchId);const plan=(await pool.query('SELECT * FROM engineer_route_plans WHERE engineer_id=$1 AND branch_id=$2 AND plan_date=$3::date ORDER BY revision DESC LIMIT 1',[engineerId,branchId,date])).rows[0];if(!plan)return{data:null};const stops=(await pool.query('SELECT * FROM engineer_route_plan_stops WHERE plan_id=$1 ORDER BY sequence_no',[plan.id])).rows;return{data:{plan,stops}}}catch(e){return fail(reply,e)}});
+ app.get('/api/v1/engineer-route/published',{preHandler:routeView},async(req,reply)=>{try{const branches=await branchIdsResolver(pool,req.user),branchId=Number(req.query?.branch_id),engineerId=Number(req.query?.engineer_id),date=String(req.query?.date||'');if(req.user?.role==='ENGINEER'&&Number(req.user.id)!==engineerId)throw businessError('FORBIDDEN','Инженер может просматривать только свой маршрут',403);assertScope(branches,branchId);if(!validDate(date))throw businessError('VALIDATION','Дата должна быть YYYY-MM-DD',422);await assertEngineer(pool,engineerId,branchId);const plan=(await pool.query('SELECT * FROM engineer_route_plans WHERE engineer_id=$1 AND branch_id=$2 AND plan_date=$3::date ORDER BY revision DESC LIMIT 1',[engineerId,branchId,date])).rows[0];if(!plan)return{data:null};const stops=(await pool.query('SELECT * FROM engineer_route_plan_stops WHERE plan_id=$1 ORDER BY sequence_no',[plan.id])).rows;return{data:{plan,stops}}}catch(e){return fail(reply,e)}});
  app.post('/api/v1/engineer-route/publish',{preHandler:operationsView},async(req,reply)=>{try{const branches=await branchIdsResolver(pool,req.user),branchId=Number(req.body?.branch_id),engineerId=Number(req.body?.engineer_id),date=String(req.body?.date||'');const data=await publishEngineerRoutePlan(pool,{branchIds:branches,branchId,engineerId,date,actorId:req.user.id});return reply.code(201).send({data})}catch(e){return fail(reply,e)}});
  app.put('/api/v1/engineer-route/customers/:id/location',{preHandler:operationsView},async(req,reply)=>{try{const customerId=Number(req.params.id),branchId=Number(req.body?.branch_id),lat=Number(req.body?.latitude),lng=Number(req.body?.longitude),branches=await branchIdsResolver(pool,req.user);assertScope(branches,branchId);if(!Number.isSafeInteger(customerId)||customerId<1||!Number.isFinite(lat)||lat<-90||lat>90||!Number.isFinite(lng)||lng<-180||lng>180)throw businessError('VALIDATION','Некорректные координаты',422);const allowed=(await pool.query('SELECT 1 FROM requests WHERE customer_id=$1 AND branch_id=$2 AND deleted_at IS NULL LIMIT 1',[customerId,branchId])).rows[0];if(!allowed)throw businessError('FORBIDDEN','Клиент не относится к выбранному филиалу',403);const row=(await pool.query(`UPDATE customers SET latitude=$1,longitude=$2,location_source='MANUAL',location_verified_at=now(),updated_at=now() WHERE id=$3 AND deleted_at IS NULL RETURNING id,name,address,latitude,longitude,location_source,location_verified_at`,[lat,lng,customerId])).rows[0];if(!row)throw businessError('NOT_FOUND','Клиент не найден',404);return{data:row}}catch(e){return fail(reply,e)}});
 }
