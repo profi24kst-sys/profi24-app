@@ -1,6 +1,7 @@
 import {authenticate,installOrderAccess} from './access.js';
 import {can,PERMISSIONS} from './rbac.js';
 import {installWarehouseStockAnalytics,resolveWarehouseBranchIds} from './warehouse-stock-analytics.js';
+import {installSupplierPerformanceAnalytics,resolveSupplierPerformanceBranchIds} from './supplier-performance-analytics.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
@@ -23,11 +24,13 @@ await q('ALTER TABLE requests ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ');
 const auth=async(req,reply)=>{if(!await authenticate(req,reply,pool))return;};
 const owner=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(req.user.role!=='OWNER')return fail(reply,'FORBIDDEN','Раздел аналитики доступен владельцу',403)};
 const warehouseView=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,PERMISSIONS.WAREHOUSE_VIEW))return fail(reply,'FORBIDDEN','Недостаточно прав для аналитики склада',403)};
+const procurementView=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,PERMISSIONS.PROCUREMENT_VIEW))return fail(reply,'FORBIDDEN','Недостаточно прав для аналитики поставщиков',403)};
 function range(month){const d=month?new Date(month+'-01T00:00:00Z'):new Date();const s=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),1)),e=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()+1,1));return[s,e]}
 
 installOrderAccess(app,pool,'analytics');
 installWarehouseStockAnalytics(app,pool,{warehouseView,branchIds:resolveWarehouseBranchIds});
-app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'profi24-analytics',version:'2.1-warehouse-stock'}});
+installSupplierPerformanceAnalytics(app,pool,{procurementView,branchIds:resolveSupplierPerformanceBranchIds});
+app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'profi24-analytics',version:'2.2-supplier-performance'}});
 
 app.get('/api/v1/dashboard',{preHandler:owner},async req=>{
  const[s,e]=range(req.query?.month);
