@@ -12,7 +12,7 @@ const validDate=v=>/^\d{4}-\d{2}-\d{2}$/.test(String(v||''));
 const coord=v=>v==null||v===''?null:Number(v);
 const hasCoord=x=>Number.isFinite(coord(x?.latitude))&&Number.isFinite(coord(x?.longitude));
 const rad=x=>x*Math.PI/180;
-const localDate=d=>new Intl.DateTimeFormat('en-CA',{timeZone:TZ,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(d));
+function localDate(value){const p=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:TZ,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date(value)).filter(x=>x.type!=='literal').map(x=>[x.type,x.value]));return `${p.year}-${p.month}-${p.day}`}
 
 function haversineKm(a,b){
  if(!hasCoord(a)||!hasCoord(b))return null;
@@ -28,7 +28,7 @@ function priorityScore(x,now){
  if(x.status==='ACCEPTED'||x.status==='DIAGNOSTICS')score+=10;
  return score;
 }
-function reasonFor(x,score){const bits=[`время выезда ${new Date(x.scheduled_at).toLocaleTimeString('ru-RU',{timeZone:TZ,hour:'2-digit',minute:'2-digit'})}`];if(x.priority==='CRITICAL')bits.push('критичный приоритет');else if(x.priority==='HIGH')bits.push('высокий приоритет');if(x.original_request_id)bits.push('повторный/связанный ремонт');if(x.sla_deadline&&new Date(x.sla_deadline)<new Date())bits.push('SLA просрочен');return `${bits.join(', ')}; приоритет ${score}.`}
+function reasonFor(x,score,now){const bits=[`время выезда ${new Date(x.scheduled_at).toLocaleTimeString('ru-RU',{timeZone:TZ,hour:'2-digit',minute:'2-digit'})}`];if(x.priority==='CRITICAL')bits.push('критичный приоритет');else if(x.priority==='HIGH')bits.push('высокий приоритет');if(x.original_request_id)bits.push('повторный/связанный ремонт');if(x.sla_deadline&&new Date(x.sla_deadline)<now)bits.push('SLA просрочен');return `${bits.join(', ')}; приоритет ${score}.`}
 
 async function allowedBranches(pool,user){
  if(!user||globalRoles.has(user.role))return null;
@@ -60,8 +60,8 @@ export async function buildEngineerRouteSuggestion(db,{branchIds=null,branchId,e
  const stops=rows.map((x,i)=>{
    const score=priorityScore(x,now),resolved=hasCoord(x),km=prev&&resolved?haversineKm(prev,x):null,travel=travelMinutes(km),planned=new Date(x.scheduled_at),arrivalRisk=previousEnd&&travel!=null?new Date(previousEnd.getTime()+travel*60000)>planned:false;
    if(km!=null)totalDistance+=km;if(travel!=null)totalTravel+=travel;if(!resolved)unresolved++;
-   const stop={sequence_no:i+1,request_id:Number(x.id),number:x.number,status:x.status,priority:x.priority,customer_id:Number(x.customer_id),customer_name:x.customer_name,phone:x.phone,address:x.address,category:x.category,brand:x.brand,model:x.model,planned_at:x.scheduled_at,duration_minutes:SERVICE_MINUTES,latitude:coord(x.latitude),longitude:coord(x.longitude),location_status:resolved?'RESOLVED':'UNRESOLVED',location_verified_at:x.location_verified_at,fixed_appointment:true,distance_from_previous_km:km==null?0:Number(km.toFixed(2)),travel_minutes:travel||0,travel_estimate_available:km!=null,arrival_risk:arrivalRisk,priority_score:score,reason:reasonFor(x,score)};
-   previousEnd=new Date(planned.getTime()+SERVICE_MINUTES*60000);if(resolved)prev=x;return stop;
+   const stop={sequence_no:i+1,request_id:Number(x.id),number:x.number,status:x.status,priority:x.priority,customer_id:Number(x.customer_id),customer_name:x.customer_name,phone:x.phone,address:x.address,category:x.category,brand:x.brand,model:x.model,planned_at:x.scheduled_at,duration_minutes:SERVICE_MINUTES,latitude:coord(x.latitude),longitude:coord(x.longitude),location_status:resolved?'RESOLVED':'UNRESOLVED',location_verified_at:x.location_verified_at,fixed_appointment:true,distance_from_previous_km:km==null?0:Number(km.toFixed(2)),travel_minutes:travel||0,travel_estimate_available:km!=null,arrival_risk:arrivalRisk,priority_score:score,reason:reasonFor(x,score,now)};
+   previousEnd=new Date(planned.getTime()+SERVICE_MINUTES*60000);prev=resolved?x:null;return stop;
  });
  const routePoints=[branch,...stops].filter(hasCoord);
  const backlogCandidates=backlog.map(x=>{const score=priorityScore(x,now),distances=routePoints.map(p=>haversineKm(p,x)).filter(v=>v!=null),near=distances.length?Math.min(...distances):null,rank=score+(near==null?0:clamp(30-near*2,0,30));return{request_id:Number(x.id),number:x.number,priority:x.priority,customer_name:x.customer_name,address:x.address,category:x.category,latitude:coord(x.latitude),longitude:coord(x.longitude),location_status:hasCoord(x)?'RESOLVED':'UNRESOLVED',nearest_route_km:near==null?null:Number(near.toFixed(2)),candidate_score:Number(rank.toFixed(1)),reason:`Не назначено время. ${near==null?'Нет координат для оценки близости.':`До ближайшей точки маршрута примерно ${near.toFixed(1)} км.`} Требуется согласовать время с клиентом перед добавлением.`}}).sort((a,b)=>b.candidate_score-a.candidate_score).slice(0,8);
@@ -73,7 +73,7 @@ async function tx(pool,fn){const c=await pool.connect();try{await c.query('BEGIN
 export async function publishEngineerRoutePlan(pool,{branchIds=null,branchId,engineerId,date,actorId,now=new Date()}={}){
  return tx(pool,async c=>{
    const suggestion=await buildEngineerRouteSuggestion(c,{branchIds,branchId,engineerId,date,now});if(!suggestion.stops.length)throw businessError('NO_STOPS','На выбранный день нет назначенных выездов',409);
-   const rev=Number((await c.query('SELECT COALESCE(max(revision),0)+1 n FROM engineer_route_plans WHERE engineer_id=$1 AND branch_id=$2 AND plan_date=$3::date FOR SHARE',[Number(engineerId),Number(branchId),date])).rows[0].n);
+   const current=(await c.query('SELECT id,revision FROM engineer_route_plans WHERE engineer_id=$1 AND branch_id=$2 AND plan_date=$3::date ORDER BY revision DESC LIMIT 1 FOR UPDATE',[Number(engineerId),Number(branchId),date])).rows[0];const rev=Number(current?.revision||0)+1;
    const snapshot={generated_at:suggestion.generated_at,method_version:suggestion.method_version,request_ids:suggestion.stops.map(x=>x.request_id),scheduled_at:suggestion.stops.map(x=>[x.request_id,x.planned_at])};
    const plan=(await c.query(`INSERT INTO engineer_route_plans(plan_date,engineer_id,branch_id,revision,method_version,total_distance_km,total_travel_minutes,unresolved_locations,generated_by,source_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,[date,Number(engineerId),Number(branchId),rev,METHOD,suggestion.summary.total_distance_km,suggestion.summary.total_travel_minutes,suggestion.summary.unresolved_locations,Number(actorId),snapshot])).rows[0];
    for(const s of suggestion.stops)await c.query(`INSERT INTO engineer_route_plan_stops(plan_id,sequence_no,request_id,planned_at,duration_minutes,latitude,longitude,location_status,fixed_appointment,distance_from_previous_km,travel_minutes,priority_score,reason,snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,[plan.id,s.sequence_no,s.request_id,s.planned_at,s.duration_minutes,s.latitude,s.longitude,s.location_status,true,s.distance_from_previous_km,s.travel_minutes,s.priority_score,s.reason,{number:s.number,status:s.status,priority:s.priority,customer_name:s.customer_name,address:s.address,category:s.category,brand:s.brand,model:s.model,arrival_risk:s.arrival_risk}]);
@@ -88,4 +88,4 @@ export function installEngineerRoutePlanning(app,pool,{operationsView,branchIdsR
  app.put('/api/v1/engineer-route/customers/:id/location',{preHandler:operationsView},async(req,reply)=>{try{const customerId=Number(req.params.id),branchId=Number(req.body?.branch_id),lat=Number(req.body?.latitude),lng=Number(req.body?.longitude),branches=await branchIdsResolver(pool,req.user);assertScope(branches,branchId);if(!Number.isSafeInteger(customerId)||customerId<1||!Number.isFinite(lat)||lat<-90||lat>90||!Number.isFinite(lng)||lng<-180||lng>180)throw businessError('VALIDATION','Некорректные координаты',422);const allowed=(await pool.query('SELECT 1 FROM requests WHERE customer_id=$1 AND branch_id=$2 AND deleted_at IS NULL LIMIT 1',[customerId,branchId])).rows[0];if(!allowed)throw businessError('FORBIDDEN','Клиент не относится к выбранному филиалу',403);const row=(await pool.query(`UPDATE customers SET latitude=$1,longitude=$2,location_source='MANUAL',location_verified_at=now(),updated_at=now() WHERE id=$3 AND deleted_at IS NULL RETURNING id,name,address,latitude,longitude,location_source,location_verified_at`,[lat,lng,customerId])).rows[0];if(!row)throw businessError('NOT_FOUND','Клиент не найден',404);return{data:row}}catch(e){return fail(reply,e)}});
 }
 
-export {allowedBranches as resolveEngineerRouteBranchIds,haversineKm,travelMinutes};
+export {allowedBranches as resolveEngineerRouteBranchIds,haversineKm,travelMinutes,localDate};
