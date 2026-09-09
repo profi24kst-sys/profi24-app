@@ -112,6 +112,7 @@ jobs:
           for script in "${scripts[@]}"; do
             echo "===== browser acceptance: $script ====="
             node -r /tmp/profi24-playwright/use-system-chrome.cjs "web/e2e/$script"
+            sleep 2
           done
 
       - name: Upload browser diagnostics
