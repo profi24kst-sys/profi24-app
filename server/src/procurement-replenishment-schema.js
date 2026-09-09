@@ -1,0 +1,41 @@
+export const procurementReplenishmentStatements=[
+`CREATE TABLE IF NOT EXISTS procurement_replenishment_batches(
+ id BIGSERIAL PRIMARY KEY,
+ number TEXT NOT NULL UNIQUE,
+ idempotency_key TEXT NOT NULL UNIQUE,
+ status TEXT NOT NULL DEFAULT 'POSTED' CHECK(status IN('POSTED')),
+ lines_count INT NOT NULL DEFAULT 0 CHECK(lines_count>=0),
+ total_value NUMERIC(16,2) NOT NULL DEFAULT 0 CHECK(total_value>=0),
+ created_by INT NOT NULL REFERENCES users(id),
+ created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+)`,
+`CREATE TABLE IF NOT EXISTS procurement_replenishment_lines(
+ id BIGSERIAL PRIMARY KEY,
+ batch_id BIGINT NOT NULL REFERENCES procurement_replenishment_batches(id) ON DELETE RESTRICT,
+ warehouse_item_id INT NOT NULL REFERENCES warehouse_items(id) ON DELETE RESTRICT,
+ branch_id INT NOT NULL REFERENCES branches(id),
+ item_name TEXT NOT NULL,
+ sku TEXT,
+ oem_code TEXT,
+ min_quantity NUMERIC(14,3) NOT NULL DEFAULT 0,
+ stock_quantity NUMERIC(14,3) NOT NULL DEFAULT 0,
+ reserved_quantity NUMERIC(14,3) NOT NULL DEFAULT 0,
+ service_demand_quantity NUMERIC(14,3) NOT NULL DEFAULT 0,
+ pending_order_quantity NUMERIC(14,3) NOT NULL DEFAULT 0,
+ recommended_quantity NUMERIC(14,3) NOT NULL DEFAULT 0,
+ ordered_quantity NUMERIC(14,3) NOT NULL CHECK(ordered_quantity>0),
+ supplier_id INT NOT NULL REFERENCES suppliers(id),
+ supplier_name TEXT NOT NULL,
+ unit_cost NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK(unit_cost>=0),
+ purchase_order_id INT NOT NULL REFERENCES purchase_orders(id) ON DELETE RESTRICT,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+)`,
+`CREATE INDEX IF NOT EXISTS idx_replenishment_batches_created ON procurement_replenishment_batches(created_at DESC)`,
+`CREATE INDEX IF NOT EXISTS idx_replenishment_lines_batch ON procurement_replenishment_lines(batch_id,id)`,
+`CREATE INDEX IF NOT EXISTS idx_replenishment_lines_item ON procurement_replenishment_lines(warehouse_item_id,created_at DESC)`,
+`CREATE OR REPLACE FUNCTION procurement_replenishment_immutable() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'Проведённый план закупки нельзя изменить или удалить' USING ERRCODE='P2401'; END $$ LANGUAGE plpgsql`,
+`DROP TRIGGER IF EXISTS trg_procurement_replenishment_batches_immutable ON procurement_replenishment_batches`,
+`CREATE TRIGGER trg_procurement_replenishment_batches_immutable BEFORE UPDATE OR DELETE ON procurement_replenishment_batches FOR EACH ROW EXECUTE FUNCTION procurement_replenishment_immutable()`,
+`DROP TRIGGER IF EXISTS trg_procurement_replenishment_lines_immutable ON procurement_replenishment_lines`,
+`CREATE TRIGGER trg_procurement_replenishment_lines_immutable BEFORE UPDATE OR DELETE ON procurement_replenishment_lines FOR EACH ROW EXECUTE FUNCTION procurement_replenishment_immutable()`
+];
