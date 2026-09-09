@@ -1,0 +1,61 @@
+export const knowledgeBaseStatements=[
+`CREATE TABLE IF NOT EXISTS knowledge_articles(
+ id SERIAL PRIMARY KEY,
+ title TEXT NOT NULL,
+ category TEXT,
+ brand TEXT,
+ model TEXT,
+ error_code TEXT,
+ tags TEXT NOT NULL DEFAULT '',
+ symptoms TEXT NOT NULL DEFAULT '',
+ cause TEXT NOT NULL DEFAULT '',
+ solution TEXT NOT NULL DEFAULT '',
+ verification TEXT NOT NULL DEFAULT '',
+ safety_notes TEXT NOT NULL DEFAULT '',
+ status TEXT NOT NULL DEFAULT 'DRAFT' CHECK(status IN('DRAFT','PUBLISHED','ARCHIVED')),
+ version INT NOT NULL DEFAULT 1 CHECK(version>=1),
+ created_by INT NOT NULL REFERENCES users(id),
+ updated_by INT NOT NULL REFERENCES users(id),
+ published_by INT REFERENCES users(id),
+ published_at TIMESTAMPTZ,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)`,
+`CREATE INDEX IF NOT EXISTS idx_knowledge_articles_status_updated ON knowledge_articles(status,updated_at DESC)`,
+`CREATE INDEX IF NOT EXISTS idx_knowledge_articles_equipment ON knowledge_articles(category,brand,model,error_code)`,
+`CREATE TABLE IF NOT EXISTS knowledge_article_versions(
+ id BIGSERIAL PRIMARY KEY,
+ article_id INT NOT NULL REFERENCES knowledge_articles(id) ON DELETE CASCADE,
+ version INT NOT NULL,
+ snapshot JSONB NOT NULL,
+ changed_by INT NOT NULL REFERENCES users(id),
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ UNIQUE(article_id,version)
+)`,
+`CREATE TABLE IF NOT EXISTS knowledge_feedback(
+ id BIGSERIAL PRIMARY KEY,
+ article_id INT NOT NULL REFERENCES knowledge_articles(id) ON DELETE CASCADE,
+ request_id INT NOT NULL REFERENCES requests(id) ON DELETE CASCADE,
+ user_id INT NOT NULL REFERENCES users(id),
+ helpful BOOLEAN NOT NULL,
+ note TEXT,
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ UNIQUE(article_id,request_id,user_id)
+)`,
+`CREATE INDEX IF NOT EXISTS idx_knowledge_feedback_article ON knowledge_feedback(article_id)`,
+`CREATE TABLE IF NOT EXISTS knowledge_use_events(
+ id BIGSERIAL PRIMARY KEY,
+ article_id INT NOT NULL REFERENCES knowledge_articles(id) ON DELETE CASCADE,
+ article_version INT NOT NULL,
+ request_id INT NOT NULL REFERENCES requests(id) ON DELETE CASCADE,
+ user_id INT NOT NULL REFERENCES users(id),
+ action TEXT NOT NULL CHECK(action IN('VIEW','APPLIED')),
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)`,
+`CREATE INDEX IF NOT EXISTS idx_knowledge_use_request ON knowledge_use_events(request_id,created_at DESC)`,
+`CREATE OR REPLACE FUNCTION guard_knowledge_append_only() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'knowledge audit rows are append-only' USING ERRCODE='P2409'; END $$ LANGUAGE plpgsql`,
+`DROP TRIGGER IF EXISTS guard_knowledge_versions ON knowledge_article_versions`,
+`CREATE TRIGGER guard_knowledge_versions BEFORE UPDATE OR DELETE ON knowledge_article_versions FOR EACH ROW EXECUTE FUNCTION guard_knowledge_append_only()`,
+`DROP TRIGGER IF EXISTS guard_knowledge_use_events ON knowledge_use_events`,
+`CREATE TRIGGER guard_knowledge_use_events BEFORE UPDATE OR DELETE ON knowledge_use_events FOR EACH ROW EXECUTE FUNCTION guard_knowledge_append_only()`
+];
