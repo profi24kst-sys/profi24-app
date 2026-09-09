@@ -51,16 +51,18 @@ END $$ LANGUAGE plpgsql`,
 `DROP TRIGGER IF EXISTS trg_warehouse_inventory_document_guard ON warehouse_inventories`,
 `CREATE TRIGGER trg_warehouse_inventory_document_guard BEFORE UPDATE OR DELETE ON warehouse_inventories FOR EACH ROW EXECUTE FUNCTION warehouse_inventory_document_guard()`,
 `CREATE OR REPLACE FUNCTION warehouse_inventory_line_guard() RETURNS trigger AS $$
-DECLARE doc_status TEXT;
+DECLARE doc_status TEXT; doc_id BIGINT;
 BEGIN
- SELECT status INTO doc_status FROM warehouse_inventories WHERE id=COALESCE(NEW.inventory_id,OLD.inventory_id);
+ IF TG_OP='DELETE' THEN doc_id:=OLD.inventory_id; ELSE doc_id:=NEW.inventory_id; END IF;
+ SELECT status INTO doc_status FROM warehouse_inventories WHERE id=doc_id;
  IF doc_status IS DISTINCT FROM 'DRAFT' THEN
    RAISE EXCEPTION 'Строки проведённой или отменённой инвентаризации нельзя изменять' USING ERRCODE='P2401';
  END IF;
  IF TG_OP='UPDATE' AND (NEW.inventory_id IS DISTINCT FROM OLD.inventory_id OR NEW.item_id IS DISTINCT FROM OLD.item_id OR NEW.expected_quantity IS DISTINCT FROM OLD.expected_quantity OR NEW.snapshot_updated_at IS DISTINCT FROM OLD.snapshot_updated_at OR NEW.item_name IS DISTINCT FROM OLD.item_name OR NEW.unit_cost IS DISTINCT FROM OLD.unit_cost) THEN
    RAISE EXCEPTION 'Учётный снимок строки инвентаризации неизменяем' USING ERRCODE='P2401';
  END IF;
- RETURN COALESCE(NEW,OLD);
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ RETURN NEW;
 END $$ LANGUAGE plpgsql`,
 `DROP TRIGGER IF EXISTS trg_warehouse_inventory_line_guard ON warehouse_inventory_lines`,
 `CREATE TRIGGER trg_warehouse_inventory_line_guard BEFORE INSERT OR UPDATE OR DELETE ON warehouse_inventory_lines FOR EACH ROW EXECUTE FUNCTION warehouse_inventory_line_guard()`
