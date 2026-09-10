@@ -1,0 +1,28 @@
+{
+  "id": "/",
+  "name": "PROFI24 CRM",
+  "short_name": "PROFI24",
+  "description": "CRM сервисного центра PROFI24",
+  "lang": "ru",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f5f7fb",
+  "theme_color": "#111827",
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "/icons/profi24-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/profi24-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

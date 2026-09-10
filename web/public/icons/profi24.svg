@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="PROFI24">
+  <rect width="512" height="512" rx="112" fill="#111827"/>
+  <path d="M110 136h153c85 0 135 43 135 116 0 76-53 120-141 120h-55v70h-92V136zm92 78v82h48c39 0 58-13 58-41 0-27-19-41-58-41h-48z" fill="#fff"/>
+  <path d="M318 339h48v-46h58v46h31v51h-31v52h-58v-52h-94v-43l78-126h66L318 339zm48-74-45 74h45v-74z" fill="#22c55e"/>
+</svg>
