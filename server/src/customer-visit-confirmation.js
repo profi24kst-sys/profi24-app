@@ -8,7 +8,7 @@ const publicUrl=row=>`${baseUrl()}/visit/${tokenFor(row.request_id,row.version,r
 const apiError=(code,message,statusCode=409)=>Object.assign(new Error(message),{code,statusCode});
 const fmt=v=>v?new Date(v).toLocaleString('ru-RU',{timeZone:'Asia/Qostanay',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'не назначено';
 const sameSnapshot=(row,order)=>Boolean(row&&order&&order.scheduled_at&&new Date(row.scheduled_at_snapshot).getTime()===new Date(order.scheduled_at).getTime()&&Number(row.engineer_id||0)===Number(order.engineer_id||0));
-const activeOrder=order=>Boolean(order&&!order.deleted_at&&!['CLOSED','CANCELLED'].includes(order.status)&&order.scheduled_at);
+const activeOrder=order=>Boolean(order&&!order.deleted_at&&!['CLOSED','CANCELLED'].includes(order.status)&&order.scheduled_at&&order.engineer_id);
 
 async function withTransaction(pool,fn){const c=await pool.connect();try{await c.query('BEGIN');const out=await fn(c);await c.query('COMMIT');return out}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}}
 async function pickFollowupAssignee(c,branchId){for(const role of ['SUPERVISOR','MANAGER']){const row=(await c.query(`SELECT u.id FROM users u JOIN user_branches ub ON ub.user_id=u.id WHERE u.active=true AND u.role=$1 AND ub.branch_id=$2 ORDER BY ub.is_primary DESC,u.id LIMIT 1`,[role,branchId])).rows[0];if(row)return Number(row.id)}const owner=(await c.query("SELECT id FROM users WHERE active=true AND role='OWNER' ORDER BY id LIMIT 1")).rows[0];return owner?Number(owner.id):null}
@@ -17,6 +17,7 @@ export async function installCustomerVisitConfirmation(app,pool,{enqueue,request
   await pool.query(`INSERT INTO message_templates(code,name,audience,channel,body) VALUES('CUSTOMER_VISIT_CONFIRMATION','Подтверждение времени визита','CUSTOMER','WHATSAPP','{{customer_name}}, инженер {{engineer_name}} планирует визит по заявке {{request_number}} на {{scheduled_at}}. Подтвердите время или сообщите, что нужен перенос: {{visit_url}}') ON CONFLICT(code) DO NOTHING`);
 
   async function currentOrder(requestId,client=pool){return (await client.query(`SELECT r.id,r.number,r.customer_id,r.engineer_id,r.branch_id,r.status,r.scheduled_at,r.deleted_at,c.name customer_name,e.category,e.brand,e.model,u.name engineer_name FROM requests r JOIN customers c ON c.id=r.customer_id LEFT JOIN equipment e ON e.id=r.equipment_id LEFT JOIN users u ON u.id=r.engineer_id WHERE r.id=$1`,[requestId])).rows[0]||null}
+  async function managerCanAccess(user,requestId){if(user?.role!=='MANAGER')return true;return Boolean((await pool.query(`SELECT 1 FROM requests r JOIN user_branches ub ON ub.branch_id=r.branch_id AND ub.user_id=$2 WHERE r.id=$1 AND r.deleted_at IS NULL LIMIT 1`,[requestId,user.id])).rows[0])}
 
   async function ensureConfirmation(requestId){
     return withTransaction(pool,async c=>{
@@ -26,13 +27,14 @@ export async function installCustomerVisitConfirmation(app,pool,{enqueue,request
       const current=(await c.query('SELECT * FROM customer_visit_confirmations WHERE request_id=$1 AND is_current=true FOR UPDATE',[requestId])).rows[0]||null;
       if(!activeOrder(order)){
         if(current)await c.query('UPDATE customer_visit_confirmations SET is_current=false,updated_at=now() WHERE id=$1',[current.id]);
-        return {skipped:['CLOSED','CANCELLED'].includes(order.status)?'inactive_order':'no_schedule'};
+        const skipped=['CLOSED','CANCELLED'].includes(order.status)?'inactive_order':!order.scheduled_at?'no_schedule':'no_engineer';
+        return {skipped};
       }
       if(current&&sameSnapshot(current,order))return {confirmation:current,order,reused:true};
       if(current)await c.query('UPDATE customer_visit_confirmations SET is_current=false,updated_at=now() WHERE id=$1',[current.id]);
       const version=Number((await c.query('SELECT COALESCE(max(version),0)+1 version FROM customer_visit_confirmations WHERE request_id=$1',[requestId])).rows[0].version);
       const nonce=randomBytes(24).toString('base64url'),hash=tokenHash(tokenFor(requestId,version,nonce));
-      const row=(await c.query(`INSERT INTO customer_visit_confirmations(request_id,customer_id,engineer_id,branch_id,version,token_nonce,token_hash,scheduled_at_snapshot,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,GREATEST($8::timestamptz+interval '12 hours',now()+interval '1 hour')) RETURNING *`,[requestId,order.customer_id,order.engineer_id||null,order.branch_id||null,version,nonce,hash,order.scheduled_at])).rows[0];
+      const row=(await c.query(`INSERT INTO customer_visit_confirmations(request_id,customer_id,engineer_id,branch_id,version,token_nonce,token_hash,scheduled_at_snapshot,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,GREATEST($8::timestamptz+interval '12 hours',now()+interval '1 hour')) RETURNING *`,[requestId,order.customer_id,order.engineer_id,order.branch_id||null,version,nonce,hash,order.scheduled_at])).rows[0];
       return {confirmation:row,order,reused:false};
     });
   }
@@ -59,7 +61,7 @@ export async function installCustomerVisitConfirmation(app,pool,{enqueue,request
   }
 
   async function byToken(token,client=pool){if(!token||String(token).length>256)return null;return (await client.query(`SELECT v.*,r.number request_number,r.status request_status,r.scheduled_at current_scheduled_at,r.engineer_id current_engineer_id,r.deleted_at request_deleted_at,e.category,e.brand,e.model,u.name engineer_name FROM customer_visit_confirmations v JOIN requests r ON r.id=v.request_id LEFT JOIN equipment e ON e.id=r.equipment_id LEFT JOIN users u ON u.id=v.engineer_id WHERE v.token_hash=$1`,[tokenHash(token)])).rows[0]||null}
-  const tokenCurrent=row=>Boolean(row&&row.is_current&&!row.request_deleted_at&&!['CLOSED','CANCELLED'].includes(row.request_status)&&row.current_scheduled_at&&new Date(row.scheduled_at_snapshot).getTime()===new Date(row.current_scheduled_at).getTime()&&Number(row.engineer_id||0)===Number(row.current_engineer_id||0));
+  const tokenCurrent=row=>Boolean(row&&row.is_current&&!row.request_deleted_at&&!['CLOSED','CANCELLED'].includes(row.request_status)&&row.current_scheduled_at&&row.current_engineer_id&&new Date(row.scheduled_at_snapshot).getTime()===new Date(row.current_scheduled_at).getTime()&&Number(row.engineer_id||0)===Number(row.current_engineer_id||0));
 
   app.get('/public/v1/visit/:token',async(req,reply)=>{
     const row=await byToken(req.params.token);if(!row)return reply.code(404).send({data:null,error:{code:'NOT_FOUND',message:'Ссылка подтверждения недействительна'}});
@@ -103,7 +105,10 @@ export async function installCustomerVisitConfirmation(app,pool,{enqueue,request
   });
 
   app.post('/api/v1/visit-confirmations/:requestId/resend',{preHandler:roles('OWNER','SUPERVISOR','MANAGER')},async(req,reply)=>{
-    try{const out=await enqueueInvite({request_id:Number(req.params.requestId),created_by:req.user.id,dedupe_key:`visit-resend:${req.params.requestId}:${Date.now()}`});if(!out.confirmation)return reply.code(409).send({data:null,error:{code:'NOT_AVAILABLE',message:'Для заявки нет активного времени визита'}});return reply.code(201).send({data:out})}catch(e){return reply.code(e.statusCode||422).send({data:null,error:{code:e.code||'VALIDATION',message:e.message}})}
+    const requestId=Number(req.params.requestId);
+    if(!Number.isSafeInteger(requestId)||requestId<1)return reply.code(422).send({data:null,error:{code:'VALIDATION',message:'Некорректная заявка'}});
+    if(!await managerCanAccess(req.user,requestId))return reply.code(403).send({data:null,error:{code:'FORBIDDEN',message:'Заявка другого филиала недоступна'}});
+    try{const out=await enqueueInvite({request_id:requestId,created_by:req.user.id,dedupe_key:`visit-resend:${requestId}:${Date.now()}`});if(!out.confirmation)return reply.code(409).send({data:null,error:{code:'NOT_AVAILABLE',message:'Для заявки нет активного времени визита с назначенным инженером'}});return reply.code(201).send({data:out})}catch(e){return reply.code(e.statusCode||422).send({data:null,error:{code:e.code||'VALIDATION',message:e.message}})}
   });
 
   return {ensureConfirmation,enqueueInvite,onHistory,byToken};
