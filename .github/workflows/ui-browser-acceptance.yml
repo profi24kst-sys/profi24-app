@@ -115,6 +115,7 @@ jobs:
             route-customer-notifications-regression.cjs
             customer-visit-confirmation-regression.cjs
             visit-readiness-regression.cjs
+            operations-action-center-regression.cjs
             complaints-center-regression.cjs
             customer-feedback-regression.cjs
             service-contracts-regression.cjs
