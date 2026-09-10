@@ -32,9 +32,13 @@ CREATE TABLE request_stage_events(id BIGSERIAL PRIMARY KEY,request_id INT NOT NU
   const plan=(await q(`INSERT INTO engineer_route_plans(plan_date,engineer_id,branch_id,revision,method_version,generated_by) VALUES('2026-09-10',$1,$2,1,'test',$3) RETURNING id`,[engineer,kst,manager])).rows[0].id;
   const times=['2026-09-10T09:00:00+05:00','2026-09-10T10:30:00+05:00','2026-09-10T12:00:00+05:00'],travels=[10,15,20];
   for(let i=0;i<3;i++)await q(`INSERT INTO engineer_route_plan_stops(plan_id,sequence_no,request_id,planned_at,duration_minutes,location_status,fixed_appointment,distance_from_previous_km,travel_minutes,priority_score,reason,snapshot) VALUES($1,$2,$3,$4,60,'RESOLVED',true,1,$5,1,'test',$6)`,[plan,i+1,requests[i],times[i],travels[i],{number:`R${i+1}`,customer_name:String.fromCharCode(65+i),address:`${String.fromCharCode(65+i)} street`}]);
-  await q("INSERT INTO request_stage_events(request_id,event,created_at) VALUES($1,'DEPART','2026-09-10T08:50:00+05:00'),($1,'ARRIVE','2026-09-10T09:10:00+05:00'),($2,'DEPART','2026-09-10T10:35:00+05:00'),($3,'ARRIVE','2026-09-09T12:05:00+05:00')",[requests[0],requests[1],requests[2]]);
+  await q("INSERT INTO request_stage_events(request_id,event,created_at) VALUES($1,'DEPART','2026-09-10T08:50:00+05:00'),($1,'ARRIVE','2026-09-10T09:10:00+05:00'),($2,'ARRIVE','2026-09-09T12:05:00+05:00')",[requests[0],requests[2]]);
 
   const scope=await resolveEngineerRouteExecutionBranchIds(pool,{id:manager,role:'MANAGER'});assert.deepEqual(scope,[Number(kst)]);
+  const afterArrival=await buildEngineerRouteExecution(pool,{branchIds:scope,branchId:kst,engineerId:engineer,date:'2026-09-10',now:new Date('2026-09-10T10:20:00+05:00')});
+  assert.equal(afterArrival.current_stop.request_id,requests[0]);assert.equal(afterArrival.current_stop.execution_state,'ARRIVED');assert.equal(afterArrival.next_stop.request_id,requests[1]);assert.equal(afterArrival.stops[2].arrived_at,null);
+
+  await q("INSERT INTO request_stage_events(request_id,event,created_at) VALUES($1,'DEPART','2026-09-10T10:35:00+05:00')",[requests[1]]);
   const route=await buildEngineerRouteExecution(pool,{branchIds:scope,branchId:kst,engineerId:engineer,date:'2026-09-10',now:new Date('2026-09-10T10:40:00+05:00')});
   assert.equal(Number(route.plan.id),Number(plan));assert.equal(route.summary.route_state,'ACTIVE');assert.equal(route.summary.arrived,1);assert.equal(route.summary.on_route,1);assert.equal(route.summary.pending,1);
   const [one,two,three]=route.stops;
