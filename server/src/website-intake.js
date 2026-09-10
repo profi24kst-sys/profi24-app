@@ -44,7 +44,7 @@ export function sanitizeWebsiteIntake(body={}){
 }
 
 export function installWebsiteIntake(app,pool,{secret=process.env.WEBSITE_INTAKE_SECRET}={}){
-  app.post('/public/v1/website-intake',{config:{rateLimit:{max:30,timeWindow:'1 minute'}}},async(req,reply)=>{
+  app.post('/api/v1/website-intake',{config:{rateLimit:{max:30,timeWindow:'1 minute'}}},async(req,reply)=>{
     if(!secret)return fail(reply,'WEBSITE_INTAKE_DISABLED','Приём заявок с сайта не настроен',503);
     if(!sameSecret(req.headers['x-profi24-intake-secret'],secret))return fail(reply,'UNAUTHORIZED','Неверный ключ интеграции',401);
 
