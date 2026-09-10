@@ -4,15 +4,18 @@ import {installCustomerFeedback} from './customer-feedback.js';
 import {installCustomerVisitConfirmation} from './customer-visit-confirmation.js';
 import {installVisitReadiness} from './visit-readiness.js';
 import {createRouteCustomerNotificationSync} from './route-customer-notifications.js';
+import {installWebsiteIntake} from './website-intake.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
+import rateLimit from '@fastify/rate-limit';
 import jwt from '@fastify/jwt';
 import pg from 'pg';
 
 const app=Fastify({logger:true});
 await app.register(cors,{origin:(process.env.CORS_ORIGIN||'http://localhost:5173').split(',').map(x=>x.trim()),credentials:true});
 await app.register(helmet,{contentSecurityPolicy:false});
+await app.register(rateLimit,{max:300,timeWindow:'1 minute'});
 await app.register(jwt,{secret:process.env.JWT_SECRET||'dev-secret-change-me'});
 const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,max:Number(process.env.DB_POOL_MAX||10)});
 const q=(s,p=[])=>pool.query(s,p);
@@ -25,7 +28,7 @@ const schema=[
 `CREATE TABLE IF NOT EXISTS message_templates(
  id SERIAL PRIMARY KEY,code TEXT UNIQUE NOT NULL,name TEXT NOT NULL,audience TEXT NOT NULL CHECK(audience IN ('CUSTOMER','ENGINEER')),channel TEXT NOT NULL DEFAULT 'WHATSAPP',body TEXT NOT NULL,active BOOLEAN DEFAULT TRUE,created_at TIMESTAMPTZ DEFAULT now(),updated_at TIMESTAMPTZ DEFAULT now())`,
 `CREATE TABLE IF NOT EXISTS message_queue(
- id BIGSERIAL PRIMARY KEY,request_id INT REFERENCES requests(id) ON DELETE SET NULL,history_id INT REFERENCES request_history(id) ON DELETE SET NULL,template_code TEXT,channel TEXT NOT NULL,audience TEXT NOT NULL,recipient TEXT,body TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'QUEUED',attempts INT NOT NULL DEFAULT 0,provider_message_id TEXT,error_text TEXT,dedupe_key TEXT UNIQUE,created_by INT REFERENCES users(id),created_at TIMESTAMPTZ DEFAULT now(),sent_at TIMESTAMPTZ,delivered_at TIMESTAMPTZ,read_at TIMESTAMPTZ,updated_at TIMESTAMPTZ DEFAULT now())`,
+ id BIGSERIAL PRIMARY KEY,request_id INT REFERENCES requests(id) ON DELETE SET NULL,history_id INT REFERENCES request_history(id) ON DELETE SET NULL,template_code TEXT,channel TEXT NOT NULL,audience TEXT NOT NULL,recipient TEXT,body TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'QUEUED',attempts INT NOT NULL DEFAULT 0,provider_message_id TEXT,error_text,dedupe_key TEXT UNIQUE,created_by INT REFERENCES users(id),created_at TIMESTAMPTZ DEFAULT now(),sent_at TIMESTAMPTZ,delivered_at TIMESTAMPTZ,read_at TIMESTAMPTZ,updated_at TIMESTAMPTZ DEFAULT now())`,
 `CREATE INDEX IF NOT EXISTS idx_message_queue_status ON message_queue(status,created_at)`,
 `CREATE TABLE IF NOT EXISTS communication_state(id INT PRIMARY KEY DEFAULT 1,last_history_id INT NOT NULL DEFAULT 0,updated_at TIMESTAMPTZ DEFAULT now())`,
 `INSERT INTO communication_state(id,last_history_id) VALUES(1,0) ON CONFLICT(id) DO NOTHING`
@@ -90,6 +93,7 @@ async function sendWhatsApp(m){const token=process.env.WHATSAPP_TOKEN,phoneId=pr
 async function processQueue(limit=30){const rows=(await q(`SELECT * FROM message_queue WHERE status='QUEUED' ORDER BY created_at LIMIT $1`,[limit])).rows;let sent=0;for(const m of rows){try{let id=null;if(m.channel==='TELEGRAM')id=await sendTelegram(m);else if(m.channel==='WHATSAPP')id=await sendWhatsApp(m);if(id===null)continue;await q(`UPDATE message_queue SET status='SENT',provider_message_id=$1,sent_at=now(),updated_at=now(),attempts=attempts+1,error_text=NULL WHERE id=$2`,[id,m.id]);sent++}catch(e){await q(`UPDATE message_queue SET status=CASE WHEN attempts>=2 THEN 'ERROR' ELSE 'QUEUED' END,attempts=attempts+1,error_text=$1,updated_at=now() WHERE id=$2`,[String(e.message).slice(0,500),m.id])}}return sent}
 
 installOrderAccess(app,pool,'communications');
+installWebsiteIntake(app,pool);
 feedbackWorkflow=await installCustomerFeedback(app,pool,{enqueue,requestData,vars,render,roles});
 visitWorkflow=await installCustomerVisitConfirmation(app,pool,{enqueue,requestData,vars,render,roles});
 readinessWorkflow=await installVisitReadiness(app,pool,{visitWorkflow,roles});
