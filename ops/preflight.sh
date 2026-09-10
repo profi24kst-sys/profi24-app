@@ -21,6 +21,14 @@ placeholder "$POSTGRES_PASSWORD" && fail "POSTGRES_PASSWORD содержит т�
 placeholder "$JWT_SECRET" && fail "JWT_SECRET содержит тестовый placeholder"
 [ "$JWT_SECRET" != "$POSTGRES_PASSWORD" ] || fail "JWT_SECRET и POSTGRES_PASSWORD должны отличаться"
 
+if [ -n "${WEBSITE_INTAKE_SECRET:-}" ]; then
+  [ ${#WEBSITE_INTAKE_SECRET} -ge 32 ] || fail "WEBSITE_INTAKE_SECRET должен быть не короче 32 символов"
+  placeholder "$WEBSITE_INTAKE_SECRET" && fail "WEBSITE_INTAKE_SECRET содержит тестовый placeholder"
+  [ "$WEBSITE_INTAKE_SECRET" != "$JWT_SECRET" ] || fail "WEBSITE_INTAKE_SECRET и JWT_SECRET должны отличаться"
+  [ "$WEBSITE_INTAKE_SECRET" != "$POSTGRES_PASSWORD" ] || fail "WEBSITE_INTAKE_SECRET и POSTGRES_PASSWORD должны отличаться"
+  case "$WEBSITE_INTAKE_SECRET" in *profi24*|*password*|*qwerty*) fail "WEBSITE_INTAKE_SECRET выглядит предсказуемым";; esac
+fi
+
 case "$CORS_ORIGIN" in *'*'*) fail "CORS_ORIGIN не может содержать wildcard *";; esac
 case "$PUBLIC_BASE_URL" in http://*|https://*) :;; *) fail "PUBLIC_BASE_URL должен быть абсолютным http(s) URL";; esac
 
@@ -78,4 +86,4 @@ fi
 
 case "$JWT_SECRET" in *profi24*|*password*|*qwerty*) fail "JWT_SECRET выглядит предсказуемым";; esac
 
-echo "preflight_ok node_env=$NODE_ENV public_base_url=$PUBLIC_BASE_URL backup_retention_days=$BACKUP_RETENTION_DAYS auth_token_ttl=$AUTH_TOKEN_TTL auth_failure_limit=$AUTH_FAILURE_LIMIT"
+echo "preflight_ok node_env=$NODE_ENV public_base_url=$PUBLIC_BASE_URL backup_retention_days=$BACKUP_RETENTION_DAYS auth_token_ttl=$AUTH_TOKEN_TTL auth_failure_limit=$AUTH_FAILURE_LIMIT website_intake_configured=$([ -n "${WEBSITE_INTAKE_SECRET:-}" ] && echo yes || echo no)"
