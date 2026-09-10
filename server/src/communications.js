@@ -1,6 +1,7 @@
 import {authenticate,installOrderAccess} from './access.js';
 import {roleAllowed} from './rbac.js';
 import {installCustomerFeedback} from './customer-feedback.js';
+import {installCustomerVisitConfirmation} from './customer-visit-confirmation.js';
 import {createRouteCustomerNotificationSync} from './route-customer-notifications.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
@@ -64,8 +65,24 @@ const rules={
  WORKFLOW_DEPART:[['CUSTOMER_ENGINEER_DEPARTED','CUSTOMER']]
 };
 const freshDeparture=h=>Date.now()-new Date(h.created_at).getTime()<=60*60000;
-let feedbackWorkflow=null,routeWorkflow=null;
-async function syncHistory(){const state=(await q('SELECT last_history_id FROM communication_state WHERE id=1')).rows[0];const rows=(await q('SELECT * FROM request_history WHERE id>$1 ORDER BY id ASC LIMIT 1000',[state.last_history_id])).rows;let last=state.last_history_id;for(const h of rows){last=Math.max(last,h.id);for(const [code,audience] of rules[h.action]||[]){if(code==='CUSTOMER_ENGINEER_DEPARTED'&&!freshDeparture(h))continue;await enqueue({request_id:h.request_id,history_id:h.id,template_code:code,audience,dedupe_key:`history:${h.id}:${code}`})}if(h.action==='REQUEST_CLOSED'&&feedbackWorkflow)await feedbackWorkflow.enqueueInvite({request_id:h.request_id,history_id:h.id,dedupe_key:`history:${h.id}:CUSTOMER_FEEDBACK_REQUEST`})}if(rows.length)await q('UPDATE communication_state SET last_history_id=$1,updated_at=now() WHERE id=1',[last]);return rows.length}
+let feedbackWorkflow=null,routeWorkflow=null,visitWorkflow=null;
+async function syncHistory(){
+ const state=(await q('SELECT last_history_id FROM communication_state WHERE id=1')).rows[0];
+ const rows=(await q('SELECT * FROM request_history WHERE id>$1 ORDER BY id ASC LIMIT 1000',[state.last_history_id])).rows;
+ let last=state.last_history_id;
+ for(const h of rows){
+  last=Math.max(last,h.id);
+  const visit=visitWorkflow?await visitWorkflow.onHistory(h):{handled:false};
+  for(const [code,audience] of rules[h.action]||[]){
+   if(code==='CUSTOMER_ENGINEER_DEPARTED'&&!freshDeparture(h))continue;
+   if(visit?.handled&&audience==='CUSTOMER'&&((h.action==='REQUEST_ASSIGNED'&&code==='CUSTOMER_ASSIGNED')||(h.action==='SCHEDULE_CHANGED'&&code==='CUSTOMER_SCHEDULE_CHANGED')))continue;
+   await enqueue({request_id:h.request_id,history_id:h.id,template_code:code,audience,dedupe_key:`history:${h.id}:${code}`});
+  }
+  if(h.action==='REQUEST_CLOSED'&&feedbackWorkflow)await feedbackWorkflow.enqueueInvite({request_id:h.request_id,history_id:h.id,dedupe_key:`history:${h.id}:CUSTOMER_FEEDBACK_REQUEST`});
+ }
+ if(rows.length)await q('UPDATE communication_state SET last_history_id=$1,updated_at=now() WHERE id=1',[last]);
+ return rows.length;
+}
 
 async function sendTelegram(m){const token=process.env.TELEGRAM_BOT_TOKEN;if(!token||!m.recipient)return null;const r=await fetch(`https://api.telegram.org/bot${token}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:m.recipient,text:m.body})});const j=await r.json().catch(()=>({}));if(!r.ok||!j.ok)throw new Error(j.description||`Telegram HTTP ${r.status}`);return String(j.result?.message_id||'')}
 async function sendWhatsApp(m){const token=process.env.WHATSAPP_TOKEN,phoneId=process.env.WHATSAPP_PHONE_NUMBER_ID,version=process.env.WHATSAPP_API_VERSION||'v23.0';if(!token||!phoneId||!m.recipient)return null;const to=String(m.recipient).replace(/\D/g,'').replace(/^8(?=7\d{9}$)/,'7');const r=await fetch(`https://graph.facebook.com/${version}/${phoneId}/messages`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({messaging_product:'whatsapp',to,type:'text',text:{body:m.body,preview_url:false}})});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error?.message||`WhatsApp HTTP ${r.status}`);return j.messages?.[0]?.id||''}
@@ -73,9 +90,10 @@ async function processQueue(limit=30){const rows=(await q(`SELECT * FROM message
 
 installOrderAccess(app,pool,'communications');
 feedbackWorkflow=await installCustomerFeedback(app,pool,{enqueue,requestData,vars,render,roles});
+visitWorkflow=await installCustomerVisitConfirmation(app,pool,{enqueue,requestData,vars,render,roles});
 routeWorkflow=createRouteCustomerNotificationSync(pool,{enqueue,requestData,vars,render,logger:app.log});
 await routeWorkflow.seed();
-app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'profi24-communications',version:'1.4-route-notifications',telegram_configured:Boolean(process.env.TELEGRAM_BOT_TOKEN),whatsapp_configured:Boolean(process.env.WHATSAPP_TOKEN&&process.env.WHATSAPP_PHONE_NUMBER_ID)}});
+app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'profi24-communications',version:'1.5-visit-confirmation',telegram_configured:Boolean(process.env.TELEGRAM_BOT_TOKEN),whatsapp_configured:Boolean(process.env.WHATSAPP_TOKEN&&process.env.WHATSAPP_PHONE_NUMBER_ID)}});
 app.get('/api/v1/communications/status',{preHandler:roles('OWNER','MANAGER')},async()=>({data:{telegram_configured:Boolean(process.env.TELEGRAM_BOT_TOKEN),whatsapp_configured:Boolean(process.env.WHATSAPP_TOKEN&&process.env.WHATSAPP_PHONE_NUMBER_ID),queued:Number((await q("SELECT count(*) c FROM message_queue WHERE status='QUEUED'")).rows[0].c),errors:Number((await q("SELECT count(*) c FROM message_queue WHERE status='ERROR'")).rows[0].c)}}));
 app.get('/api/v1/communications/templates',{preHandler:roles('OWNER','MANAGER')},async()=>({data:(await q('SELECT * FROM message_templates ORDER BY audience,name')).rows}));
 app.patch('/api/v1/communications/templates/:id',{preHandler:roles('OWNER','MANAGER')},async(req,reply)=>{const old=(await q('SELECT * FROM message_templates WHERE id=$1',[req.params.id])).rows[0];if(!old)return err(reply,'NOT_FOUND','Шаблон не найден',404);const b={...old,...req.body};const r=(await q('UPDATE message_templates SET name=$1,channel=$2,body=$3,active=$4,updated_at=now() WHERE id=$5 RETURNING *',[b.name,b.channel,b.body,b.active,req.params.id])).rows[0];return{data:r}});
