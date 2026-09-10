@@ -34,6 +34,19 @@ jobs:
           AUTH_FAILURE_WINDOW_MINUTES=10
           AUTH_LOCK_MINUTES=15
           EOF
+          # The acceptance suite drives many independent browser scenarios through one
+          # short-lived API instance. Raise only this test instance's generic limit;
+          # Production Acceptance still exercises the committed 300 requests/minute limit.
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('server/src/index2.js')
+          source = path.read_text()
+          old = "await app.register(rateLimit,{max:300,timeWindow:'1 minute'});"
+          new = "await app.register(rateLimit,{max:2000,timeWindow:'1 minute'});"
+          if old not in source:
+              raise SystemExit('core API rate-limit registration not found')
+          path.write_text(source.replace(old, new, 1))
+          PY
 
       - name: Start full browser acceptance stack
         run: |
