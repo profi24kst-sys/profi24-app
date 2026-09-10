@@ -1,0 +1,22 @@
+import React,{useEffect,useState}from'react';
+import{createRoot}from'react-dom/client';
+import{CalendarClock,ChevronRight,MapPin,Navigation,RefreshCw,Route,X}from'lucide-react';
+import'./engineer-route.css';
+
+const AN='/analytics-api/v1',BR='/branch-api/v1',token=()=>localStorage.token;
+const me=()=>{try{return JSON.parse(localStorage.user||'null')}catch{return null}};
+async function call(base,path){const r=await fetch(base+path,{headers:{Authorization:`Bearer ${token()}`}}),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error?.message||`Ошибка ${r.status}`);return j.data}
+function kzDate(){const p=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Qostanay',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date()).filter(x=>x.type!=='literal').map(x=>[x.type,x.value]));return `${p.year}-${p.month}-${p.day}`}
+const tm=v=>v?new Date(v).toLocaleTimeString('ru-RU',{timeZone:'Asia/Qostanay',hour:'2-digit',minute:'2-digit'}):'—';
+
+function App(){
+ const user=me(),[open,setOpen]=useState(false),[date,setDate]=useState(kzDate()),[branches,setBranches]=useState([]),[branch,setBranch]=useState(''),[data,setData]=useState(null),[busy,setBusy]=useState(false),[err,setErr]=useState('');
+ async function loadBranches(){const rows=await call(BR,'/branches');setBranches(rows||[]);setBranch(v=>v&&rows.some(x=>String(x.id)===String(v))?v:String(rows[0]?.id||''))}
+ async function load(){if(!branch||!user?.id)return;try{setBusy(true);setErr('');setData(await call(AN,`/engineer-route/published?date=${date}&branch_id=${branch}&engineer_id=${user.id}`))}catch(e){setErr(e.message)}finally{setBusy(false)}}
+ useEffect(()=>{if(open&&user?.role==='ENGINEER')loadBranches().catch(e=>setErr(e.message))},[open,user?.role]);
+ useEffect(()=>{if(open&&branch)load()},[open,branch,date]);
+ useEffect(()=>{if(user?.role!=='ENGINEER')return;const reg=()=>window.Profi24UI?.registerNav({id:'engineer-my-route',label:'Мой маршрут',group:'team',roles:['ENGINEER'],onClick:()=>setOpen(true)});if(window.Profi24UI)reg();else window.addEventListener('profi24:core-ui-ready',reg,{once:true});return()=>{window.removeEventListener('profi24:core-ui-ready',reg);window.Profi24UI?.removeNav?.('engineer-my-route')}},[user?.role]);
+ if(user?.role!=='ENGINEER'||!open)return null;const plan=data?.plan,stops=data?.stops||[];
+ return <div className="ermScreen"><header><div><h1><Route/>Мой маршрут</h1><small>{plan?`Опубликованная ревизия ${plan.revision}`:'Маршрут ещё не опубликован'}</small></div><div><input aria-label="Дата моего маршрута" type="date" value={date} onChange={e=>setDate(e.target.value)}/><select aria-label="Филиал моего маршрута" value={branch} onChange={e=>setBranch(e.target.value)}>{branches.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select><button onClick={load} disabled={busy}><RefreshCw className={busy?'spin':''}/></button><button onClick={()=>setOpen(false)}><X/></button></div></header>{err&&<div className="erError">{err}</div>}{!plan?<div className="ermEmpty"><CalendarClock/><b>На этот день опубликованного маршрута нет</b><span>Работайте по назначенным заявкам. После публикации руководителем порядок появится здесь.</span></div>:<><div className="ermSummary"><span><b>{stops.length}</b> выездов</span><span><b>{Number(plan.total_distance_km||0).toFixed(1)}</b> км расчётно</span><span><b>{plan.total_travel_minutes}</b> мин в дороге</span><span><b>{plan.unresolved_locations}</b> без координат</span></div><div className="ermList">{stops.map(s=><article key={s.id} className={s.snapshot?.arrival_risk?'risk':''}><div className="ermSeq">{s.sequence_no}</div><div className="ermTime"><b>{tm(s.planned_at)}</b><small>{s.travel_minutes?`переезд ≈ ${s.travel_minutes} мин`:'переезд не рассчитан'}</small></div><div className="ermMain"><b>{s.snapshot?.number||`Заказ #${s.request_id}`}</b><h3>{s.snapshot?.customer_name||'Клиент'}</h3><p><MapPin/>{s.snapshot?.address||'Адрес не указан'}</p>{s.snapshot?.arrival_risk&&<em>Есть риск опоздания по расчётному маршруту</em>}</div><div className="ermButtons">{s.snapshot?.address&&<a target="_blank" href={`https://maps.google.com/?q=${encodeURIComponent(s.snapshot.address)}`}><Navigation/>Навигатор</a>}<button onClick={()=>{setOpen(false);window.dispatchEvent(new CustomEvent('profi24:open-order360',{detail:{number:s.snapshot?.number}}))}}>Заказ<ChevronRight/></button></div></article>)}</div></>}</div>
+}
+const root=document.createElement('div');document.body.appendChild(root);createRoot(root).render(<App/>);

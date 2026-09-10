@@ -12,6 +12,7 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+
       - name: Prepare browser acceptance environment
         run: |
           DB_PASSWORD=$(openssl rand -hex 16)
@@ -33,12 +34,27 @@ jobs:
           AUTH_FAILURE_WINDOW_MINUTES=10
           AUTH_LOCK_MINUTES=15
           EOF
+          # The acceptance suite drives many independent browser scenarios through one
+          # short-lived API instance. Raise only this test instance's generic limit;
+          # Production Acceptance still exercises the committed 300 requests/minute limit.
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('server/src/index2.js')
+          source = path.read_text()
+          old = "await app.register(rateLimit,{max:300,timeWindow:'1 minute'});"
+          new = "await app.register(rateLimit,{max:2000,timeWindow:'1 minute'});"
+          if old not in source:
+              raise SystemExit('core API rate-limit registration not found')
+          path.write_text(source.replace(old, new, 1))
+          PY
+
       - name: Start full browser acceptance stack
         run: |
           docker compose up -d --build \
             db api auth warehouse procurement suppliercatalog payroll analytics finance documents notifications communications approvals workflow \
             operations performance kpi profitability pricing pricebook diagnostic knowledge parts completion reliability warranty discipline \
             ownercontrol directoryadmin ordertasks branchadmin cashregister lifecycle custody web
+
       - name: Wait for all proxied CRM services
         run: |
           paths=(
@@ -57,106 +73,61 @@ jobs:
           docker compose ps
           docker compose logs --tail=120
           exit 1
+
       - name: Bootstrap browser OWNER
         run: docker compose exec -T api node src/bootstrap-owner.js browser-owner@test.invalid 'BrowserOwner2026Kst9' 'Browser Owner'
-      - name: Install isolated Playwright Chromium
+
+      - name: Prepare Playwright with runner Chrome
         run: |
+          set -euo pipefail
           mkdir -p /tmp/profi24-playwright
           cd /tmp/profi24-playwright
           npm init -y >/dev/null
-          npm install --save-exact playwright@1.55.0
-          npx playwright install --with-deps chromium
-      - name: Exercise native and addon navigation in Chromium
+          for n in 1 2 3; do
+            if npm install --save-exact playwright@1.55.0; then break; fi
+            if [ "$n" -eq 3 ]; then exit 1; fi
+            sleep 5
+          done
+          CHROME_BIN="$(command -v google-chrome || command -v google-chrome-stable || true)"
+          test -n "$CHROME_BIN"
+          "$CHROME_BIN" --version
+          cat > use-system-chrome.cjs <<'EOF'
+          const playwright=require('playwright');
+          const launch=playwright.chromium.launch.bind(playwright.chromium);
+          playwright.chromium.launch=(options={})=>launch({executablePath:process.env.PROFI24_CHROME_BIN,...options});
+          EOF
+          echo "PROFI24_CHROME_BIN=$CHROME_BIN" >> "$GITHUB_ENV"
+
+      - name: Exercise full CRM browser acceptance suite
         env:
           NODE_PATH: /tmp/profi24-playwright/node_modules
           BASE_URL: http://127.0.0.1:5173
           E2E_EMAIL: browser-owner@test.invalid
           E2E_PASSWORD: BrowserOwner2026Kst9
-        run: node web/e2e/sidebar-navigation.cjs
-      - name: Exercise current Order360 and six-role regression in Chromium
-        env:
-          NODE_PATH: /tmp/profi24-playwright/node_modules
-          BASE_URL: http://127.0.0.1:5173
-          E2E_EMAIL: browser-owner@test.invalid
-          E2E_PASSWORD: BrowserOwner2026Kst9
-        run: node web/e2e/current-order360-regression.cjs
-      - name: Exercise engineer capacity dispatch in Chromium
-        env:
-          NODE_PATH: /tmp/profi24-playwright/node_modules
-          BASE_URL: http://127.0.0.1:5173
-          E2E_EMAIL: browser-owner@test.invalid
-          E2E_PASSWORD: BrowserOwner2026Kst9
-        run: node web/e2e/engineer-capacity-regression.cjs
-      - name: Exercise complaints workflow center in Chromium
-        env:
-          NODE_PATH: /tmp/profi24-playwright/node_modules
-          BASE_URL: http://127.0.0.1:5173
-          E2E_EMAIL: browser-owner@test.invalid
-          E2E_PASSWORD: BrowserOwner2026Kst9
-        run: node web/e2e/complaints-center-regression.cjs
-      - name: Exercise customer feedback and NPS in Chromium
-        env:
-          NODE_PATH: /tmp/profi24-playwright/node_modules
-          BASE_URL: http://127.0.0.1:5173
-          E2E_EMAIL: browser-owner@test.invalid
-          E2E_PASSWORD: BrowserOwner2026Kst9
-        run: node web/e2e/customer-feedback-regression.cjs
-      - name: Exercise service contracts and planned maintenance in Chromium
-        env:
-          NODE_PATH: /tmp/profi24-playwright/node_modules
-          BASE_URL: http://127.0.0.1:5173
-          E2E_EMAIL: browser-owner@test.invalid
-          E2E_PASSWORD: BrowserOwner2026Kst9
-        run: node web/e2e/service-contracts-regression.cjs
-      - name: Exercise physical equipment custody in Chromium
-        env:
-          NODE_PATH: /tmp/profi24-playwright/node_modules
-          BASE_URL: http://127.0.0.1:5173
-          E2E_EMAIL: browser-owner@test.invalid
-          E2E_PASSWORD: BrowserOwner2026Kst9
-        run: node web/e2e/equipment-custody-regression.cjs
-      - name: Exercise supplier catalog price imports in Chromium
-        env:
-          NODE_PATH: /tmp/profi24-playwright/node_modules
-          BASE_URL: http://127.0.0.1:5173
-          E2E_EMAIL: browser-owner@test.invalid
-          E2E_PASSWORD: BrowserOwner2026Kst9
-        run: node web/e2e/supplier-catalog-import-regression.cjs
-      - name: Exercise procurement replenishment planning in Chromium
-        env:
-          NODE_PATH: /tmp/profi24-playwright/node_modules
-          BASE_URL: http://127.0.0.1:5173
-          E2E_EMAIL: browser-owner@test.invalid
-          E2E_PASSWORD: BrowserOwner2026Kst9
-        run: node web/e2e/procurement-replenishment-regression.cjs
-      - name: Exercise supplier performance analytics in Chromium
-        env:
-          NODE_PATH: /tmp/profi24-playwright/node_modules
-          BASE_URL: http://127.0.0.1:5173
-          E2E_EMAIL: browser-owner@test.invalid
-          E2E_PASSWORD: BrowserOwner2026Kst9
-        run: node web/e2e/supplier-performance-regression.cjs
-      - name: Exercise warehouse stock analytics in Chromium
-        env:
-          NODE_PATH: /tmp/profi24-playwright/node_modules
-          BASE_URL: http://127.0.0.1:5173
-          E2E_EMAIL: browser-owner@test.invalid
-          E2E_PASSWORD: BrowserOwner2026Kst9
-        run: node web/e2e/warehouse-stock-analytics-regression.cjs
-      - name: Exercise warehouse inventory reconciliation in Chromium
-        env:
-          NODE_PATH: /tmp/profi24-playwright/node_modules
-          BASE_URL: http://127.0.0.1:5173
-          E2E_EMAIL: browser-owner@test.invalid
-          E2E_PASSWORD: BrowserOwner2026Kst9
-        run: node web/e2e/warehouse-inventory-regression.cjs
-      - name: Exercise knowledge base and diagnostic integration in Chromium
-        env:
-          NODE_PATH: /tmp/profi24-playwright/node_modules
-          BASE_URL: http://127.0.0.1:5173
-          E2E_EMAIL: browser-owner@test.invalid
-          E2E_PASSWORD: BrowserOwner2026Kst9
-        run: node web/e2e/knowledge-base-regression.cjs
+        run: |
+          set -euo pipefail
+          scripts=(
+            sidebar-navigation.cjs
+            current-order360-regression.cjs
+            engineer-capacity-regression.cjs
+            engineer-route-regression.cjs
+            complaints-center-regression.cjs
+            customer-feedback-regression.cjs
+            service-contracts-regression.cjs
+            equipment-custody-regression.cjs
+            supplier-catalog-import-regression.cjs
+            procurement-replenishment-regression.cjs
+            supplier-performance-regression.cjs
+            warehouse-stock-analytics-regression.cjs
+            warehouse-inventory-regression.cjs
+            knowledge-base-regression.cjs
+          )
+          for script in "${scripts[@]}"; do
+            echo "===== browser acceptance: $script ====="
+            node -r /tmp/profi24-playwright/use-system-chrome.cjs "web/e2e/$script"
+            sleep 2
+          done
+
       - name: Upload browser diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
@@ -164,11 +135,13 @@ jobs:
           name: ui-browser-diagnostics
           path: web/e2e/artifacts
           if-no-files-found: ignore
+
       - name: Show browser stack failure logs
         if: failure()
         run: |
           docker compose ps
           docker compose logs --tail=250
+
       - name: Stop browser acceptance stack
         if: always()
         run: docker compose down -v

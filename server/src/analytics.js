@@ -3,6 +3,7 @@ import {can,PERMISSIONS} from './rbac.js';
 import {installWarehouseStockAnalytics,resolveWarehouseBranchIds} from './warehouse-stock-analytics.js';
 import {installSupplierPerformanceAnalytics,resolveSupplierPerformanceBranchIds} from './supplier-performance-analytics.js';
 import {installEngineerCapacityAnalytics,resolveEngineerCapacityBranchIds} from './engineer-capacity-analytics.js';
+import {installEngineerRoutePlanning,resolveEngineerRouteBranchIds} from './engineer-route-planning.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
@@ -27,13 +28,15 @@ const owner=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(req
 const warehouseView=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,PERMISSIONS.WAREHOUSE_VIEW))return fail(reply,'FORBIDDEN','Недостаточно прав для аналитики склада',403)};
 const procurementView=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,PERMISSIONS.PROCUREMENT_VIEW))return fail(reply,'FORBIDDEN','Недостаточно прав для аналитики поставщиков',403)};
 const operationsView=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,PERMISSIONS.OPERATIONS_MANAGE))return fail(reply,'FORBIDDEN','Недостаточно прав для диспетчеризации',403)};
+const routeView=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(req.user.role!=='ENGINEER'&&!can(req.user.role,PERMISSIONS.OPERATIONS_MANAGE))return fail(reply,'FORBIDDEN','Недостаточно прав для просмотра маршрута',403)};
 function range(month){const d=month?new Date(month+'-01T00:00:00Z'):new Date();const s=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),1)),e=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()+1,1));return[s,e]}
 
 installOrderAccess(app,pool,'analytics');
 installWarehouseStockAnalytics(app,pool,{warehouseView,branchIds:resolveWarehouseBranchIds});
 installSupplierPerformanceAnalytics(app,pool,{procurementView,branchIds:resolveSupplierPerformanceBranchIds});
 installEngineerCapacityAnalytics(app,pool,{operationsView,branchIds:resolveEngineerCapacityBranchIds});
-app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'profi24-analytics',version:'2.3-engineer-capacity'}});
+installEngineerRoutePlanning(app,pool,{operationsView,routeView,branchIdsResolver:resolveEngineerRouteBranchIds});
+app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'profi24-analytics',version:'2.4-engineer-route'}});
 
 app.get('/api/v1/dashboard',{preHandler:owner},async req=>{
  const[s,e]=range(req.query?.month);
