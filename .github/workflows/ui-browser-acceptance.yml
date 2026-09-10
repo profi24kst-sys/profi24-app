@@ -111,6 +111,7 @@ jobs:
             current-order360-regression.cjs
             engineer-capacity-regression.cjs
             engineer-route-regression.cjs
+            engineer-route-execution-regression.cjs
             complaints-center-regression.cjs
             customer-feedback-regression.cjs
             service-contracts-regression.cjs
