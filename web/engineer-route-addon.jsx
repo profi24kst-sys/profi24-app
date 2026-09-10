@@ -1,4 +1,4 @@
-import React,{useEffect,useState}from'react';
+import React,{useEffect,useRef,useState}from'react';
 import{createRoot}from'react-dom/client';
 import{AlertTriangle,CalendarClock,CheckCircle2,Clock3,LocateFixed,MapPin,Navigation,RefreshCw,Route,Save,ShieldAlert,X}from'lucide-react';
 import'./engineer-route.css';
@@ -11,11 +11,11 @@ const tm=v=>v?new Date(v).toLocaleTimeString('ru-RU',{timeZone:'Asia/Qostanay',h
 const km=v=>Number(v||0).toLocaleString('ru-RU',{maximumFractionDigits:1})+' км';
 
 function App(){
- const u=me(),rbac=window.Profi24RBAC,P=rbac?.P||{},view=Boolean(P.OPERATIONS_MANAGE&&rbac?.can?.(P.OPERATIONS_MANAGE,u?.role));
+ const u=me(),rbac=window.Profi24RBAC,P=rbac?.P||{},view=Boolean(P.OPERATIONS_MANAGE&&rbac?.can?.(P.OPERATIONS_MANAGE,u?.role)),routeReq=useRef(0);
  const[open,setOpen]=useState(false),[date,setDate]=useState(kzDate()),[branches,setBranches]=useState([]),[branch,setBranch]=useState(''),[engineers,setEngineers]=useState([]),[engineer,setEngineer]=useState(''),[data,setData]=useState(null),[published,setPublished]=useState(null),[busy,setBusy]=useState(false),[err,setErr]=useState(''),[notice,setNotice]=useState(''),[location,setLocation]=useState(null);
  async function loadBranches(){const rows=await call(BR,'/branches');setBranches(rows||[]);setBranch(v=>v&&rows.some(x=>String(x.id)===String(v))?v:String(rows[0]?.id||''))}
  async function loadEngineers(){if(!branch)return;const d=await call(AN,`/engineer-capacity?date=${date}&branch_id=${branch}`);setEngineers(d?.engineers||[]);setEngineer(v=>v&&(d?.engineers||[]).some(x=>String(x.id)===String(v))?v:String(d?.engineers?.[0]?.id||''))}
- async function loadRoute(){if(!branch||!engineer)return;try{setBusy(true);setErr('');const qs=`?date=${encodeURIComponent(date)}&branch_id=${branch}&engineer_id=${engineer}`;const[d,p]=await Promise.all([call(AN,'/engineer-route/suggest'+qs),call(AN,'/engineer-route/published'+qs).catch(()=>null)]);setData(d);setPublished(p)}catch(e){setErr(e.message)}finally{setBusy(false)}}
+ async function loadRoute(){if(!branch||!engineer)return;const seq=++routeReq.current;try{setBusy(true);setErr('');const qs=`?date=${encodeURIComponent(date)}&branch_id=${branch}&engineer_id=${engineer}`;const[d,p]=await Promise.all([call(AN,'/engineer-route/suggest'+qs),call(AN,'/engineer-route/published'+qs).catch(()=>null)]);if(seq!==routeReq.current)return;setData(d);setPublished(p)}catch(e){if(seq===routeReq.current)setErr(e.message)}finally{if(seq===routeReq.current)setBusy(false)}}
  useEffect(()=>{if(open&&view)loadBranches().catch(e=>setErr(e.message))},[open,view]);
  useEffect(()=>{if(open&&branch){setNotice('');loadEngineers().catch(e=>setErr(e.message))}},[open,branch,date]);
  useEffect(()=>{if(open&&branch&&engineer)loadRoute()},[open,branch,engineer,date]);
