@@ -4,6 +4,7 @@ import {installWarehouseStockAnalytics,resolveWarehouseBranchIds} from './wareho
 import {installSupplierPerformanceAnalytics,resolveSupplierPerformanceBranchIds} from './supplier-performance-analytics.js';
 import {installEngineerCapacityAnalytics,resolveEngineerCapacityBranchIds} from './engineer-capacity-analytics.js';
 import {installEngineerRoutePlanning,resolveEngineerRouteBranchIds} from './engineer-route-planning.js';
+import {installEngineerRouteExecution,resolveEngineerRouteExecutionBranchIds} from './engineer-route-execution.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
@@ -36,7 +37,8 @@ installWarehouseStockAnalytics(app,pool,{warehouseView,branchIds:resolveWarehous
 installSupplierPerformanceAnalytics(app,pool,{procurementView,branchIds:resolveSupplierPerformanceBranchIds});
 installEngineerCapacityAnalytics(app,pool,{operationsView,branchIds:resolveEngineerCapacityBranchIds});
 installEngineerRoutePlanning(app,pool,{operationsView,routeView,branchIdsResolver:resolveEngineerRouteBranchIds});
-app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'profi24-analytics',version:'2.4-engineer-route'}});
+installEngineerRouteExecution(app,pool,{operationsView,routeView,branchIdsResolver:resolveEngineerRouteExecutionBranchIds});
+app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'profi24-analytics',version:'2.5-route-execution'}});
 
 app.get('/api/v1/dashboard',{preHandler:owner},async req=>{
  const[s,e]=range(req.query?.month);
