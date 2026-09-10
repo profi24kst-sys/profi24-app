@@ -9,7 +9,8 @@ export default defineConfig({
         main: 'index.html',
         approve: 'approve.html',
         warranty: 'warranty.html',
-        feedback: 'feedback.html'
+        feedback: 'feedback.html',
+        visit: 'visit.html'
       }
     }
   }
