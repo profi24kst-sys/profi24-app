@@ -72,7 +72,7 @@ export async function buildEngineerRouteExecution(db,{branchIds=null,branchId,en
    (SELECT min(e.created_at) FROM request_stage_events e WHERE e.request_id=s.request_id AND e.event='ARRIVE' AND DATE(e.created_at AT TIME ZONE '${TZ}')=$2::date) arrived_at
    FROM engineer_route_plan_stops s JOIN requests r ON r.id=s.request_id JOIN customers c ON c.id=r.customer_id
    WHERE s.plan_id=$1 ORDER BY s.sequence_no`,[plan.id,date])).rows;
- const stops=projectedStops(rows,now),summary=routeSummary(stops),current=stops.find(x=>x.execution_state==='ON_ROUTE')||stops.find(x=>x.execution_state==='PENDING')||null;
+ const stops=projectedStops(rows,now),summary=routeSummary(stops),started=stops.filter(x=>x.execution_state!=='PENDING'),current=started.length?started[started.length-1]:stops.find(x=>x.execution_state==='PENDING')||null;
  const next=current?stops.find(x=>x.sequence_no>current.sequence_no&&x.execution_state==='PENDING')||null:null;
  return{generated_at:now.toISOString(),date,branch,engineer,plan,summary,stops,current_stop:current,next_stop:next,methodology:{facts:'Фактические отметки берутся только из событий CRM Workflow DEPART/ARRIVE. GPS не используется.',eta:'ETA следующих визитов пересчитывается от фактического/расчётного прибытия предыдущей точки и опубликованной длительности визита.',risk:`Риск отмечается при прогнозном опоздании более ${LATE_THRESHOLD_MINUTES} минут.`}};
 }
