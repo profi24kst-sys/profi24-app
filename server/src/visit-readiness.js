@@ -83,7 +83,7 @@ export async function installVisitReadiness(app,pool,{visitWorkflow,roles}){
  }
 
  async function rowsForUser(req,reply){
-  const p=[],where=['v.is_current=true','r.deleted_at IS NULL'];
+  const p=[],where=['v.is_current=true','r.deleted_at IS NULL',"r.status NOT IN('CLOSED','CANCELLED')",'r.scheduled_at IS NOT NULL','r.engineer_id IS NOT NULL','v.scheduled_at_snapshot=r.scheduled_at','COALESCE(v.engineer_id,0)=COALESCE(r.engineer_id,0)'];
   if(req.user.role==='MANAGER'){
    const branchIds=(await pool.query('SELECT branch_id FROM user_branches WHERE user_id=$1 ORDER BY branch_id',[req.user.id])).rows.map(x=>Number(x.branch_id));
    if(!branchIds.length)return[];
