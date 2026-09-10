@@ -12,14 +12,16 @@ const manifestPath=path.join(dist,'manifest.webmanifest');
 const swPath=path.join(dist,'sw.js');
 const installJsPath=path.join(dist,'pwa-install.js');
 const installCssPath=path.join(dist,'pwa-install.css');
-const iconPath=path.join(dist,'icons','profi24.svg');
+const svgIconPath=path.join(dist,'icons','profi24.svg');
+const icon192Path=path.join(dist,'icons','profi24-192.png');
+const icon512Path=path.join(dist,'icons','profi24-512.png');
 
-for(const file of [indexPath,manifestPath,swPath,installJsPath,installCssPath,iconPath]){
+for(const file of [indexPath,manifestPath,swPath,installJsPath,installCssPath,svgIconPath,icon192Path,icon512Path]){
   if(!fs.existsSync(file)) fail(`missing build artifact ${path.relative(dist,file)}`);
 }
 
 const html=fs.readFileSync(indexPath,'utf8');
-for(const marker of ['rel="manifest"','href="/manifest.webmanifest"','src="/pwa-install.js"','href="/pwa-install.css"','name="theme-color"']){
+for(const marker of ['rel="manifest"','href="/manifest.webmanifest"','src="/pwa-install.js"','href="/pwa-install.css"','name="theme-color"','href="/icons/profi24-192.png"']){
   if(!html.includes(marker)) fail(`index.html missing ${marker}`);
 }
 
@@ -30,8 +32,12 @@ if(manifest.start_url!=='/' || manifest.scope!=='/') fail('manifest must install
 if(manifest.display!=='standalone') fail('manifest display must be standalone');
 if(!manifest.theme_color || !manifest.background_color) fail('manifest colors are required');
 if(!Array.isArray(manifest.icons) || manifest.icons.length<2) fail('manifest must provide install icons');
-const sizes=new Set(manifest.icons.map((icon)=>icon.sizes));
-if(!sizes.has('192x192') || !sizes.has('512x512')) fail('manifest must provide 192x192 and 512x512 icons');
+const bySize=new Map(manifest.icons.map((icon)=>[icon.sizes,icon]));
+for(const size of ['192x192','512x512']){
+  const icon=bySize.get(size);
+  if(!icon) fail(`manifest missing ${size} icon`);
+  if(icon.type!=='image/png') fail(`${size} icon must be PNG`);
+}
 
 const sw=fs.readFileSync(swPath,'utf8');
 if(!sw.includes("addEventListener('fetch'")) fail('service worker must handle fetch so it can control the CRM scope');
