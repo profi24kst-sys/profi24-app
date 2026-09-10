@@ -16,7 +16,7 @@ function pwaMetadata(){
           {tag:'meta',attrs:{name:'apple-mobile-web-app-title',content:'PROFI24'},injectTo:'head'},
           {tag:'link',attrs:{rel:'manifest',href:'/manifest.webmanifest'},injectTo:'head'},
           {tag:'link',attrs:{rel:'icon',href:'/icons/profi24.svg',type:'image/svg+xml'},injectTo:'head'},
-          {tag:'link',attrs:{rel:'apple-touch-icon',href:'/icons/profi24.svg'},injectTo:'head'},
+          {tag:'link',attrs:{rel:'apple-touch-icon',href:'/icons/profi24-192.png'},injectTo:'head'},
           {tag:'link',attrs:{rel:'stylesheet',href:'/pwa-install.css'},injectTo:'head'},
           {tag:'script',attrs:{type:'module',src:'/pwa-install.js'},injectTo:'body'}
         ]
