@@ -63,7 +63,7 @@ The normal communications worker then sees `REQUEST_CREATED`, so existing custom
 
 The website must generate one stable unique key per form submission, for example a UUID. Retrying the same payload with the same key returns the already-created request and does not create duplicate customer/equipment/request records.
 
-Reusing the same key with different payload returns HTTP `409 IDENTITY_CONFLICT` / `IDEMPOTENCY_CONFLICT` and must be treated as an integration error.
+Reusing the same key with different payload returns HTTP `409 IDEMPOTENCY_CONFLICT` and must be treated as an integration error.
 
 ## Responses
 
