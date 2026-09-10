@@ -15,6 +15,7 @@ import {payrollV2Statements} from './payroll-schema-v2.js';
 import {payrollKpiStatements} from './payroll-kpi-schema.js';
 import {payrollPaymentStatements} from './payroll-payment-schema.js';
 import {engineerRouteStatements} from './engineer-route-schema.js';
+import {visitReadinessStatements} from './visit-readiness-schema.js';
 import {migrateFinance} from './finance/migrate.js';
 
 export async function migrateCore(pool) {
@@ -34,12 +35,13 @@ export async function migrateCore(pool) {
   for(const sql of payrollKpiStatements) await pool.query(sql);
   for(const sql of payrollPaymentStatements) await pool.query(sql);
   for(const sql of engineerRouteStatements) await pool.query(sql);
+  for(const sql of visitReadinessStatements) await pool.query(sql);
 }
 if(process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const pool=new pg.Pool({connectionString:process.env.DATABASE_URL});
   try {
     await migrateCore(pool);
-    console.log(`Applied ${coreStatements.length+branchStatements.length+lifecycleStatements.length+lifecycleV2Statements.length+lifecycleV3Statements.length+lifecycleV4Statements.length+complaintStatements.length+customerFeedbackStatements.length+customerVisitConfirmationStatements.length+serviceContractStatements.length+equipmentCustodyStatements.length+payrollV2Statements.length+payrollKpiStatements.length+payrollPaymentStatements.length+engineerRouteStatements.length} database migration statements`);
+    console.log(`Applied ${coreStatements.length+branchStatements.length+lifecycleStatements.length+lifecycleV2Statements.length+lifecycleV3Statements.length+lifecycleV4Statements.length+complaintStatements.length+customerFeedbackStatements.length+customerVisitConfirmationStatements.length+serviceContractStatements.length+equipmentCustodyStatements.length+payrollV2Statements.length+payrollKpiStatements.length+payrollPaymentStatements.length+engineerRouteStatements.length+visitReadinessStatements.length} database migration statements`);
   } catch(error) {
     console.error('Migration failed:',error);
     process.exitCode=1;
