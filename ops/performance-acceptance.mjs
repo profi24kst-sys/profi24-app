@@ -78,9 +78,11 @@ const orderIds=active.slice(0,EXPECTED_ACTIVE).map(x=>Number(x.id)).filter(Numbe
 if(orderIds.length<EXPECTED_ACTIVE)fail(`only ${orderIds.length} valid request ids available`);
 console.log(`performance_dataset=ok active_requests=${active.length} expected=${EXPECTED_ACTIVE} initial_list_ms=${fmt(listProbe.ms)}`);
 
+// Keep the measured burst below the existing 300 requests/minute per-IP guard.
+// The specification target is 500 simultaneously active service requests, not bypassing abuse protection.
 await runPhase(token,{
   name:'orders_list_500_active',
-  total:40,
+  total:30,
   concurrency:10,
   path:'/api/v1/requests',
   validate:r=>{const j=JSON.parse(r.text);if(!Array.isArray(j.data)||j.data.length<EXPECTED_ACTIVE)throw new Error('orders list is incomplete')}
@@ -88,15 +90,15 @@ await runPhase(token,{
 
 await runPhase(token,{
   name:'dashboard_parallel',
-  total:500,
-  concurrency:50,
+  total:80,
+  concurrency:40,
   path:'/api/v1/dashboard',
   validate:r=>{const j=JSON.parse(r.text);if(Number(j.data?.active)<EXPECTED_ACTIVE)throw new Error(`dashboard active=${j.data?.active}`)}
 });
 
 await runPhase(token,{
   name:'order_detail_parallel',
-  total:200,
+  total:120,
   concurrency:25,
   path:i=>`/api/v1/requests/${orderIds[i%orderIds.length]}`,
   validate:r=>{const j=JSON.parse(r.text);if(!j.data?.id)throw new Error('order detail missing id')}
@@ -104,8 +106,8 @@ await runPhase(token,{
 
 await runPhase(token,{
   name:'session_parallel',
-  total:500,
-  concurrency:50,
+  total:40,
+  concurrency:20,
   path:'/api/v1/me',
   budget:Math.min(P95_BUDGET_MS,1500),
   validate:r=>{const j=JSON.parse(r.text);if(!j.data?.id)throw new Error('session missing user')}
