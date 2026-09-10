@@ -8,7 +8,7 @@ import {installVisitReadiness} from '../src/visit-readiness.js';
 
 function harness(db){const query=(sql,p=[])=>p.length?db.query(sql,p):db.exec(sql).then(r=>r.at(-1));return{query,connect:async()=>({query,release(){}}),end:()=>db.close()}}
 
-test('visit readiness reminds once, escalates once, closes task and blocks reschedule route publication',async()=>{
+test('visit readiness reminds once, escalates once, scopes managers and blocks reschedule route publication',async()=>{
  const db=await PGlite.create(),pool=harness(db),app=Fastify();
  try{
   await pool.query(`
@@ -26,6 +26,7 @@ test('visit readiness reminds once, escalates once, closes task and blocks resch
   for(const s of customerVisitConfirmationStatements)await pool.query(s);
   for(const s of visitReadinessStatements)await pool.query(s);
   const branch=(await pool.query("INSERT INTO branches(code,name) VALUES('KST','Костанай') RETURNING id")).rows[0].id;
+  const foreignBranch=(await pool.query("INSERT INTO branches(code,name) VALUES('TDK','Талдыкорган') RETURNING id")).rows[0].id;
   const manager=(await pool.query("INSERT INTO users(name,role) VALUES('Manager','MANAGER') RETURNING id")).rows[0].id;
   const engineer=(await pool.query("INSERT INTO users(name,role) VALUES('Engineer','ENGINEER') RETURNING id")).rows[0].id;
   await pool.query('INSERT INTO user_branches(user_id,branch_id,is_primary) VALUES($1,$2,true),($3,$2,true)',[manager,branch,engineer]);
@@ -36,13 +37,16 @@ test('visit readiness reminds once, escalates once, closes task and blocks resch
   const confirmation=(await pool.query(`INSERT INTO customer_visit_confirmations(request_id,customer_id,engineer_id,branch_id,version,token_nonce,token_hash,scheduled_at_snapshot,expires_at,last_invited_at,invite_count)
     VALUES($1,$2,$3,$4,1,'n','h',$5,$5+interval '12 hours',$6,1) RETURNING id`,[request,customer,engineer,branch,scheduled,invited])).rows[0].id;
   const visitWorkflow={enqueueInvite:async({request_id,dedupe_key})=>{const queued=(await pool.query('INSERT INTO message_queue(request_id,template_code,body,dedupe_key) VALUES($1,$2,$3,$4) ON CONFLICT(dedupe_key) DO NOTHING RETURNING id',[request_id,'CUSTOMER_VISIT_CONFIRMATION','Повторное подтверждение',dedupe_key])).rows[0]||null;return{handled:true,confirmation:{id:confirmation},queued}}};
-  const roles=()=>async()=>{};
+  const roles=()=>async req=>{req.user={id:Number(manager),role:'MANAGER'}};
   const service=await installVisitReadiness(app,pool,{visitWorkflow,roles});
 
   let out=await service.sync(now);assert.equal(out.reminders,1);assert.equal(out.tasks,0);
   assert.equal((await pool.query('SELECT count(*)::int c FROM message_queue')).rows[0].c,1);
   assert.ok((await pool.query('SELECT reminder_sent_at FROM customer_visit_confirmations WHERE id=$1',[confirmation])).rows[0].reminder_sent_at);
   out=await service.sync(now);assert.equal(out.reminders,0);assert.equal((await pool.query('SELECT count(*)::int c FROM message_queue')).rows[0].c,1);
+
+  let http=await app.inject({method:'GET',url:`/api/v1/visit-readiness?branch_id=${branch}`});assert.equal(http.statusCode,200,http.body);assert.equal(http.json().data.visits.length,1);assert.equal(http.json().data.visits[0].request_number,'KST-READY');
+  http=await app.inject({method:'GET',url:`/api/v1/visit-readiness?branch_id=${foreignBranch}`});assert.equal(http.statusCode,403,http.body);
 
   const soon=new Date(now.getTime()+60*60000);await pool.query('UPDATE requests SET scheduled_at=$1 WHERE id=$2',[soon,request]);await pool.query('UPDATE customer_visit_confirmations SET scheduled_at_snapshot=$1 WHERE id=$2',[soon,confirmation]);
   out=await service.sync(now);assert.equal(out.tasks,1);
