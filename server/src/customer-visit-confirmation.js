@@ -7,6 +7,8 @@ const tokenHash=token=>createHash('sha256').update(String(token||'')).digest('he
 const publicUrl=row=>`${baseUrl()}/visit/${tokenFor(row.request_id,row.version,row.token_nonce)}`;
 const apiError=(code,message,statusCode=409)=>Object.assign(new Error(message),{code,statusCode});
 const fmt=v=>v?new Date(v).toLocaleString('ru-RU',{timeZone:'Asia/Qostanay',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'не назначено';
+const sameSnapshot=(row,order)=>Boolean(row&&order&&order.scheduled_at&&new Date(row.scheduled_at_snapshot).getTime()===new Date(order.scheduled_at).getTime()&&Number(row.engineer_id||0)===Number(order.engineer_id||0));
+const activeOrder=order=>Boolean(order&&!order.deleted_at&&!['CLOSED','CANCELLED'].includes(order.status)&&order.scheduled_at);
 
 async function withTransaction(pool,fn){const c=await pool.connect();try{await c.query('BEGIN');const out=await fn(c);await c.query('COMMIT');return out}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}}
 async function pickFollowupAssignee(c,branchId){for(const role of ['SUPERVISOR','MANAGER']){const row=(await c.query(`SELECT u.id FROM users u JOIN user_branches ub ON ub.user_id=u.id WHERE u.active=true AND u.role=$1 AND ub.branch_id=$2 ORDER BY ub.is_primary DESC,u.id LIMIT 1`,[role,branchId])).rows[0];if(row)return Number(row.id)}const owner=(await c.query("SELECT id FROM users WHERE active=true AND role='OWNER' ORDER BY id LIMIT 1")).rows[0];return owner?Number(owner.id):null}
@@ -18,12 +20,15 @@ export async function installCustomerVisitConfirmation(app,pool,{enqueue,request
 
   async function ensureConfirmation(requestId){
     return withTransaction(pool,async c=>{
+      await c.query('SELECT id FROM requests WHERE id=$1 FOR UPDATE',[requestId]);
       const order=await currentOrder(requestId,c);
       if(!order||order.deleted_at)throw apiError('NOT_FOUND','Заказ не найден',404);
-      if(['CLOSED','CANCELLED'].includes(order.status))return {skipped:'inactive_order'};
-      if(!order.scheduled_at)return {skipped:'no_schedule'};
       const current=(await c.query('SELECT * FROM customer_visit_confirmations WHERE request_id=$1 AND is_current=true FOR UPDATE',[requestId])).rows[0]||null;
-      if(current&&new Date(current.scheduled_at_snapshot).getTime()===new Date(order.scheduled_at).getTime()&&Number(current.engineer_id||0)===Number(order.engineer_id||0))return {confirmation:current,order,reused:true};
+      if(!activeOrder(order)){
+        if(current)await c.query('UPDATE customer_visit_confirmations SET is_current=false,updated_at=now() WHERE id=$1',[current.id]);
+        return {skipped:['CLOSED','CANCELLED'].includes(order.status)?'inactive_order':'no_schedule'};
+      }
+      if(current&&sameSnapshot(current,order))return {confirmation:current,order,reused:true};
       if(current)await c.query('UPDATE customer_visit_confirmations SET is_current=false,updated_at=now() WHERE id=$1',[current.id]);
       const version=Number((await c.query('SELECT COALESCE(max(version),0)+1 version FROM customer_visit_confirmations WHERE request_id=$1',[requestId])).rows[0].version);
       const nonce=randomBytes(24).toString('base64url'),hash=tokenHash(tokenFor(requestId,version,nonce));
@@ -53,11 +58,12 @@ export async function installCustomerVisitConfirmation(app,pool,{enqueue,request
     return enqueueInvite({request_id:h.request_id,history_id:h.id,dedupe_key:`history:${h.id}:CUSTOMER_VISIT_CONFIRMATION`});
   }
 
-  async function byToken(token,client=pool){if(!token||String(token).length>256)return null;return (await client.query(`SELECT v.*,r.number request_number,e.category,e.brand,e.model,u.name engineer_name FROM customer_visit_confirmations v JOIN requests r ON r.id=v.request_id LEFT JOIN equipment e ON e.id=r.equipment_id LEFT JOIN users u ON u.id=v.engineer_id WHERE v.token_hash=$1 AND r.deleted_at IS NULL`,[tokenHash(token)])).rows[0]||null}
+  async function byToken(token,client=pool){if(!token||String(token).length>256)return null;return (await client.query(`SELECT v.*,r.number request_number,r.status request_status,r.scheduled_at current_scheduled_at,r.engineer_id current_engineer_id,r.deleted_at request_deleted_at,e.category,e.brand,e.model,u.name engineer_name FROM customer_visit_confirmations v JOIN requests r ON r.id=v.request_id LEFT JOIN equipment e ON e.id=r.equipment_id LEFT JOIN users u ON u.id=v.engineer_id WHERE v.token_hash=$1`,[tokenHash(token)])).rows[0]||null}
+  const tokenCurrent=row=>Boolean(row&&row.is_current&&!row.request_deleted_at&&!['CLOSED','CANCELLED'].includes(row.request_status)&&row.current_scheduled_at&&new Date(row.scheduled_at_snapshot).getTime()===new Date(row.current_scheduled_at).getTime()&&Number(row.engineer_id||0)===Number(row.current_engineer_id||0));
 
   app.get('/public/v1/visit/:token',async(req,reply)=>{
     const row=await byToken(req.params.token);if(!row)return reply.code(404).send({data:null,error:{code:'NOT_FOUND',message:'Ссылка подтверждения недействительна'}});
-    if(!row.is_current)return reply.code(410).send({data:null,error:{code:'SUPERSEDED',message:'Время визита изменилось. Используйте последнюю ссылку из сообщения сервисного центра.'}});
+    if(!tokenCurrent(row))return reply.code(410).send({data:null,error:{code:'SUPERSEDED',message:'Время визита изменилось. Используйте последнюю ссылку из сообщения сервисного центра.'}});
     if(row.status==='PENDING'&&new Date(row.expires_at)<new Date())return reply.code(410).send({data:null,error:{code:'EXPIRED',message:'Срок действия ссылки истёк'}});
     return {data:{request_number:row.request_number,equipment:[row.category,row.brand,row.model].filter(Boolean).join(' ')||'Техника',engineer_name:row.engineer_name||'Инженер',scheduled_at:row.scheduled_at_snapshot,status:row.status,version:Number(row.version),responded:row.status!=='PENDING'}};
   });
@@ -69,8 +75,10 @@ export async function installCustomerVisitConfirmation(app,pool,{enqueue,request
     try{
       const result=await withTransaction(pool,async c=>{
         const row=await byToken(req.params.token,c);if(!row)throw apiError('NOT_FOUND','Ссылка подтверждения недействительна',404);
+        await c.query('SELECT id FROM requests WHERE id=$1 FOR UPDATE',[row.request_id]);
+        const order=await currentOrder(row.request_id,c);
         const locked=(await c.query('SELECT * FROM customer_visit_confirmations WHERE id=$1 FOR UPDATE',[row.id])).rows[0];
-        if(!locked.is_current)throw apiError('SUPERSEDED','Время визита уже изменилось. Используйте последнюю ссылку.',410);
+        if(!locked.is_current||!activeOrder(order)||!sameSnapshot(locked,order))throw apiError('SUPERSEDED','Время визита уже изменилось. Используйте последнюю ссылку.',410);
         if(locked.status!=='PENDING')throw apiError('ALREADY_RESPONDED','Ответ по этому времени уже сохранён',409);
         if(new Date(locked.expires_at)<new Date())throw apiError('EXPIRED','Срок действия ссылки истёк',410);
         let taskId=null,status='CONFIRMED',action='CUSTOMER_VISIT_CONFIRMED';
