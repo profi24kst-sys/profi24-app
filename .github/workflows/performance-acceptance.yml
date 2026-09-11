@@ -1,0 +1,100 @@
+name: Performance Acceptance
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: performance-acceptance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  load_acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PERF_EMAIL: performance-owner@test.invalid
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Prepare isolated performance environment
+        run: |
+          DB_PASSWORD=$(openssl rand -hex 16)
+          JWT_SECRET_VALUE=$(openssl rand -hex 32)
+          PERF_PASSWORD_VALUE="Perf-$(openssl rand -hex 12)-9K"
+          echo "PERF_PASSWORD=$PERF_PASSWORD_VALUE" >> "$GITHUB_ENV"
+          cat > .env <<EOF
+          POSTGRES_DB=profi24
+          POSTGRES_USER=profi24
+          POSTGRES_PASSWORD=$DB_PASSWORD
+          JWT_SECRET=$JWT_SECRET_VALUE
+          NODE_ENV=production
+          CORS_ORIGIN=http://127.0.0.1:5173
+          PUBLIC_BASE_URL=http://127.0.0.1:5173
+          DB_POOL_MAX=10
+          WEB_PORT=5173
+          BACKUP_RETENTION_DAYS=14
+          AUTH_RATE_LIMIT_PER_MINUTE=60
+          AUTH_TOKEN_TTL=12h
+          AUTH_FAILURE_LIMIT=20
+          AUTH_FAILURE_WINDOW_MINUTES=10
+          AUTH_LOCK_MINUTES=15
+          WEBSITE_INTAKE_SECRET=
+          EOF
+
+      - name: Start isolated CRM core
+        run: docker compose up -d --build db api auth web
+
+      - name: Wait for core and auth health
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS --max-time 2 http://127.0.0.1:5173/health >/dev/null && curl -fsS --max-time 2 http://127.0.0.1:5173/auth-health >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose ps
+          docker compose logs --tail=120 api auth web
+          exit 1
+
+      - name: Bootstrap isolated performance owner
+        run: docker compose exec -T api node src/bootstrap-owner.js "$PERF_EMAIL" "$PERF_PASSWORD" "Performance Owner"
+
+      - name: Seed 500 active service requests
+        run: docker compose exec -T db psql -U profi24 -d profi24 -v ON_ERROR_STOP=1 < ops/performance-seed.sql
+
+      - name: Run 2-second performance budget
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_URL=http://127.0.0.1:5173 \
+          PERF_EXPECTED_ACTIVE=500 \
+          PERF_P95_BUDGET_MS=2000 \
+          PERF_MAX_BUDGET_MS=3000 \
+          node ops/performance-acceptance.mjs | tee performance-results.txt
+          docker stats --no-stream --format 'container={{.Name}} cpu={{.CPUPerc}} memory={{.MemUsage}} net={{.NetIO}}' | tee -a performance-results.txt
+
+      - name: Upload performance measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-acceptance-results
+          path: performance-results.txt
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Show performance failure logs
+        if: failure()
+        run: |
+          docker compose ps
+          docker compose logs --tail=160 api auth web db
+
+      - name: Stop isolated performance stack
+        if: always()
+        run: docker compose down -v
