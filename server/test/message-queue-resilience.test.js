@@ -29,12 +29,12 @@ async function seed(db,count,prefix='bulk'){
     const size=Math.min(100,count-offset),values=[],params=[];
     for(let i=0;i<size;i++){
       const n=offset+i+1,base=params.length;
-      values.push(`($${base+1},'WHATSAPP','CUSTOMER',$${base+2},$${base+3},'QUEUED',$${base+4})`);
-      params.push(`${prefix}-${n}`,`+7701000${String(n).padStart(4,'0')}`,`Message ${n}`,`${prefix}:${n}`);
+      values.push(`('WHATSAPP','CUSTOMER',$${base+1},$${base+2},'QUEUED',$${base+3})`);
+      params.push(`+7701000${String(n).padStart(4,'0')}`,`${prefix} message ${n}`,`${prefix}:${n}`);
     }
-    await db.query(`INSERT INTO message_queue(body,channel,audience,recipient,status,dedupe_key)
-      SELECT v.body,v.channel,v.audience,v.recipient,v.status,v.dedupe_key
-      FROM (VALUES ${values.join(',')}) AS v(body,channel,audience,recipient,status,dedupe_key)`,params);
+    await db.query(`INSERT INTO message_queue(channel,audience,recipient,body,status,dedupe_key)
+      SELECT v.channel,v.audience,v.recipient,v.body,v.status,v.dedupe_key
+      FROM (VALUES ${values.join(',')}) AS v(channel,audience,recipient,body,status,dedupe_key)`,params);
   }
 }
 
@@ -74,7 +74,6 @@ test('stale PROCESSING claims are recovered after an interrupted worker',async()
     assert.equal(claimed.length,180);
     assert.equal(Number((await db.query("SELECT count(*) c FROM message_queue WHERE status='PROCESSING'")).rows[0].c),180);
 
-    // Simulate a process that disappeared before sending its claimed rows.
     await db.query("UPDATE message_queue SET processing_started_at=now()-interval '2 minutes' WHERE status='PROCESSING'");
     const restarted=createMessageQueueWorker(db,{workerId:'worker-restarted',leaseSeconds:15,sendWhatsApp:async m=>{
       deliveries.set(Number(m.id),(deliveries.get(Number(m.id))||0)+1);
