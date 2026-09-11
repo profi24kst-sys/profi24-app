@@ -1,0 +1,171 @@
+name: Recovery Acceptance
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  full_recovery:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare isolated A31 environment
+        run: |
+          set -euo pipefail
+          DB_PASSWORD=$(openssl rand -hex 16)
+          JWT_SECRET_VALUE=$(openssl rand -hex 32)
+          RECOVERY_PASSWORD="$(openssl rand -hex 16)Aa1!"
+          cat > .env <<EOF
+          POSTGRES_DB=profi24
+          POSTGRES_USER=profi24
+          POSTGRES_PASSWORD=$DB_PASSWORD
+          JWT_SECRET=$JWT_SECRET_VALUE
+          NODE_ENV=production
+          CORS_ORIGIN=http://127.0.0.1:5173
+          PUBLIC_BASE_URL=http://127.0.0.1:5173
+          DB_POOL_MAX=10
+          WEB_PORT=5173
+          BACKUP_RETENTION_DAYS=14
+          EOF
+          printf 'A31_DB_PASSWORD=%s\n' "$DB_PASSWORD" >> "$GITHUB_ENV"
+          printf 'A31_RECOVERY_PASSWORD=%s\n' "$RECOVERY_PASSWORD" >> "$GITHUB_ENV"
+
+      - name: Start source database, API and document storage
+        run: docker compose up -d --build db api documents
+
+      - name: Wait for source services
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 50); do
+            if docker compose exec -T api node -e "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" \
+              && docker compose exec -T documents node -e "fetch('http://127.0.0.1:8086/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
+              exit 0
+            fi
+            sleep 3
+          done
+          docker compose ps
+          docker compose logs api documents db
+          exit 1
+
+      - name: Seed money, access and pre-snapshot marker
+        run: |
+          set -euo pipefail
+          docker compose exec -T -e RECOVERY_PASSWORD="$A31_RECOVERY_PASSWORD" api node --input-type=module - <<'NODE'
+          import bcrypt from 'bcryptjs';
+          import pg from 'pg';
+          const pool=new pg.Pool({connectionString:process.env.DATABASE_URL});
+          const c=await pool.connect();
+          try{
+            await c.query('BEGIN');
+            const branch=(await c.query("SELECT id FROM branches WHERE code='KST' AND active=true LIMIT 1")).rows[0];
+            if(!branch)throw new Error('KST branch missing');
+            const hash=await bcrypt.hash(process.env.RECOVERY_PASSWORD,10);
+            const user=(await c.query(`INSERT INTO users(name,email,password_hash,role,active,primary_branch_id)
+              VALUES('A31 Recovery Owner','a31-recovery@test.invalid',$1,'OWNER',true,$2)
+              ON CONFLICT(email) DO UPDATE SET password_hash=EXCLUDED.password_hash,role='OWNER',active=true,primary_branch_id=EXCLUDED.primary_branch_id
+              RETURNING id`,[hash,branch.id])).rows[0];
+            await c.query(`INSERT INTO user_branches(user_id,branch_id,is_primary) VALUES($1,$2,true)
+              ON CONFLICT(user_id,branch_id) DO UPDATE SET is_primary=true`,[user.id,branch.id]);
+            await c.query("SELECT set_config('app.finance_actor',$1,false)",[String(user.id)]);
+            const account=(await c.query(`INSERT INTO finance_accounts(name,type,currency,branch_id,responsible_id,comment,created_by,creation_key,creation_fingerprint)
+              VALUES('A31 Recovery Bank','BANK','KZT',$1,$2,'A31 recovery acceptance',$2,'a31:account','a31:account:v1')
+              RETURNING id`,[branch.id,user.id])).rows[0];
+            await c.query(`INSERT INTO finance_transactions(account_id,type,kind,category,amount,payment_method,comment,created_by,responsible_id,affects_pnl,pnl_type,idempotency_key,metadata)
+              VALUES($1,'INCOME','MANUAL','OTHER_INCOME',12345,'ACCOUNT','A31 recovery money marker',$2,$2,true,'INCOME','a31:income',jsonb_build_object('acceptance','A31'))`,[account.id,user.id]);
+            await c.query(`CREATE TABLE IF NOT EXISTS recovery_drill_marker(
+              id int PRIMARY KEY,value text NOT NULL,created_at timestamptz NOT NULL DEFAULT clock_timestamp())`);
+            await c.query(`INSERT INTO recovery_drill_marker(id,value) VALUES(1,'A31-PRE-SNAPSHOT')
+              ON CONFLICT(id) DO UPDATE SET value=EXCLUDED.value,created_at=clock_timestamp()`);
+            await c.query('COMMIT');
+          }catch(error){await c.query('ROLLBACK');throw error}finally{c.release();await pool.end()}
+          NODE
+
+      - name: Seed photo and document files
+        run: |
+          set -euo pipefail
+          docker compose exec -T documents node --input-type=module - <<'NODE'
+          import fs from 'node:fs';
+          fs.mkdirSync('/data/uploads/recovery-a31',{recursive:true});
+          fs.writeFileSync('/data/uploads/recovery-a31/photo-marker.png',Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z1mAAAAAASUVORK5CYII=','base64'));
+          fs.writeFileSync('/data/uploads/recovery-a31/document-marker.pdf',Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n'));
+          NODE
+          HASHES=$(docker compose exec -T documents node --input-type=module - <<'NODE'
+          import fs from 'node:fs';import {createHash} from 'node:crypto';
+          const hash=p=>createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+          process.stdout.write(hash('/data/uploads/recovery-a31/photo-marker.png')+' '+hash('/data/uploads/recovery-a31/document-marker.pdf'));
+          NODE
+          )
+          printf 'A31_PHOTO_SHA=%s\n' "$(printf '%s' "$HASHES" | awk '{print $1}')" >> "$GITHUB_ENV"
+          printf 'A31_DOCUMENT_SHA=%s\n' "$(printf '%s' "$HASHES" | awk '{print $2}')" >> "$GITHUB_ENV"
+
+      - name: Create snapshot and mark post-snapshot change
+        run: |
+          set -euo pipefail
+          docker compose run --rm backup sh /backup.sh
+          BACKUP_SET=$(docker compose run --rm backup sh -c 'ls -1dt /backups/* | head -1')
+          test -n "$BACKUP_SET"
+          docker compose run --rm backup sh -c "test -f '$BACKUP_SET/postgres.dump' && test -f '$BACKUP_SET/uploads.tar.gz' && test -f '$BACKUP_SET/SHA256SUMS'"
+          BACKUP_COMPLETED_EPOCH=$(date +%s)
+          docker compose exec -T db psql -U profi24 -d profi24 -v ON_ERROR_STOP=1 -c \
+            "INSERT INTO recovery_drill_marker(id,value) VALUES(2,'A31-POST-SNAPSHOT') ON CONFLICT(id) DO UPDATE SET value=EXCLUDED.value,created_at=clock_timestamp();"
+          printf 'A31_BACKUP_SET=%s\n' "$BACKUP_SET" >> "$GITHUB_ENV"
+          printf 'A31_BACKUP_COMPLETED_EPOCH=%s\n' "$BACKUP_COMPLETED_EPOCH" >> "$GITHUB_ENV"
+
+      - name: Restore database and uploads onto a separate target
+        run: |
+          set -euo pipefail
+          RESTORE_ROOT="$RUNNER_TEMP/profi24-a31-restore"
+          rm -rf "$RESTORE_ROOT"
+          mkdir -p "$RESTORE_ROOT"
+          docker compose exec -T db createdb -U profi24 profi24_a31_restore
+          RESTORE_STARTED=$(date +%s)
+          docker compose run --rm \
+            -e RESTORE_CONFIRM=YES \
+            -e RESTORE_DATABASE_URL="postgresql://profi24:${A31_DB_PASSWORD}@db:5432/profi24_a31_restore" \
+            -e RESTORE_UPLOADS=YES \
+            -e RESTORE_UPLOAD_ROOT=/restore-target \
+            -v "$RESTORE_ROOT:/restore-target" \
+            -v "$PWD/ops/restore.sh:/restore.sh:ro" \
+            backup sh /restore.sh "$A31_BACKUP_SET"
+          RTO_SECONDS=$(( $(date +%s) - RESTORE_STARTED ))
+          printf 'A31_RESTORE_ROOT=%s\n' "$RESTORE_ROOT" >> "$GITHUB_ENV"
+          printf 'A31_RTO_SECONDS=%s\n' "$RTO_SECONDS" >> "$GITHUB_ENV"
+
+      - name: Verify money, files, snapshot boundary and access
+        run: |
+          set -euo pipefail
+          RESTORE_DB=profi24_a31_restore
+          test "$(docker compose exec -T db psql -U profi24 -d "$RESTORE_DB" -Atqc "SELECT value FROM recovery_drill_marker WHERE id=1")" = 'A31-PRE-SNAPSHOT'
+          test "$(docker compose exec -T db psql -U profi24 -d "$RESTORE_DB" -Atqc "SELECT count(*) FROM recovery_drill_marker WHERE id=2")" = '0'
+          test "$(docker compose exec -T db psql -U profi24 -d "$RESTORE_DB" -Atqc "SELECT count(*) FROM finance_transactions WHERE idempotency_key='a31:income' AND amount=12345 AND type='INCOME'")" = '1'
+          test "$(docker compose exec -T db psql -U profi24 -d "$RESTORE_DB" -Atqc "SELECT count(*) FROM finance_account_balances WHERE creation_key='a31:account' AND balance=12345")" = '1'
+          test "$(sha256sum "$A31_RESTORE_ROOT/uploads/recovery-a31/photo-marker.png" | awk '{print $1}')" = "$A31_PHOTO_SHA"
+          test "$(sha256sum "$A31_RESTORE_ROOT/uploads/recovery-a31/document-marker.pdf" | awk '{print $1}')" = "$A31_DOCUMENT_SHA"
+          docker compose run --rm -T \
+            -e DATABASE_URL="postgresql://profi24:${A31_DB_PASSWORD}@db:5432/$RESTORE_DB" \
+            -e RECOVERY_PASSWORD="$A31_RECOVERY_PASSWORD" \
+            api node --input-type=module - <<'NODE'
+          import bcrypt from 'bcryptjs';import pg from 'pg';
+          const pool=new pg.Pool({connectionString:process.env.DATABASE_URL});
+          const row=(await pool.query(`SELECT u.password_hash,u.role,u.active,b.code branch_code
+            FROM users u LEFT JOIN branches b ON b.id=u.primary_branch_id WHERE u.email='a31-recovery@test.invalid'`)).rows[0];
+          if(!row||row.role!=='OWNER'||row.active!==true||row.branch_code!=='KST'||!await bcrypt.compare(process.env.RECOVERY_PASSWORD,row.password_hash))process.exit(1);
+          await pool.end();
+          NODE
+          SNAPSHOT_AGE_SECONDS=$(( $(date +%s) - A31_BACKUP_COMPLETED_EPOCH ))
+          test "$A31_RTO_SECONDS" -ge 0
+          test "$SNAPSHOT_AGE_SECONDS" -ge 0
+          echo "recovery_acceptance=ok rto_seconds=$A31_RTO_SECONDS measured_rpo_age_seconds=$SNAPSHOT_AGE_SECONDS pre_snapshot=preserved post_snapshot=excluded finance_balance=12345 access=verified photo_sha=$A31_PHOTO_SHA document_sha=$A31_DOCUMENT_SHA"
+
+      - name: Show A31 failure logs
+        if: failure()
+        run: |
+          docker compose ps
+          docker compose logs --tail=200 api documents db
+
+      - name: Stop A31 stack
+        if: always()
+        run: docker compose down -v
