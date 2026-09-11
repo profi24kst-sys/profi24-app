@@ -60,6 +60,15 @@ async function queuedCount(s,prefix){
 test('A30 reminders stop after pickup, feedback response and maintenance planning',async()=>{
   const s=await harness();
   try{
+    const notReady=await createClosedRequest(s,'A30-ENGINEER');
+    await s.query(`INSERT INTO equipment_custody_events(request_id,event_type,from_holder,to_holder,location_text,created_by)
+      VALUES($1,'CUSTOMER_TO_OFFICE','CUSTOMER','OFFICE','Приёмка',3),
+            ($1,'OFFICE_TO_STORAGE','OFFICE','STORAGE','Склад',3),
+            ($1,'STORAGE_TO_ENGINEER','STORAGE','ENGINEER','У инженера',3)`,[notReady]);
+    const notReadySync=await s.flow.pickup.syncReminders(new Date());
+    assert.equal(notReadySync.reconciled.discovered,0);
+    assert.equal(Number((await s.query('SELECT count(*) c FROM equipment_pickup_states WHERE request_id=$1',[notReady])).rows[0].c),0);
+
     const pickupRequest=await createClosedRequest(s,'A30-PICKUP');
     await s.query(`INSERT INTO equipment_custody_events(request_id,event_type,from_holder,to_holder,location_text,created_by)
       VALUES($1,'CUSTOMER_TO_OFFICE','CUSTOMER','OFFICE','Приёмка',3)`,[pickupRequest]);
