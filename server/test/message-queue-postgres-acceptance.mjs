@@ -39,8 +39,9 @@ try{
   const abandoned=await crashed.claim(180);
   if(abandoned.length!==180)fail(`expected 180 abandoned claims, got ${abandoned.length}`);
   if(await count('PROCESSING')!==180)fail('interrupted worker did not leave 180 PROCESSING rows');
+  const attemptsBeforeRestart=Number((await pool.query('SELECT count(*) c FROM message_queue WHERE attempts=0')).rows[0].c);
+  if(attemptsBeforeRestart!==620)fail(`claim-only crash burned delivery attempts for ${620-attemptsBeforeRestart} rows`);
 
-  // A hard-killed worker cannot release its claims. Expire the lease to model restart recovery.
   await pool.query("UPDATE message_queue SET processing_started_at=now()-interval '2 minutes' WHERE status='PROCESSING'");
 
   const deliveries=new Map();
@@ -58,8 +59,8 @@ try{
   const sent=await count('SENT'),queued=await count('QUEUED'),processing=await count('PROCESSING'),errors=await count('ERROR');
   if(sent!==620||queued!==0||processing!==0||errors!==0)fail(`unexpected final state sent=${sent} queued=${queued} processing=${processing} errors=${errors}`);
   if(deliveries.size!==620)fail(`provider received ${deliveries.size}/620 unique messages`);
-  const recovered=Number((await pool.query('SELECT count(*) c FROM message_queue WHERE attempts=2')).rows[0].c);
-  if(recovered!==180)fail(`expected 180 recovered claims with attempts=2, got ${recovered}`);
+  const exactlyOneAttempt=Number((await pool.query('SELECT count(*) c FROM message_queue WHERE attempts=1')).rows[0].c);
+  if(exactlyOneAttempt!==620)fail(`expected every delivered row to have exactly one real attempt, got ${exactlyOneAttempt}/620`);
 
   await pool.query('TRUNCATE message_queue RESTART IDENTITY');
   await pool.query("INSERT INTO message_queue(channel,audience,recipient,body,status,dedupe_key) VALUES('WHATSAPP','CUSTOMER','+77010000000','Failure event','QUEUED','failure:1')");
@@ -68,7 +69,7 @@ try{
   const failed=(await pool.query('SELECT status,attempts,processing_token FROM message_queue')).rows[0];
   if(failed.status!=='ERROR'||Number(failed.attempts)!==3||failed.processing_token!==null)fail(`retry terminal state invalid: ${JSON.stringify(failed)}`);
 
-  console.log(`queue_resilience_acceptance=ok bulk=620 abandoned=180 recovered=${recovered} unique_deliveries=${deliveries.size} terminal_retry_attempts=${failed.attempts}`);
+  console.log(`queue_resilience_acceptance=ok bulk=620 abandoned=180 unique_deliveries=${deliveries.size} single_attempt_deliveries=${exactlyOneAttempt} terminal_retry_attempts=${failed.attempts}`);
 }finally{
   await pool.end();
 }
