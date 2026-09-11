@@ -19,6 +19,12 @@ export async function installEquipmentPickup(app,pool,{enqueue,roles}){
     const owner=(await c.query("SELECT id FROM users WHERE active=true AND role='OWNER' ORDER BY id LIMIT 1")).rows[0];
     return owner?Number(owner.id):null;
   }
+  async function cancelPendingMessages(c,requestId){
+    try{
+      await c.query(`UPDATE message_queue SET status='CANCELLED',processing_started_at=NULL,processing_token=NULL,updated_at=now()
+        WHERE request_id=$1 AND dedupe_key LIKE 'pickup:%' AND status IN ('QUEUED','WAITING_RECIPIENT','ERROR')`,[requestId]);
+    }catch(error){if(error?.code!=='42P01')throw error}
+  }
 
   async function ensureReady(history){
     const requestId=Number(history?.request_id);
@@ -55,6 +61,7 @@ export async function installEquipmentPickup(app,pool,{enqueue,roles}){
       const updated=(await c.query(`UPDATE equipment_pickup_states SET status='PICKED_UP',picked_up_at=$1,last_holder='CUSTOMER',updated_at=now()
         WHERE id=$2 RETURNING *`,[at,state.id])).rows[0];
       if(state.escalation_task_id)await c.query("UPDATE tasks SET status='DONE',completed_at=COALESCE(completed_at,$1) WHERE id=$2 AND status='OPEN'",[at,state.escalation_task_id]);
+      await cancelPendingMessages(c,requestId);
       await c.query(`INSERT INTO request_history(request_id,user_id,action,details) VALUES($1,NULL,'EQUIPMENT_PICKUP_COMPLETED',$2)`,[
         requestId,{pickup_state_id:state.id,picked_up_at:at,source_history_id:historyId}
       ]);
@@ -71,6 +78,7 @@ export async function installEquipmentPickup(app,pool,{enqueue,roles}){
       if(!state||state.status!=='WAITING'){await c.query('COMMIT');return{changed:false,state}}
       const updated=(await c.query("UPDATE equipment_pickup_states SET status='CANCELLED',updated_at=now() WHERE id=$1 RETURNING *",[state.id])).rows[0];
       if(state.escalation_task_id)await c.query("UPDATE tasks SET status='CANCELLED' WHERE id=$1 AND status='OPEN'",[state.escalation_task_id]);
+      await cancelPendingMessages(c,requestId);
       await c.query('COMMIT');
       return{changed:true,state:updated,source_history_id:historyId};
     }catch(error){await c.query('ROLLBACK');throw error}finally{c.release()}
@@ -87,6 +95,15 @@ export async function installEquipmentPickup(app,pool,{enqueue,roles}){
   }
 
   async function reconcileTargets(){
+    const undiscovered=(await q(`SELECT r.id request_id,h.id history_id,h.created_at
+      FROM requests r JOIN equipment_custody_current cur ON cur.request_id=r.id
+      LEFT JOIN equipment_pickup_states s ON s.request_id=r.id
+      LEFT JOIN LATERAL(
+        SELECT id,created_at FROM request_history rh WHERE rh.request_id=r.id AND rh.action='REQUEST_CLOSED' ORDER BY id DESC LIMIT 1
+      ) h ON true
+      WHERE s.id IS NULL AND r.deleted_at IS NULL AND r.status='CLOSED' AND cur.holder<>'CUSTOMER'
+      ORDER BY r.closed_at NULLS LAST,r.id LIMIT 500`)).rows;
+    for(const row of undiscovered)await ensureReady({request_id:row.request_id,id:row.history_id,created_at:row.created_at});
     const picked=(await q(`SELECT s.request_id FROM equipment_pickup_states s
       JOIN equipment_custody_current cur ON cur.request_id=s.request_id
       WHERE s.status='WAITING' AND cur.holder='CUSTOMER' LIMIT 500`)).rows;
@@ -94,7 +111,7 @@ export async function installEquipmentPickup(app,pool,{enqueue,roles}){
     const cancelled=(await q(`SELECT s.request_id FROM equipment_pickup_states s JOIN requests r ON r.id=s.request_id
       WHERE s.status='WAITING' AND r.status='CANCELLED' LIMIT 500`)).rows;
     for(const row of cancelled)await cancel(Number(row.request_id));
-    return{picked:picked.length,cancelled:cancelled.length};
+    return{discovered:undiscovered.length,picked:picked.length,cancelled:cancelled.length};
   }
 
   async function syncReminders(now=new Date()){
@@ -117,7 +134,7 @@ export async function installEquipmentPickup(app,pool,{enqueue,roles}){
         const body=`${state.customer_name}, ваша ${equipment} по заказу ${state.request_number} готова к выдаче в PROFI24KST. Просим забрать её до ${labelDate(state.storage_due_at)}. Если нужна помощь с выдачей, свяжитесь с сервисным центром.`;
         const queued=await enqueue({request_id:Number(state.request_id),template_code:null,audience:'CUSTOMER',channel:'WHATSAPP',recipient:state.customer_phone,body,dedupe_key:`pickup:${state.id}:reminder:${seq}`,created_by:null});
         if(queued){
-          await q('UPDATE equipment_pickup_states SET reminder_count=$1,last_reminder_at=$2,updated_at=now() WHERE id=$3 AND status=\'WAITING\'',[seq,now,state.id]);
+          await q("UPDATE equipment_pickup_states SET reminder_count=$1,last_reminder_at=$2,updated_at=now() WHERE id=$3 AND status='WAITING'",[seq,now,state.id]);
           await q(`INSERT INTO request_history(request_id,user_id,action,details) VALUES($1,NULL,'EQUIPMENT_PICKUP_REMINDER',$2)`,[state.request_id,{pickup_state_id:state.id,reminder_number:seq,storage_due_at:state.storage_due_at}]);
           reminders++;
         }
@@ -167,5 +184,5 @@ export async function installEquipmentPickup(app,pool,{enqueue,roles}){
     return{data:rows};
   });
 
-  return{settings,ensureReady,onHistory,syncReminders,finish,cancel};
+  return{settings,ensureReady,onHistory,reconcileTargets,syncReminders,finish,cancel};
 }
