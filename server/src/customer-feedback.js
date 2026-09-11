@@ -1,5 +1,6 @@
 import {createHash,createHmac,randomBytes} from 'node:crypto';
 import {installServiceContracts} from './service-contracts.js';
+import {installEquipmentPickup} from './equipment-pickup.js';
 
 const q=(pool,sql,params=[])=>pool.query(sql,params);
 const feedbackSecret=()=>process.env.FEEDBACK_TOKEN_SECRET||process.env.JWT_SECRET||'dev-feedback-secret-change-me';
@@ -49,6 +50,13 @@ async function pickFollowupAssignee(c,branchId){
   return owner?Number(owner.id):null;
 }
 
+async function cancelPendingFeedbackMessages(c,requestId){
+  try{
+    await c.query(`UPDATE message_queue SET status='CANCELLED',processing_started_at=NULL,processing_token=NULL,updated_at=now()
+      WHERE request_id=$1 AND template_code='CUSTOMER_FEEDBACK_REQUEST' AND status IN ('QUEUED','WAITING_RECIPIENT','ERROR')`,[requestId]);
+  }catch(error){if(error?.code!=='42P01')throw error}
+}
+
 export async function installCustomerFeedback(app,pool,{enqueue,requestData,vars,render,roles}){
   await q(pool,`INSERT INTO message_templates(code,name,audience,channel,body)
     VALUES('CUSTOMER_FEEDBACK_REQUEST','Оценка сервиса после ремонта','CUSTOMER','WHATSAPP',
@@ -92,6 +100,27 @@ export async function installCustomerFeedback(app,pool,{enqueue,requestData,vars
     return {feedback,queued,feedback_url};
   }
 
+  async function syncFeedbackReminders(now=new Date()){
+    const cfg=await settings();
+    if(!cfg?.active)return{active:false,scanned:0,queued:0};
+    const rows=(await q(pool,`SELECT f.id,f.request_id,f.invite_count,f.last_invited_at
+      FROM customer_feedback f JOIN requests r ON r.id=f.request_id JOIN customers c ON c.id=f.customer_id
+      WHERE f.status='INVITED' AND f.invite_count>0 AND f.invite_count<$2
+        AND f.expires_at>$1::timestamptz AND f.last_invited_at<=$1::timestamptz-($3::int*interval '1 day')
+        AND r.deleted_at IS NULL AND r.status='CLOSED' AND c.phone IS NOT NULL AND btrim(c.phone)<>''
+      ORDER BY f.last_invited_at,f.id LIMIT 500`,[now,Number(cfg.max_invites),Number(cfg.reminder_interval_days)])).rows;
+    let queued=0;
+    for(const row of rows){
+      try{
+        const result=await enqueueInvite({request_id:Number(row.request_id),dedupe_key:`feedback:${row.request_id}:auto:${Number(row.invite_count)+1}`});
+        if(result.queued)queued++;
+      }catch(error){
+        if(!['ALREADY_RESPONDED','ORDER_NOT_CLOSED','NOT_FOUND'].includes(error?.code))throw error;
+      }
+    }
+    return{active:true,scanned:rows.length,queued};
+  }
+
   async function feedbackByToken(token,client=pool){
     if(!token||String(token).length>256)return null;
     return (await client.query(`SELECT f.*,r.number request_number,r.status request_status,e.category,e.brand,e.model
@@ -129,6 +158,7 @@ export async function installCustomerFeedback(app,pool,{enqueue,requestData,vars
         }
       }
       await c.query(`UPDATE customer_feedback SET status='RESPONDED',score=$1,comment=$2,contact_requested=$3,responded_at=now(),followup_task_id=$4,updated_at=now() WHERE id=$5`,[score,comment||null,contactRequested,taskId,locked.id]);
+      await cancelPendingFeedbackMessages(c,locked.request_id);
       await c.query(`INSERT INTO request_history(request_id,user_id,action,details) VALUES($1,NULL,'CUSTOMER_FEEDBACK_RECEIVED',$2)`,[locked.request_id,{score,nps_group:npsGroup(score),contact_requested:contactRequested,followup_task_id:taskId}]);
       return {score,nps_group:npsGroup(score),followup_created:Boolean(taskId),review_url:cfg.public_review_url||null};
     });
@@ -139,11 +169,15 @@ export async function installCustomerFeedback(app,pool,{enqueue,requestData,vars
 
   app.patch('/api/v1/customer-feedback/settings',{preHandler:roles('OWNER','SUPERVISOR')},async(req,reply)=>{
     const body=req.body||{},threshold=body.low_score_threshold===undefined?undefined:Number(body.low_score_threshold);
+    const interval=body.reminder_interval_days===undefined?undefined:Number(body.reminder_interval_days),maxInvites=body.max_invites===undefined?undefined:Number(body.max_invites);
     if(threshold!==undefined&&(!Number.isInteger(threshold)||threshold<0||threshold>10))return reply.code(422).send({data:null,error:{code:'VALIDATION',message:'Порог контакта должен быть от 0 до 10'}});
+    if(interval!==undefined&&(!Number.isInteger(interval)||interval<1||interval>30))return reply.code(422).send({data:null,error:{code:'VALIDATION',message:'Интервал напоминаний должен быть от 1 до 30 дней'}});
+    if(maxInvites!==undefined&&(!Number.isInteger(maxInvites)||maxInvites<1||maxInvites>10))return reply.code(422).send({data:null,error:{code:'VALIDATION',message:'Количество приглашений должно быть от 1 до 10'}});
     const old=await settings();
     const reviewUrl=body.public_review_url===undefined?old.public_review_url:normalizeUrl(body.public_review_url);
-    const row=(await q(pool,`UPDATE customer_feedback_settings SET active=$1,low_score_threshold=$2,public_review_url=$3,updated_by=$4,updated_at=now() WHERE id=1 RETURNING *`,[
-      body.active===undefined?old.active:Boolean(body.active),threshold===undefined?old.low_score_threshold:threshold,reviewUrl,req.user.id
+    const row=(await q(pool,`UPDATE customer_feedback_settings SET active=$1,low_score_threshold=$2,public_review_url=$3,reminder_interval_days=$4,max_invites=$5,updated_by=$6,updated_at=now() WHERE id=1 RETURNING *`,[
+      body.active===undefined?old.active:Boolean(body.active),threshold===undefined?old.low_score_threshold:threshold,reviewUrl,
+      interval===undefined?old.reminder_interval_days:interval,maxInvites===undefined?old.max_invites:maxInvites,req.user.id
     ])).rows[0];
     return {data:row};
   });
@@ -202,9 +236,15 @@ export async function installCustomerFeedback(app,pool,{enqueue,requestData,vars
   });
 
   const maintenance=await installServiceContracts(app,pool,{enqueue,roles});
-  let maintenanceBusy=false;
+  const pickup=await installEquipmentPickup(app,pool,{enqueue,roles});
+  let maintenanceBusy=false,customerCareBusy=false;
   const maintenanceTimer=setInterval(async()=>{if(maintenanceBusy)return;maintenanceBusy=true;try{await maintenance.syncMaintenance()}catch(error){app.log?.error?.(error)}finally{maintenanceBusy=false}},60000);
   maintenanceTimer.unref?.();
+  const customerCareTimer=setInterval(async()=>{if(customerCareBusy)return;customerCareBusy=true;try{await syncFeedbackReminders();await pickup.syncReminders()}catch(error){app.log?.error?.(error)}finally{customerCareBusy=false}},60000);
+  customerCareTimer.unref?.();
+  app.addHook('onClose',async()=>{clearInterval(customerCareTimer)});
   await maintenance.syncMaintenance();
-  return {enqueueInvite,ensureFeedback,npsGroup,maintenance};
+  await syncFeedbackReminders();
+  await pickup.syncReminders();
+  return {enqueueInvite,ensureFeedback,syncFeedbackReminders,npsGroup,maintenance,pickup};
 }
