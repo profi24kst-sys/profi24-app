@@ -14,13 +14,13 @@ export function createMessageQueueWorker(db,{
   sendTelegram=async()=>null,
   sendWhatsApp=async()=>null,
   workerId=randomUUID(),
-  leaseSeconds=Number(process.env.MESSAGE_QUEUE_LEASE_SECONDS||90),
+  leaseSeconds=Number(process.env.MESSAGE_QUEUE_LEASE_SECONDS||360),
   maxAttempts=3,
   logger=null
 }={}){
   const q=(sql,params=[])=>db.query(sql,params);
   const safeLimit=value=>Math.max(1,Math.min(500,Number(value)||30));
-  const safeLease=Math.max(15,Math.min(3600,Number(leaseSeconds)||90));
+  const safeLease=Math.max(15,Math.min(3600,Number(leaseSeconds)||360));
   const safeAttempts=Math.max(1,Math.min(20,Number(maxAttempts)||3));
 
   async function claim(limit=30){
@@ -38,6 +38,11 @@ export function createMessageQueueWorker(db,{
       FROM candidates c
      WHERE mq.id=c.id
      RETURNING mq.*`,[safeLimit(limit),safeLease,workerId])).rows;
+  }
+
+  async function renewClaim(message){
+    return (await q(`UPDATE message_queue SET processing_started_at=now(),updated_at=now()
+      WHERE id=$1 AND status='PROCESSING' AND processing_token=$2 RETURNING id`,[message.id,workerId])).rows[0]||null;
   }
 
   async function markSent(message,providerMessageId){
@@ -76,6 +81,7 @@ export function createMessageQueueWorker(db,{
     let sent=0;
     for(const message of rows){
       try{
+        if(!await renewClaim(message))continue;
         const providerId=await dispatch(message);
         if(providerId==null){await releaseUnconfigured(message);continue;}
         if(await markSent(message,providerId))sent++;
