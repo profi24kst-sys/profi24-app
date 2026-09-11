@@ -16,7 +16,6 @@ jobs:
     timeout-minutes: 20
     env:
       PERF_EMAIL: performance-owner@test.invalid
-      PERF_PASSWORD: PerformanceOwner2026Kst9
     steps:
       - uses: actions/checkout@v4
 
@@ -28,6 +27,8 @@ jobs:
         run: |
           DB_PASSWORD=$(openssl rand -hex 16)
           JWT_SECRET_VALUE=$(openssl rand -hex 32)
+          PERF_PASSWORD_VALUE="Perf-$(openssl rand -hex 12)-9K"
+          echo "PERF_PASSWORD=$PERF_PASSWORD_VALUE" >> "$GITHUB_ENV"
           cat > .env <<EOF
           POSTGRES_DB=profi24
           POSTGRES_USER=profi24
@@ -69,7 +70,9 @@ jobs:
         run: docker compose exec -T db psql -U profi24 -d profi24 -v ON_ERROR_STOP=1 < ops/performance-seed.sql
 
       - name: Run 2-second performance budget
+        shell: bash
         run: |
+          set -euo pipefail
           BASE_URL=http://127.0.0.1:5173 \
           PERF_EXPECTED_ACTIVE=500 \
           PERF_P95_BUDGET_MS=2000 \
