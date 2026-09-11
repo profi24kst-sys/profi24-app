@@ -122,9 +122,9 @@ test('A32: полный рабочий день проходит всеми ше
     for(const event of ['ACCEPT','DEPART','ARRIVE']){
       r=await call('workflow','POST',`/api/v1/requests/${order.id}/workflow`,{event},ids.engineer);assert.equal(r.status,200,`${event}: ${JSON.stringify(r)}`);
     }
-    r=await call('index2','POST',`/api/v1/requests/${order.id}/diagnosis`,{diagnosis:'Засор сливного тракта, требуется обслуживание'},ids.engineer);assert.equal(r.status,200,JSON.stringify(r));
-    r=await call('index2','POST',`/api/v1/requests/${order.id}/works`,{name:'Очистка сливного тракта',qty:1,unit_price:15000,direct_cost:2000},ids.engineer);assert.equal(r.status,201,JSON.stringify(r));
-    r=await call('workflow','POST',`/api/v1/requests/${order.id}/workflow`,{event:'SEND_APPROVAL'},ids.engineer);assert.equal(r.status,200,JSON.stringify(r));
+    r=await call('index2','POST',`/api/v1/requests/${order.id}/diagnosis`,{diagnosis:'Засор сливного тракта, требуется обслуживание'},ids.engineer);assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.status,'APPROVAL_REQUIRED');
+    // Technical roles cannot set accounting cost on work lines; direct cost comes from the installed stock item below.
+    r=await call('index2','POST',`/api/v1/requests/${order.id}/works`,{name:'Очистка сливного тракта',qty:1,unit_price:15000},ids.engineer);assert.equal(r.status,201,JSON.stringify(r));
 
     // Client approval is recorded through the public approval API, not by rewriting the order.
     r=await call('approvals','POST',`/api/v1/approvals/request/${order.id}`,{expires_days:1},ids.engineer);assert.equal(r.status,200,JSON.stringify(r));const approval=r.data;
@@ -150,7 +150,7 @@ test('A32: полный рабочий день проходит всеми ше
 
     // OWNER end-of-day control: money, parts, documents, final state and role-attributed history all agree.
     const final=(await query('SELECT status,total,paid,direct_cost,closed_at,warranty_until FROM requests WHERE id=$1',[order.id])).rows[0];
-    assert.equal(final.status,'CLOSED');assert.equal(Number(final.total),15000);assert.equal(Number(final.paid),15000);assert.equal(Number(final.direct_cost),2500);assert.ok(final.closed_at);assert.ok(final.warranty_until);
+    assert.equal(final.status,'CLOSED');assert.equal(Number(final.total),15000);assert.equal(Number(final.paid),15000);assert.equal(Number(final.direct_cost),500);assert.ok(final.closed_at);assert.ok(final.warranty_until);
     assert.equal(Number((await query("SELECT count(*) c FROM finance_transactions WHERE account_id=$1 AND kind='PAYMENT' AND amount=15000",[cash.id])).rows[0].c),1);
     assert.equal(Number((await query('SELECT balance FROM finance_account_balances WHERE id=$1',[cash.id])).rows[0].balance),15000);
     assert.equal(Number((await query("SELECT count(*) c FROM parts WHERE request_id=$1 AND status='INSTALLED'",[order.id])).rows[0].c),1);
