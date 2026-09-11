@@ -61,6 +61,7 @@ async function setup(){
   services.warehouse=await load('warehouse');
   services.procurement=await load('procurement');
   services.directory=await load('directory-admin');
+  services.diagnostic=await load('diagnostic-flow');
   services.approvals=await load('approvals-portal');
   services.completion=await load('completion');
   services.finance=await buildFinanceApp(pool,{logger:false});apps.push(services.finance);
