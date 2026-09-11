@@ -15,6 +15,15 @@ test('NPS survey is private, auditable and creates low-score follow-up',async()=
  await query("INSERT INTO customers(name,phone) VALUES('Client','77000000101')");await query("INSERT INTO equipment(customer_id,category,brand,model) VALUES(1,'Стиральная машина','LG','F2J3')");const branch=(await query("SELECT id FROM branches WHERE code='KST'")).rows[0].id;
  const request=(await query("INSERT INTO requests(number,customer_id,equipment_id,manager_id,engineer_id,branch_id,status,complaint,closed_at) VALUES('NPS-T1',1,1,3,4,$1,'CLOSED','NPS test',now()) RETURNING id",[branch])).rows[0].id;
  await query("CREATE TABLE message_templates(id SERIAL PRIMARY KEY,code TEXT UNIQUE NOT NULL,name TEXT NOT NULL,audience TEXT NOT NULL,channel TEXT NOT NULL,body TEXT NOT NULL,active BOOLEAN DEFAULT TRUE)");
+ await query(`CREATE TABLE message_queue(
+   id BIGSERIAL PRIMARY KEY,
+   request_id INT,
+   template_code TEXT,
+   status TEXT NOT NULL DEFAULT 'QUEUED',
+   processing_started_at TIMESTAMPTZ,
+   processing_token TEXT,
+   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+ )`);
  const app=Fastify({logger:false});await app.register(jwt,{secret:'x'.repeat(64)});const auth=async(req,reply)=>{if(!await authenticate(req,reply,pool))return},roles=(...allowed)=>async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!roleAllowed(req.user.role,allowed))return reply.code(403).send({data:null,error:{code:'FORBIDDEN',message:'Недостаточно прав'}})};
  const requestData=async id=>(await query('SELECT r.*,c.name customer_name,c.phone FROM requests r JOIN customers c ON c.id=r.customer_id WHERE r.id=$1',[id])).rows[0],vars=x=>({request_number:x.number,customer_name:x.customer_name}),render=(t,d)=>String(t).replace(/{{\s*([a-z_]+)\s*}}/g,(_,k)=>d[k]??'');const messages=[];
  const enqueue=async x=>{if(messages.some(m=>m.dedupe_key===x.dedupe_key))return null;const m={id:messages.length+1,status:'QUEUED',...x};messages.push(m);return m};installOrderAccess(app,pool,'communications');const flow=await installCustomerFeedback(app,pool,{enqueue,requestData,vars,render,roles});await app.ready();
