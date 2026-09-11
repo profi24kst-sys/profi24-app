@@ -36,7 +36,7 @@ export async function installEquipmentPickup(app,pool,{enqueue,roles}){
       LEFT JOIN equipment_custody_current cur ON cur.request_id=r.id
       WHERE r.id=$1 AND r.deleted_at IS NULL`,[requestId])).rows[0];
     if(!row||row.status!=='CLOSED')return{skipped:'not_closed'};
-    if(!row.holder||row.holder==='CUSTOMER')return{skipped:'no_pickup'};
+    if(!['OFFICE','STORAGE'].includes(String(row.holder||'').toUpperCase()))return{skipped:'no_pickup'};
     const readyAt=history?.created_at||row.closed_at||new Date();
     const inserted=(await q(`INSERT INTO equipment_pickup_states(request_id,customer_id,branch_id,status,ready_at,storage_due_at,last_holder,source_history_id)
       VALUES($1,$2,$3,'WAITING',$4,$4::timestamptz+($5::int*interval '1 day'),$6,$7)
@@ -101,7 +101,7 @@ export async function installEquipmentPickup(app,pool,{enqueue,roles}){
       LEFT JOIN LATERAL(
         SELECT id,created_at FROM request_history rh WHERE rh.request_id=r.id AND rh.action='REQUEST_CLOSED' ORDER BY id DESC LIMIT 1
       ) h ON true
-      WHERE s.id IS NULL AND r.deleted_at IS NULL AND r.status='CLOSED' AND cur.holder<>'CUSTOMER'
+      WHERE s.id IS NULL AND r.deleted_at IS NULL AND r.status='CLOSED' AND cur.holder IN ('OFFICE','STORAGE')
       ORDER BY r.closed_at NULLS LAST,r.id LIMIT 500`)).rows;
     for(const row of undiscovered)await ensureReady({request_id:row.request_id,id:row.history_id,created_at:row.created_at});
     const picked=(await q(`SELECT s.request_id FROM equipment_pickup_states s
@@ -122,7 +122,7 @@ export async function installEquipmentPickup(app,pool,{enqueue,roles}){
       e.category,e.brand,e.model,cur.holder
       FROM equipment_pickup_states s JOIN requests r ON r.id=s.request_id JOIN customers c ON c.id=s.customer_id
       LEFT JOIN equipment e ON e.id=r.equipment_id LEFT JOIN equipment_custody_current cur ON cur.request_id=s.request_id
-      WHERE s.status='WAITING' AND r.status='CLOSED' AND cur.holder IS NOT NULL AND cur.holder<>'CUSTOMER'
+      WHERE s.status='WAITING' AND r.status='CLOSED' AND cur.holder IN ('OFFICE','STORAGE')
       ORDER BY s.storage_due_at,s.id LIMIT 500`)).rows;
     let reminders=0,escalations=0;
     for(const state of rows){
