@@ -1,6 +1,6 @@
 const BASE=String(process.env.BASE_URL||'http://127.0.0.1:5173').replace(/\/+$/,'');
 const EMAIL=process.env.PERF_EMAIL||'performance-owner@test.invalid';
-const PASSWORD=process.env.PERF_PASSWORD||'PerformanceOwner2026Kst9';
+const PASSWORD=String(process.env.PERF_PASSWORD||'');
 const P95_BUDGET_MS=Number(process.env.PERF_P95_BUDGET_MS||2000);
 const MAX_BUDGET_MS=Number(process.env.PERF_MAX_BUDGET_MS||3000);
 const EXPECTED_ACTIVE=Number(process.env.PERF_EXPECTED_ACTIVE||500);
@@ -14,6 +14,7 @@ function percentile(values,p){
 function fmt(n){return Math.round(n*10)/10}
 
 async function login(){
+  if(!PASSWORD)fail('PERF_PASSWORD is required');
   const r=await fetch(`${BASE}/api/v1/auth/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:EMAIL,password:PASSWORD})});
   const text=await r.text();let json={};try{json=JSON.parse(text)}catch{}
   if(!r.ok||!json.data?.access_token)fail(`login failed HTTP ${r.status}: ${text.slice(0,300)}`);
