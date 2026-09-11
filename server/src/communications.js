@@ -5,6 +5,7 @@ import {installCustomerVisitConfirmation} from './customer-visit-confirmation.js
 import {installVisitReadiness} from './visit-readiness.js';
 import {createRouteCustomerNotificationSync} from './route-customer-notifications.js';
 import {installWebsiteIntake} from './website-intake.js';
+import {createMessageQueueWorker,installMessageQueueLeaseSchema} from './message-queue-worker.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
@@ -34,6 +35,7 @@ const schema=[
 `INSERT INTO communication_state(id,last_history_id) VALUES(1,0) ON CONFLICT(id) DO NOTHING`
 ];
 for(const s of schema)await q(s);
+await installMessageQueueLeaseSchema(pool);
 
 const seeds=[
 ['CUSTOMER_REQUEST_CREATED','Заявка принята','CUSTOMER','WHATSAPP','Здравствуйте, {{customer_name}}! Ваша заявка {{request_number}} принята сервисным центром PROFI24KST. Мы назначим инженера и сообщим время визита.'],
@@ -90,7 +92,8 @@ async function syncHistory(){
 
 async function sendTelegram(m){const token=process.env.TELEGRAM_BOT_TOKEN;if(!token||!m.recipient)return null;const r=await fetch(`https://api.telegram.org/bot${token}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:m.recipient,text:m.body})});const j=await r.json().catch(()=>({}));if(!r.ok||!j.ok)throw new Error(j.description||`Telegram HTTP ${r.status}`);return String(j.result?.message_id||'')}
 async function sendWhatsApp(m){const token=process.env.WHATSAPP_TOKEN,phoneId=process.env.WHATSAPP_PHONE_NUMBER_ID,version=process.env.WHATSAPP_API_VERSION||'v23.0';if(!token||!phoneId||!m.recipient)return null;const to=String(m.recipient).replace(/\D/g,'').replace(/^8(?=7\d{9}$)/,'7');const r=await fetch(`https://graph.facebook.com/${version}/${phoneId}/messages`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({messaging_product:'whatsapp',to,type:'text',text:{body:m.body,preview_url:false}})});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error?.message||`WhatsApp HTTP ${r.status}`);return j.messages?.[0]?.id||''}
-async function processQueue(limit=30){const rows=(await q(`SELECT * FROM message_queue WHERE status='QUEUED' ORDER BY created_at LIMIT $1`,[limit])).rows;let sent=0;for(const m of rows){try{let id=null;if(m.channel==='TELEGRAM')id=await sendTelegram(m);else if(m.channel==='WHATSAPP')id=await sendWhatsApp(m);if(id===null)continue;await q(`UPDATE message_queue SET status='SENT',provider_message_id=$1,sent_at=now(),updated_at=now(),attempts=attempts+1,error_text=NULL WHERE id=$2`,[id,m.id]);sent++}catch(e){await q(`UPDATE message_queue SET status=CASE WHEN attempts>=2 THEN 'ERROR' ELSE 'QUEUED' END,attempts=attempts+1,error_text=$1,updated_at=now() WHERE id=$2`,[String(e.message).slice(0,500),m.id])}}return sent}
+const queueWorker=createMessageQueueWorker(pool,{sendTelegram,sendWhatsApp,logger:app.log});
+async function processQueue(limit=30){return (await queueWorker.processQueue(limit)).sent}
 
 installOrderAccess(app,pool,'communications');
 installWebsiteIntake(app,pool);
@@ -99,8 +102,8 @@ visitWorkflow=await installCustomerVisitConfirmation(app,pool,{enqueue,requestDa
 readinessWorkflow=await installVisitReadiness(app,pool,{visitWorkflow,roles});
 routeWorkflow=createRouteCustomerNotificationSync(pool,{enqueue,requestData,vars,render,logger:app.log});
 await routeWorkflow.seed();
-app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'profi24-communications',version:'1.6-visit-readiness',telegram_configured:Boolean(process.env.TELEGRAM_BOT_TOKEN),whatsapp_configured:Boolean(process.env.WHATSAPP_TOKEN&&process.env.WHATSAPP_PHONE_NUMBER_ID)}});
-app.get('/api/v1/communications/status',{preHandler:roles('OWNER','MANAGER')},async()=>({data:{telegram_configured:Boolean(process.env.TELEGRAM_BOT_TOKEN),whatsapp_configured:Boolean(process.env.WHATSAPP_TOKEN&&process.env.WHATSAPP_PHONE_NUMBER_ID),queued:Number((await q("SELECT count(*) c FROM message_queue WHERE status='QUEUED'")).rows[0].c),errors:Number((await q("SELECT count(*) c FROM message_queue WHERE status='ERROR'")).rows[0].c)}}));
+app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'profi24-communications',version:'1.7-queue-lease',telegram_configured:Boolean(process.env.TELEGRAM_BOT_TOKEN),whatsapp_configured:Boolean(process.env.WHATSAPP_TOKEN&&process.env.WHATSAPP_PHONE_NUMBER_ID)}});
+app.get('/api/v1/communications/status',{preHandler:roles('OWNER','MANAGER')},async()=>({data:{telegram_configured:Boolean(process.env.TELEGRAM_BOT_TOKEN),whatsapp_configured:Boolean(process.env.WHATSAPP_TOKEN&&process.env.WHATSAPP_PHONE_NUMBER_ID),queued:Number((await q("SELECT count(*) c FROM message_queue WHERE status='QUEUED'")).rows[0].c),processing:Number((await q("SELECT count(*) c FROM message_queue WHERE status='PROCESSING'")).rows[0].c),errors:Number((await q("SELECT count(*) c FROM message_queue WHERE status='ERROR'")).rows[0].c)}}));
 app.get('/api/v1/communications/templates',{preHandler:roles('OWNER','MANAGER')},async()=>({data:(await q('SELECT * FROM message_templates ORDER BY audience,name')).rows}));
 app.patch('/api/v1/communications/templates/:id',{preHandler:roles('OWNER','MANAGER')},async(req,reply)=>{const old=(await q('SELECT * FROM message_templates WHERE id=$1',[req.params.id])).rows[0];if(!old)return err(reply,'NOT_FOUND','Шаблон не найден',404);const b={...old,...req.body};const r=(await q('UPDATE message_templates SET name=$1,channel=$2,body=$3,active=$4,updated_at=now() WHERE id=$5 RETURNING *',[b.name,b.channel,b.body,b.active,req.params.id])).rows[0];return{data:r}});
 app.get('/api/v1/communications/queue',{preHandler:auth},async req=>{const status=req.query?.status;const rows=(await q(`SELECT mq.*,r.number request_number,c.name customer_name FROM message_queue mq LEFT JOIN requests r ON r.id=mq.request_id LEFT JOIN customers c ON c.id=r.customer_id WHERE ($1::text IS NULL OR mq.status=$1) AND ($2::text IN ('OWNER','SUPERVISOR','MANAGER') OR (r.engineer_id=$3 AND r.deleted_at IS NULL)) ORDER BY mq.created_at DESC LIMIT 500`,[status||null,req.user.role,req.user.id])).rows;return{data:rows}});
@@ -121,12 +124,15 @@ app.post('/api/v1/communications/manual',{preHandler:auth},async(req,reply)=>{
   return reply.code(201).send({data:m});
 });
 app.post('/api/v1/communications/sync',{preHandler:roles('OWNER','MANAGER')},async()=>{const discovered=await syncHistory(),visit_readiness=await readinessWorkflow.sync(),route_alerts=await routeWorkflow.sync(),sent=await processQueue();return{data:{discovered,visit_readiness,route_alerts,sent}}});
-app.post('/api/v1/communications/queue/:id/retry',{preHandler:roles('OWNER','MANAGER')},async(req,reply)=>{const r=(await q("UPDATE message_queue SET status=CASE WHEN recipient IS NULL THEN 'WAITING_RECIPIENT' ELSE 'QUEUED' END,error_text=NULL,updated_at=now() WHERE id=$1 RETURNING *",[req.params.id])).rows[0];if(!r)return err(reply,'NOT_FOUND','Сообщение не найдено',404);return{data:r}});
-app.post('/api/v1/communications/queue/:id/cancel',{preHandler:roles('OWNER','MANAGER')},async(req,reply)=>{const r=(await q("UPDATE message_queue SET status='CANCELLED',updated_at=now() WHERE id=$1 AND status NOT IN ('SENT','DELIVERED','READ') RETURNING *",[req.params.id])).rows[0];if(!r)return err(reply,'STATE_CONFLICT','Сообщение уже отправлено или не найдено',409);return{data:r}});
+app.post('/api/v1/communications/queue/:id/retry',{preHandler:roles('OWNER','MANAGER')},async(req,reply)=>{const r=(await q("UPDATE message_queue SET status=CASE WHEN recipient IS NULL THEN 'WAITING_RECIPIENT' ELSE 'QUEUED' END,error_text=NULL,processing_started_at=NULL,processing_token=NULL,updated_at=now() WHERE id=$1 AND status IN ('ERROR','CANCELLED','WAITING_RECIPIENT') RETURNING *",[req.params.id])).rows[0];if(!r)return err(reply,'STATE_CONFLICT','Повтор недоступен: сообщение уже в очереди, обрабатывается, отправлено или не найдено',409);return{data:r}});
+app.post('/api/v1/communications/queue/:id/cancel',{preHandler:roles('OWNER','MANAGER')},async(req,reply)=>{const r=(await q("UPDATE message_queue SET status='CANCELLED',processing_started_at=NULL,processing_token=NULL,updated_at=now() WHERE id=$1 AND status NOT IN ('PROCESSING','SENT','DELIVERED','READ') RETURNING *",[req.params.id])).rows[0];if(!r)return err(reply,'STATE_CONFLICT','Сообщение уже обрабатывается, отправлено или не найдено',409);return{data:r}});
 
-let busy=false;setInterval(async()=>{if(busy)return;busy=true;try{await syncHistory();await readinessWorkflow.sync();await routeWorkflow.sync();await processQueue()}catch(e){app.log.error(e)}finally{busy=false}},30000);
+let cycle=null;
+const runCycle=async()=>{await syncHistory();await readinessWorkflow.sync();await routeWorkflow.sync();await processQueue()};
+const timer=setInterval(()=>{if(cycle)return;cycle=runCycle().catch(e=>app.log.error(e)).finally(()=>{cycle=null})},30000);
 await syncHistory();
 await readinessWorkflow.sync();
 await routeWorkflow.sync();
-const close=async()=>{try{await pool.end()}finally{process.exit(0)}};process.on('SIGTERM',close);process.on('SIGINT',close);
+await processQueue();
+const close=async()=>{clearInterval(timer);try{if(cycle)await cycle;await queueWorker.releaseOwnedClaims();await pool.end()}finally{process.exit(0)}};process.on('SIGTERM',close);process.on('SIGINT',close);
 app.listen({port:Number(process.env.PORT||8088),host:'0.0.0.0'});
