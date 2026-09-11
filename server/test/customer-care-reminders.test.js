@@ -24,7 +24,7 @@ async function harness(){
     processing_started_at TIMESTAMPTZ,processing_token TEXT,created_at TIMESTAMPTZ DEFAULT now(),sent_at TIMESTAMPTZ,updated_at TIMESTAMPTZ DEFAULT now())`);
   await query("INSERT INTO users(name,email,password_hash,role) VALUES('Owner','owner@a30.test','x','OWNER'),('Supervisor','supervisor@a30.test','x','SUPERVISOR'),('Manager','manager@a30.test','x','MANAGER'),('Engineer','engineer@a30.test','x','ENGINEER')");
   const branch=Number((await query("SELECT id FROM branches WHERE code='KST'")).rows[0].id);
-  await query('INSERT INTO user_branches(user_id,branch_id,is_primary) VALUES(2,$1,true),(3,$1,true),(4,$1,true)',[branch]);
+  await query('INSERT INTO user_branches(user_id,branch_id,is_primary) VALUES(2,$1,true),(3,$1,true),(4,$1,true) ON CONFLICT DO NOTHING',[branch]);
   await query("INSERT INTO customers(name,phone) VALUES('A30 Client','77000000999')");
   await query("INSERT INTO equipment(customer_id,category,brand,model) VALUES(1,'Стиральная машина','LG','F2J3')");
   const app=Fastify({logger:false});
