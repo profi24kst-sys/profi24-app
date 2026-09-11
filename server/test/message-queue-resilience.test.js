@@ -65,7 +65,7 @@ test('queue drains more than 500 events without loss or duplicates',async()=>{
   }finally{await db.close();}
 });
 
-test('stale PROCESSING claims are recovered after an interrupted worker',async()=>{
+test('stale PROCESSING claims are recovered after an interrupted worker without burning delivery attempts',async()=>{
   const db=await harness(),deliveries=new Map();
   try{
     await seed(db,560,'restart');
@@ -73,6 +73,7 @@ test('stale PROCESSING claims are recovered after an interrupted worker',async()
     const claimed=await crashed.claim(180);
     assert.equal(claimed.length,180);
     assert.equal(Number((await db.query("SELECT count(*) c FROM message_queue WHERE status='PROCESSING'")).rows[0].c),180);
+    assert.equal(Number((await db.query('SELECT count(*) c FROM message_queue WHERE attempts=0')).rows[0].c),560);
 
     await db.query("UPDATE message_queue SET processing_started_at=now()-interval '2 minutes' WHERE status='PROCESSING'");
     const restarted=createMessageQueueWorker(db,{workerId:'worker-restarted',leaseSeconds:15,sendWhatsApp:async m=>{
@@ -90,8 +91,7 @@ test('stale PROCESSING claims are recovered after an interrupted worker',async()
       count(*) FILTER(WHERE status='ERROR')::int errors
       FROM message_queue`)).rows[0];
     assert.deepEqual(counts,{sent:560,queued:0,processing:0,errors:0});
-    assert.equal(Number((await db.query('SELECT count(*) c FROM message_queue WHERE attempts=2')).rows[0].c),180);
-    assert.equal(Number((await db.query('SELECT count(*) c FROM message_queue WHERE attempts=1')).rows[0].c),380);
+    assert.equal(Number((await db.query('SELECT count(*) c FROM message_queue WHERE attempts=1')).rows[0].c),560);
   }finally{await db.close();}
 });
 
