@@ -4,10 +4,14 @@ export const customerFeedbackStatements=[
     active BOOLEAN NOT NULL DEFAULT true,
     low_score_threshold SMALLINT NOT NULL DEFAULT 6 CHECK(low_score_threshold BETWEEN 0 AND 10),
     public_review_url TEXT,
+    reminder_interval_days SMALLINT NOT NULL DEFAULT 3 CHECK(reminder_interval_days BETWEEN 1 AND 30),
+    max_invites SMALLINT NOT NULL DEFAULT 3 CHECK(max_invites BETWEEN 1 AND 10),
     updated_by INT REFERENCES users(id),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
   `INSERT INTO customer_feedback_settings(id,active,low_score_threshold) VALUES(1,true,6) ON CONFLICT(id) DO NOTHING`,
+  `ALTER TABLE customer_feedback_settings ADD COLUMN IF NOT EXISTS reminder_interval_days SMALLINT NOT NULL DEFAULT 3 CHECK(reminder_interval_days BETWEEN 1 AND 30)`,
+  `ALTER TABLE customer_feedback_settings ADD COLUMN IF NOT EXISTS max_invites SMALLINT NOT NULL DEFAULT 3 CHECK(max_invites BETWEEN 1 AND 10)`,
   `CREATE TABLE IF NOT EXISTS customer_feedback(
     id BIGSERIAL PRIMARY KEY,
     request_id INT NOT NULL UNIQUE REFERENCES requests(id) ON DELETE CASCADE,
