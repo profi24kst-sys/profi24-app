@@ -33,16 +33,16 @@ export function createMessageQueueWorker(db,{
       LIMIT $1
     )
     UPDATE message_queue mq
-       SET status='PROCESSING',processing_started_at=now(),processing_token=$3,
-           attempts=mq.attempts+1,updated_at=now()
+       SET status='PROCESSING',processing_started_at=now(),processing_token=$3,updated_at=now()
       FROM candidates c
      WHERE mq.id=c.id
      RETURNING mq.*`,[safeLimit(limit),safeLease,workerId])).rows;
   }
 
-  async function renewClaim(message){
-    return (await q(`UPDATE message_queue SET processing_started_at=now(),updated_at=now()
-      WHERE id=$1 AND status='PROCESSING' AND processing_token=$2 RETURNING id`,[message.id,workerId])).rows[0]||null;
+  async function beginAttempt(message){
+    return (await q(`UPDATE message_queue
+      SET processing_started_at=now(),attempts=attempts+1,updated_at=now()
+      WHERE id=$1 AND status='PROCESSING' AND processing_token=$2 RETURNING *`,[message.id,workerId])).rows[0]||null;
   }
 
   async function markSent(message,providerMessageId){
@@ -79,15 +79,17 @@ export function createMessageQueueWorker(db,{
   async function processQueue(limit=30){
     const rows=await claim(limit);
     let sent=0;
-    for(const message of rows){
+    for(const claimed of rows){
+      let message=claimed;
       try{
-        if(!await renewClaim(message))continue;
+        message=await beginAttempt(claimed);
+        if(!message)continue;
         const providerId=await dispatch(message);
         if(providerId==null){await releaseUnconfigured(message);continue;}
         if(await markSent(message,providerId))sent++;
       }catch(error){
-        logger?.error?.({err:error,message_id:message.id},'communication queue delivery failed');
-        await markFailure(message,error);
+        logger?.error?.({err:error,message_id:message?.id||claimed.id},'communication queue delivery failed');
+        if(message)await markFailure(message,error);
       }
     }
     return{claimed:rows.length,sent};
@@ -95,8 +97,7 @@ export function createMessageQueueWorker(db,{
 
   async function releaseOwnedClaims(){
     const result=await q(`UPDATE message_queue
-      SET status='QUEUED',attempts=GREATEST(attempts-1,0),updated_at=now(),
-          processing_started_at=NULL,processing_token=NULL
+      SET status='QUEUED',updated_at=now(),processing_started_at=NULL,processing_token=NULL
       WHERE status='PROCESSING' AND processing_token=$1`,[workerId]);
     return Number(result.rowCount||0);
   }
