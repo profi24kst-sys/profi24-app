@@ -113,7 +113,11 @@ export function canMutateOrder(role,{service='',route='',method='GET'}={}){
   if(['GET','HEAD'].includes(method))return true;
   if(role==='OWNER'||role==='SUPERVISOR'||role==='MANAGER')return true;
   if(role==='ENGINEER'){if(/\/(payment|refund|schedule|assign|cancel|close)(?:\/|$)/.test(route))return false;return can(role,P.ORDERS_TECHNICAL)||can(role,P.ORDERS_NOTES)||can(role,P.ORDERS_FILES)}
-  if(role==='ACCOUNTANT'){if(service!=='index2')return false;if(/\/payment$/.test(route))return can(role,P.FINANCE_RECEIVE_PAYMENT);if(/\/refund$/.test(route))return can(role,P.FINANCE_REFUND);return false}
+  if(role==='ACCOUNTANT'){
+    if(/\/payment$/.test(route)&&(service==='index2'||service==='completion'))return can(role,P.FINANCE_RECEIVE_PAYMENT);
+    if(service==='index2'&&/\/refund$/.test(route))return can(role,P.FINANCE_REFUND);
+    return false;
+  }
   if(role==='TRAINEE'){if(/\/(notes|comment)$/.test(route))return can(role,P.ORDERS_NOTES);return service==='documents'&&method==='POST'&&/\/requests\/:id\/files$/.test(route)&&can(role,P.ORDERS_FILES)}
   return false;
 }
