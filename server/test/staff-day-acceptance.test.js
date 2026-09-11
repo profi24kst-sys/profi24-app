@@ -96,9 +96,8 @@ test('A32: полный рабочий день проходит всеми ше
     r=await call('index2','POST','/api/v1/requests',{customer_id:customer.id,equipment_id:equipment.id,complaint:'Не сливает воду',source:'OTHER',visit_type:'FIELD'},ids.manager);
     assert.equal(r.status,201,JSON.stringify(r));const order=r.data;
 
-    // OWNER: assigns a mentor and the trainee to this real order through directory APIs.
+    // OWNER: records the mentorship relation before the trainee joins any order.
     r=await call('directory','PUT',`/api/v1/trainees/${ids.trainee}/mentor`,{mentor_id:ids.engineer},ids.owner);assert.ok([200,201].includes(r.status),JSON.stringify(r));
-    r=await call('directory','POST',`/api/v1/requests/${order.id}/participants`,{user_id:ids.trainee},ids.owner);assert.equal(r.status,201,JSON.stringify(r));
 
     // SUPERVISOR: dispatches the engineer and prepares one zero-sale-price consumable so parts history is auditable without changing the approved customer price.
     r=await call('index2','PATCH',`/api/v1/requests/${order.id}/schedule`,{engineer_id:ids.engineer,scheduled_at:new Date(Date.now()+3600000).toISOString(),visit_type:'FIELD'},ids.supervisor);
@@ -107,6 +106,9 @@ test('A32: полный рабочий день проходит всеми ше
     if(wf.data.status==='NEW'){
       r=await call('workflow','POST',`/api/v1/requests/${order.id}/workflow`,{event:'ASSIGN'},ids.supervisor);assert.equal(r.status,200,JSON.stringify(r));
     }
+
+    // OWNER: only after the mentor is the order engineer, adds the trainee to that order.
+    r=await call('directory','POST',`/api/v1/requests/${order.id}/participants`,{user_id:ids.trainee},ids.owner);assert.equal(r.status,201,JSON.stringify(r));
     r=await call('warehouse','POST','/api/v1/items',{name:'A32 сервисный расходник',sku:'A32-CONSUMABLE',branch_id:s.branch,purchase_price:500,sale_price:0,min_quantity:0},ids.owner);
     assert.equal(r.status,201,JSON.stringify(r));const item=r.data;
     r=await call('warehouse','POST',`/api/v1/items/${item.id}/receive`,{quantity:2,purchase_price:500,comment:'Приход для A32'},ids.owner);assert.equal(r.status,200,JSON.stringify(r));
