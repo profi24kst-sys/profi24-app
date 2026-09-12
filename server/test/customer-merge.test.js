@@ -45,7 +45,7 @@ async function setup(){
  });
  src=src.replace(/logger:\s*true/g,'logger:false').replaceAll('app.listen(','testListen(').replaceAll('process.on(','testOn(');
  src='const testListen=async()=>{};const testOn=()=>{};\n'+src+'\nexport {app};';
- const {app}=await import('data:text/javascript;base64,'+Buffer.from(src).toString('base64'));await app.ready();
+ const {app}=await import('data:text/javascript;base64,'+Buffer.from(src).toString('base64')+'#'+Date.now()+'-'+Math.random());await app.ready();
  const tokens={owner:app.jwt.sign({id:owner,role:'OWNER'}),manager:app.jwt.sign({id:manager,role:'MANAGER'})};
  const call=async(role,method,url,payload)=>{const r=await app.inject({method,url,payload,headers:{authorization:'Bearer '+tokens[role]}});return{status:r.statusCode,...r.json()}};
  return{db,query,app,call,owner,manager,source,target,request,equipment,close:async()=>{await app.close();await db.close();delete globalThis.__customerMergePool}};
@@ -73,5 +73,16 @@ test('F02: безопасное объединение клиента сохра
   assert.equal(Number((await s.query("SELECT count(*) value FROM request_history WHERE request_id=$1 AND action='CUSTOMER_MERGED'",[s.request])).rows[0].value),1);
   await assert.rejects(s.query('UPDATE customer_merge_audit SET reason=$1 WHERE id=$2',['Подмена',audit.id]),e=>e.code==='P2401');
   const restore=await s.call('owner','POST',`/api/v1/customers/${s.source}/restore`,{});assert.equal(restore.status,409);assert.equal(restore.error.code,'MERGED_CUSTOMER');
+ }finally{await s.close()}
+});
+
+test('F02: новая ссылка на объединённую карточку атомарно перенаправляется на основного клиента',async()=>{
+ const s=await setup();
+ try{
+  const merged=await s.call('owner','POST',`/api/v1/customers/${s.source}/merge`,{target_id:s.target,confirm_target_id:s.target,reason:'Конкурентный дубль'});
+  assert.equal(merged.status,200,JSON.stringify(merged));
+  const branch=Number((await s.query("SELECT id FROM branches WHERE code='KST'")).rows[0].id);
+  const inserted=(await s.query("INSERT INTO requests(number,customer_id,branch_id,status,complaint) VALUES('MERGE-LATE',$1,$2,'NEW','Поздний заказ') RETURNING customer_id",[s.source,branch])).rows[0];
+  assert.equal(Number(inserted.customer_id),s.target);
  }finally{await s.close()}
 });

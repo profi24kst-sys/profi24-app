@@ -74,7 +74,10 @@ export function installWebsiteIntake(app,pool,{secret=process.env.WEBSITE_INTAKE
       const branch=(await c.query('SELECT id,code,timezone FROM branches WHERE code=$1 AND active=true',[payload.branch_code])).rows[0];
       if(!branch){await c.query('ROLLBACK');return fail(reply,'BRANCH_NOT_FOUND','Филиал не найден или отключён',422)}
 
-      let customer=(await c.query('SELECT * FROM customers WHERE phone_norm=$1 AND deleted_at IS NULL ORDER BY id LIMIT 1 FOR UPDATE',[pn])).rows[0];
+      let customer=(await c.query(`SELECT c.* FROM customers c WHERE c.id=COALESCE(
+        (SELECT id FROM customers WHERE phone_norm=$1 AND deleted_at IS NULL ORDER BY id LIMIT 1),
+        (SELECT target_customer_id FROM customer_merge_aliases WHERE phone_norm=$1)
+      ) FOR UPDATE`,[pn])).rows[0];
       if(customer){
         customer=(await c.query(`UPDATE customers SET
           email=CASE WHEN NULLIF(email,'') IS NULL AND $1::text IS NOT NULL THEN $1 ELSE email END,

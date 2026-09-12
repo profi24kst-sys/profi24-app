@@ -81,6 +81,8 @@ app.post('/api/v1/customers/:id/merge',{preHandler:owner},async(req,reply)=>{
     location_source=CASE WHEN latitude IS NULL AND $4::numeric IS NOT NULL THEN $6 ELSE location_source END,
     location_verified_at=CASE WHEN latitude IS NULL AND $4::numeric IS NOT NULL THEN $7 ELSE location_verified_at END,
     updated_at=now() WHERE id=$8 RETURNING *`,[source.email,source.address,source.notes,source.latitude,source.longitude,source.location_source,source.location_verified_at,targetId])).rows[0];
+  await c.query(`INSERT INTO customer_merge_aliases(source_customer_id,target_customer_id,phone_norm) VALUES($1,$2,$3)`,[sourceId,targetId,source.phone_norm]);
+  await c.query(`UPDATE customer_merge_aliases SET target_customer_id=$1 WHERE target_customer_id=$2`,[targetId,sourceId]);
   await c.query(`INSERT INTO request_history(request_id,user_id,action,details)
     SELECT id,$1::int,'CUSTOMER_MERGED',jsonb_build_object('source_customer_id',$2::int,'target_customer_id',$3::int,'reason',$4::text)
     FROM requests WHERE customer_id=$2`,[req.user.id,sourceId,targetId,reason]);

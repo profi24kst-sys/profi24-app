@@ -156,3 +156,19 @@ test('website intake fails closed when integration secret is not configured',asy
     await db.close();
   }
 });
+
+test('website intake resolves every merged phone alias to the surviving customer',async()=>{
+  const {app,db,query,secret}=await harness();
+  try{
+    const target=Number((await query("INSERT INTO customers(name,phone,phone_norm) VALUES('Основной','+7 701 000 00 01','77010000001') RETURNING id")).rows[0].id);
+    const source=Number((await query("INSERT INTO customers(name,phone,phone_norm,deleted_at,delete_reason) VALUES('Архивный','+7 702 000 00 02',NULL,now(),$1) RETURNING id",[`MERGED_INTO:${target}:test`])).rows[0].id);
+    await query('INSERT INTO customer_merge_aliases(source_customer_id,target_customer_id,phone_norm) VALUES($1,$2,$3)',[source,target,'77020000002']);
+    const r=await app.inject({method:'POST',url:'/api/v1/website-intake',payload:{...basePayload,phone:'+7 702 000 00 02'},headers:headers(secret,'site-merged-phone-001')});
+    assert.equal(r.statusCode,201,r.body);
+    assert.equal(Number(r.json().data.customer_id),target);
+    assert.equal(Number((await query('SELECT count(*) c FROM customers')).rows[0].c),2,'website must not recreate a merged customer');
+  }finally{
+    await app.close();
+    await db.close();
+  }
+});
