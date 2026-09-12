@@ -5,6 +5,7 @@ import {installSupplierPerformanceAnalytics,resolveSupplierPerformanceBranchIds}
 import {installEngineerCapacityAnalytics,resolveEngineerCapacityBranchIds} from './engineer-capacity-analytics.js';
 import {installEngineerRoutePlanning,resolveEngineerRouteBranchIds} from './engineer-route-planning.js';
 import {installEngineerRouteExecution,resolveEngineerRouteExecutionBranchIds} from './engineer-route-execution.js';
+import {installFaultModelAnalytics} from './fault-model.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
@@ -26,6 +27,7 @@ await q('ALTER TABLE requests ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ');
 
 const auth=async(req,reply)=>{if(!await authenticate(req,reply,pool))return;};
 const owner=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(req.user.role!=='OWNER')return fail(reply,'FORBIDDEN','Раздел аналитики доступен владельцу',403)};
+const analyticsView=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,PERMISSIONS.ANALYTICS_VIEW))return fail(reply,'FORBIDDEN','Недостаточно прав для аналитики',403)};
 const warehouseView=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,PERMISSIONS.WAREHOUSE_VIEW))return fail(reply,'FORBIDDEN','Недостаточно прав для аналитики склада',403)};
 const procurementView=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,PERMISSIONS.PROCUREMENT_VIEW))return fail(reply,'FORBIDDEN','Недостаточно прав для аналитики поставщиков',403)};
 const operationsView=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,PERMISSIONS.OPERATIONS_MANAGE))return fail(reply,'FORBIDDEN','Недостаточно прав для диспетчеризации',403)};
@@ -38,7 +40,8 @@ installSupplierPerformanceAnalytics(app,pool,{procurementView,branchIds:resolveS
 installEngineerCapacityAnalytics(app,pool,{operationsView,branchIds:resolveEngineerCapacityBranchIds});
 installEngineerRoutePlanning(app,pool,{operationsView,routeView,branchIdsResolver:resolveEngineerRouteBranchIds});
 installEngineerRouteExecution(app,pool,{operationsView,routeView,branchIdsResolver:resolveEngineerRouteExecutionBranchIds});
-app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'profi24-analytics',version:'2.5-route-execution'}});
+await installFaultModelAnalytics(app,pool,{preHandler:analyticsView});
+app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'profi24-analytics',version:'2.6-fault-models'}});
 
 app.get('/api/v1/dashboard',{preHandler:owner},async req=>{
  const[s,e]=range(req.query?.month);

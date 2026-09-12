@@ -126,6 +126,7 @@ jobs:
             warehouse-stock-analytics-regression.cjs
             warehouse-inventory-regression.cjs
             knowledge-base-regression.cjs
+            fault-model-analytics-regression.cjs
           )
           for script in "${scripts[@]}"; do
             echo "===== browser acceptance: $script ====="
