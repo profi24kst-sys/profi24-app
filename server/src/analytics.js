@@ -6,6 +6,7 @@ import {installEngineerCapacityAnalytics,resolveEngineerCapacityBranchIds} from 
 import {installEngineerRoutePlanning,resolveEngineerRouteBranchIds} from './engineer-route-planning.js';
 import {installEngineerRouteExecution,resolveEngineerRouteExecutionBranchIds} from './engineer-route-execution.js';
 import {installFaultModelAnalytics} from './fault-model.js';
+import {installSeasonalLoadForecast} from './seasonal-load-forecast.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
@@ -41,7 +42,8 @@ installEngineerCapacityAnalytics(app,pool,{operationsView,branchIds:resolveEngin
 installEngineerRoutePlanning(app,pool,{operationsView,routeView,branchIdsResolver:resolveEngineerRouteBranchIds});
 installEngineerRouteExecution(app,pool,{operationsView,routeView,branchIdsResolver:resolveEngineerRouteExecutionBranchIds});
 await installFaultModelAnalytics(app,pool,{preHandler:analyticsView});
-app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'profi24-analytics',version:'2.6-fault-models'}});
+installSeasonalLoadForecast(app,pool,{preHandler:analyticsView});
+app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'profi24-analytics',version:'2.7-seasonal-forecast'}});
 
 app.get('/api/v1/dashboard',{preHandler:owner},async req=>{
  const[s,e]=range(req.query?.month);
