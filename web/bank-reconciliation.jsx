@@ -4,8 +4,9 @@ import {financeApi,financeMoney as money,financeDate} from './finance-client.js'
 const aliases={external_id:['external_id','id','номер','ид'],occurred_at:['occurred_at','date','дата'],type:['type','тип','направление'],amount:['amount','сумма'],document_reference:['document_reference','reference','документ','референс'],counterparty:['counterparty','контрагент'],purpose:['purpose','назначение','описание']};
 const norm=s=>String(s||'').trim().toLowerCase().replace(/\s+/g,'_');
 function split(line,delimiter){const out=[];let value='',quoted=false;for(let i=0;i<line.length;i++){const ch=line[i];if(ch==='"'){if(quoted&&line[i+1]==='"'){value+='"';i++}else quoted=!quoted}else if(ch===delimiter&&!quoted){out.push(value.trim());value=''}else value+=ch}out.push(value.trim());return out}
+function records(text){const out=[];let row='',quoted=false;const source=String(text||'').replace(/^\uFEFF/,'');for(let i=0;i<source.length;i++){const ch=source[i];if(ch==='"'){row+=ch;if(quoted&&source[i+1]==='"'){row+=source[++i]}else quoted=!quoted}else if((ch==='\n'||ch==='\r')&&!quoted){if(ch==='\r'&&source[i+1]==='\n')i++;if(row.trim())out.push(row);row=''}else row+=ch}if(quoted)throw Error('CSV содержит незакрытую кавычку');if(row.trim())out.push(row);return out}
 function parseCsv(text){
- const raw=String(text||'').replace(/^\uFEFF/,'').split(/\r?\n/).filter(x=>x.trim());if(raw.length<2)throw Error('В CSV должна быть строка заголовков и хотя бы одна операция');
+ const raw=records(text);if(raw.length<2)throw Error('В CSV должна быть строка заголовков и хотя бы одна операция');
  const delimiter=(raw[0].match(/;/g)||[]).length>=(raw[0].match(/,/g)||[]).length?';':',';const headers=split(raw[0],delimiter).map(norm),map={};
  for(const [key,names] of Object.entries(aliases)){const idx=headers.findIndex(h=>names.includes(h));if(idx>=0)map[key]=idx}
  for(const key of ['occurred_at','type','amount'])if(map[key]==null)throw Error(`Не найдена обязательная колонка: ${key}`);

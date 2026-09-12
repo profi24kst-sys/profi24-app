@@ -256,9 +256,22 @@ export async function financeRoutes(app,pool) {
   })}));
   app.post('/api/v1/bank-statements/:id/reconcile',{preHandler:owner},async req=>({data:await transaction(pool,req.user,async c=>{
     const s=(await c.query('SELECT * FROM finance_bank_statements WHERE id=$1 FOR UPDATE',[id(req.params.id,'Выписка')])).rows[0];if(!s)reject('Выписка не найдена','NOT_FOUND',404);if(s.status==='RECONCILED')return s;
-    const totals=(await c.query(`SELECT count(*) FILTER(WHERE matched_transaction_id IS NULL)::int unmatched,COALESCE(sum(CASE WHEN type='INCOME' THEN amount ELSE -amount END),0) movement FROM finance_bank_statement_lines WHERE statement_id=$1`,[s.id])).rows[0];
+    const totals=(await c.query(`SELECT count(*) FILTER(WHERE matched_transaction_id IS NULL)::int unmatched,
+      COALESCE(sum(CASE WHEN type='INCOME' THEN amount ELSE -amount END),0)::numeric movement,
+      ($2::numeric+COALESCE(sum(CASE WHEN type='INCOME' THEN amount ELSE -amount END),0)=$3::numeric) statement_balanced
+      FROM finance_bank_statement_lines WHERE statement_id=$1`,[s.id,s.opening_balance,s.closing_balance])).rows[0];
     if(totals.unmatched)reject(`Не сопоставлено строк: ${totals.unmatched}`,'UNMATCHED_LINES',409);
-    if(Number(s.opening_balance)+Number(totals.movement)!==Number(s.closing_balance))reject('Начальный остаток и движения не сходятся с конечным остатком выписки','STATEMENT_BALANCE_MISMATCH',409);
+    if(!totals.statement_balanced)reject('Начальный остаток и движения не сходятся с конечным остатком выписки','STATEMENT_BALANCE_MISMATCH',409);
+    const books=(await c.query(`SELECT
+      COALESCE(sum(CASE WHEN type='INCOME' THEN amount ELSE -amount END) FILTER(WHERE kind='OPENING' OR occurred_at<$2),0)::numeric opening,
+      COALESCE(sum(CASE WHEN type='INCOME' THEN amount ELSE -amount END) FILTER(WHERE kind='OPENING' OR occurred_at<=$3),0)::numeric closing,
+      count(*) FILTER(WHERE kind<>'OPENING' AND occurred_at BETWEEN $2 AND $3 AND NOT EXISTS(
+        SELECT 1 FROM finance_bank_statement_lines l WHERE l.statement_id=$4 AND l.matched_transaction_id=finance_transactions.id
+      ))::int unmatched_book
+      FROM finance_transactions WHERE account_id=$1`,[s.account_id,s.period_start,s.period_end,s.id])).rows[0];
+    if(books.unmatched_book)reject(`В CRM есть банковские операции, отсутствующие в выписке: ${books.unmatched_book}`,'UNMATCHED_BOOK_TRANSACTIONS',409);
+    const bookMatches=(await c.query('SELECT $1::numeric=$2::numeric opening_matches,$3::numeric=$4::numeric closing_matches',[books.opening,s.opening_balance,books.closing,s.closing_balance])).rows[0];
+    if(!bookMatches.opening_matches||!bookMatches.closing_matches)reject('Остатки банковской выписки не совпадают с денежной книгой CRM','BOOK_BALANCE_MISMATCH',409);
     const out=(await c.query("UPDATE finance_bank_statements SET status='RECONCILED',reconciled_by=$1,reconciled_at=clock_timestamp() WHERE id=$2 RETURNING *",[req.user.id,s.id])).rows[0];
     await c.query(`INSERT INTO finance_audit_log(account_id,actor_id,actor_name,action,details) VALUES($1,$2,$3,'BANK_STATEMENT_RECONCILED',$4)`,[s.account_id,req.user.id,req.user.name,{statement_id:s.id,closing_balance:s.closing_balance}]);return out;
   })}));
