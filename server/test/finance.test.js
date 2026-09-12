@@ -121,6 +121,32 @@ test('Точный денежный ввод: не принимаем NaN, Infin
   assert.throws(()=>money('NaN'));assert.throws(()=>money('Infinity'));assert.throws(()=>money('1.001'));assert.throws(()=>money('-1'));assert.equal(money('-1',{signed:true}),'-1.00');assert.equal(money('0',{zero:true}),'0.00');assert.equal(today().length,10);
 });
 
+test('Банковская выписка сопоставляется с неизменяемыми операциями и закрывается без расхождений',async()=>{
+  const s=await setup();try{
+    const bank=await s.create('Расчётный счёт','BANK',100000);
+    const income=await s.api('POST','/api/v1/transactions',{account_id:bank,type:'INCOME',category:'OTHER_INCOME',amount:25000,occurred_at:'2025-09-10',comment:'Оплата по банку',document_reference:'BANK-101'});
+    const expense=await s.api('POST','/api/v1/transactions',{account_id:bank,type:'EXPENSE',category:'RENT',amount:10000,occurred_at:'2025-09-11',comment:'Аренда по банку',document_reference:'BANK-102'});
+    assert.equal(income.status,201);assert.equal(expense.status,201);
+    const imported=await s.api('POST','/api/v1/bank-statements',{account_id:bank,statement_reference:'KASPI-SEP-1',period_start:'2025-09-01',period_end:'2025-09-30',opening_balance:100000,closing_balance:115000,lines:[
+      {external_id:'line-1',occurred_at:'2025-09-10',type:'INCOME',amount:25000,document_reference:'BANK-101',purpose:'Оплата'},
+      {external_id:'line-2',occurred_at:'2025-09-11',type:'EXPENSE',amount:10000,document_reference:'BANK-102',purpose:'Аренда'}
+    ]});
+    assert.equal(imported.status,201,JSON.stringify(imported));
+    let detail=(await s.api('GET',`/api/v1/bank-statements/${imported.data.id}`)).data;
+    const candidates=await s.api('GET',`/api/v1/bank-statements/${imported.data.id}/lines/${detail.lines[0].id}/candidates`);
+    assert.equal(candidates.status,200);assert.equal(candidates.data[0].match_score,120);
+    for(const line of detail.lines){const transaction=line.type==='INCOME'?income.data:expense.data;const matched=await s.api('POST',`/api/v1/bank-statements/${imported.data.id}/lines/${line.id}/match`,{transaction_id:transaction.id});assert.equal(matched.status,200,JSON.stringify(matched));}
+    const corrected=await s.api('POST',`/api/v1/bank-statements/${imported.data.id}/lines/${detail.lines[0].id}/unmatch`,{reason:'Проверка исправления'});assert.equal(corrected.status,200);assert.equal(corrected.data.matched_transaction_id,null);
+    assert.equal((await s.api('POST',`/api/v1/bank-statements/${imported.data.id}/reconcile`,{})).error.code,'UNMATCHED_LINES');
+    assert.equal((await s.api('POST',`/api/v1/bank-statements/${imported.data.id}/lines/${detail.lines[0].id}/match`,{transaction_id:income.data.id})).status,200);
+    const closed=await s.api('POST',`/api/v1/bank-statements/${imported.data.id}/reconcile`,{});assert.equal(closed.status,200,JSON.stringify(closed));assert.equal(closed.data.status,'RECONCILED');
+    detail=(await s.api('GET',`/api/v1/bank-statements/${imported.data.id}`)).data;assert.ok(detail.lines.every(x=>x.matched_transaction_id));
+    await assert.rejects(s.query('UPDATE finance_bank_statement_lines SET purpose=$1 WHERE statement_id=$2',['Подмена',imported.data.id]),/неизменяем/i);
+    const audit=(await s.query("SELECT action FROM finance_audit_log WHERE action LIKE 'BANK_%' ORDER BY id")).rows.map(x=>x.action);
+    assert.deepEqual(audit,['BANK_STATEMENT_IMPORTED','BANK_LINE_MATCHED','BANK_LINE_MATCHED','BANK_LINE_UNMATCHED','BANK_LINE_MATCHED','BANK_STATEMENT_RECONCILED']);
+  }finally{await s.close();}
+});
+
 test('Аудит счетов, пример 319250, роли, переводы, сторно, покупки и оплаты',async()=>{
   const s=await setup();try{
     const cash=await s.create('Касса','CASH',300000),advance=await s.create('Подотчёт Сергея','ADVANCE',0,2);

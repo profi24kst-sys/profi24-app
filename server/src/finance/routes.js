@@ -196,6 +196,72 @@ export async function financeRoutes(app,pool) {
       return outputs[0];
     });return reply.code(201).send({data:result});
   });
+  app.get('/api/v1/bank-statements',{preHandler:owner},async req=>{
+    const account=req.query?.account_id?id(req.query.account_id,'Счёт'):null;
+    return{data:(await q(`SELECT s.*,a.name account_name,u.name created_by_name,ru.name reconciled_by_name,
+      count(l.id)::int line_count,count(l.id) FILTER(WHERE l.matched_transaction_id IS NULL)::int unmatched_count
+      FROM finance_bank_statements s JOIN finance_accounts a ON a.id=s.account_id
+      LEFT JOIN finance_bank_statement_lines l ON l.statement_id=s.id LEFT JOIN users u ON u.id=s.created_by LEFT JOIN users ru ON ru.id=s.reconciled_by
+      WHERE ($1::int IS NULL OR s.account_id=$1) GROUP BY s.id,a.name,u.name,ru.name ORDER BY s.period_end DESC,s.id DESC`,[account])).rows};
+  });
+  app.post('/api/v1/bank-statements',{preHandler:owner},async(req,reply)=>{
+    const b=req.body||{},lines=Array.isArray(b.lines)?b.lines:[];
+    if(!lines.length||lines.length>5000)reject('Выписка должна содержать от 1 до 5000 строк');
+    const result=await transaction(pool,req.user,async c=>{
+      const [account]=await lockAccounts(c,[b.account_id],req.user,{active:false});
+      if(account.type!=='BANK')reject('Сверка выписки доступна только для банковского счёта','BANK_ACCOUNT_REQUIRED',422);
+      const start=date(b.period_start),end=date(b.period_end);if(end<start)reject('Дата окончания выписки раньше начала');
+      const statement=(await c.query(`INSERT INTO finance_bank_statements(account_id,statement_reference,period_start,period_end,opening_balance,closing_balance,created_by)
+        VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`,[account.id,text(b.statement_reference,'Номер выписки',200),start,end,money(b.opening_balance,{signed:true,zero:true}),money(b.closing_balance,{signed:true,zero:true}),req.user.id])).rows[0];
+      for(const [index,line] of lines.entries()){
+        const occurred=date(line.occurred_at);if(occurred<start||occurred>end)reject(`Строка ${index+1}: дата вне периода выписки`);
+        if(!['INCOME','EXPENSE'].includes(line.type))reject(`Строка ${index+1}: укажите приход или расход`);
+        await c.query(`INSERT INTO finance_bank_statement_lines(statement_id,external_id,occurred_at,type,amount,document_reference,counterparty,purpose)
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,[statement.id,text(line.external_id||String(index+1),'ID строки',200),occurred,line.type,money(line.amount),String(line.document_reference||'').slice(0,200)||null,String(line.counterparty||'').slice(0,300)||null,String(line.purpose||'').slice(0,2000)]);
+      }
+      await c.query(`INSERT INTO finance_audit_log(account_id,actor_id,actor_name,action,details) VALUES($1,$2,$3,'BANK_STATEMENT_IMPORTED',$4)`,[account.id,req.user.id,req.user.name,{statement_id:statement.id,statement_reference:statement.statement_reference,line_count:lines.length}]);
+      return statement;
+    });return reply.code(201).send({data:result});
+  });
+  app.get('/api/v1/bank-statements/:id',{preHandler:owner},async req=>{
+    const statement=(await q(`SELECT s.*,a.name account_name FROM finance_bank_statements s JOIN finance_accounts a ON a.id=s.account_id WHERE s.id=$1`,[id(req.params.id,'Выписка')])).rows[0];
+    if(!statement)reject('Выписка не найдена','NOT_FOUND',404);
+    const lines=(await q(`SELECT l.*,f.kind transaction_kind,f.comment transaction_comment,f.document_reference transaction_reference
+      FROM finance_bank_statement_lines l LEFT JOIN finance_transactions f ON f.id=l.matched_transaction_id WHERE l.statement_id=$1 ORDER BY l.occurred_at,l.id`,[statement.id])).rows;
+    return{data:{...statement,lines}};
+  });
+  app.get('/api/v1/bank-statements/:statementId/lines/:lineId/candidates',{preHandler:owner},async req=>{
+    const line=(await q(`SELECT l.*,s.account_id,s.status FROM finance_bank_statement_lines l JOIN finance_bank_statements s ON s.id=l.statement_id WHERE l.id=$1 AND s.id=$2`,[id(req.params.lineId),id(req.params.statementId)])).rows[0];
+    if(!line)reject('Строка выписки не найдена','NOT_FOUND',404);
+    return{data:(await q(`SELECT f.*,r.number request_number,
+      (CASE WHEN f.occurred_at=$4 THEN 100 ELSE 70 END + CASE WHEN NULLIF($5,'') IS NOT NULL AND f.document_reference=$5 THEN 20 ELSE 0 END)::int match_score
+      FROM finance_transactions f LEFT JOIN requests r ON r.id=f.request_id LEFT JOIN finance_bank_statement_lines used ON used.matched_transaction_id=f.id
+      WHERE f.account_id=$1 AND f.type=$2 AND f.amount=$3 AND f.occurred_at BETWEEN $4::date-2 AND $4::date+2 AND used.id IS NULL
+      ORDER BY match_score DESC,f.id DESC LIMIT 20`,[line.account_id,line.type,line.amount,line.occurred_at,line.document_reference||''])).rows};
+  });
+  app.post('/api/v1/bank-statements/:statementId/lines/:lineId/match',{preHandler:owner},async req=>({data:await transaction(pool,req.user,async c=>{
+    const line=(await c.query(`SELECT l.*,s.account_id,s.status FROM finance_bank_statement_lines l JOIN finance_bank_statements s ON s.id=l.statement_id WHERE l.id=$1 AND s.id=$2 FOR UPDATE OF l,s`,[id(req.params.lineId),id(req.params.statementId)])).rows[0];
+    if(!line)reject('Строка выписки не найдена','NOT_FOUND',404);if(line.status!=='DRAFT')reject('Выписка уже сверена','STATEMENT_CLOSED',409);
+    const tx=(await c.query('SELECT * FROM finance_transactions WHERE id=$1',[id(req.body?.transaction_id,'Операция')])).rows[0];
+    const dayDiff=tx?Math.abs((new Date(tx.occurred_at)-new Date(line.occurred_at))/86400000):Infinity;
+    if(!tx||Number(tx.account_id)!==Number(line.account_id)||tx.type!==line.type||Number(tx.amount)!==Number(line.amount)||dayDiff>2)reject('Операция не совпадает со счётом, направлением, суммой или допустимой датой','MATCH_MISMATCH',409);
+    const out=(await c.query('UPDATE finance_bank_statement_lines SET matched_transaction_id=$1,matched_by=$2,matched_at=clock_timestamp() WHERE id=$3 RETURNING *',[tx.id,req.user.id,line.id])).rows[0];
+    await c.query(`INSERT INTO finance_audit_log(account_id,transaction_id,actor_id,actor_name,action,details) VALUES($1,$2,$3,$4,'BANK_LINE_MATCHED',$5)`,[line.account_id,tx.id,req.user.id,req.user.name,{statement_id:line.statement_id,line_id:line.id}]);return out;
+  })}));
+  app.post('/api/v1/bank-statements/:statementId/lines/:lineId/unmatch',{preHandler:owner},async req=>({data:await transaction(pool,req.user,async c=>{
+    const line=(await c.query(`SELECT l.*,s.account_id,s.status FROM finance_bank_statement_lines l JOIN finance_bank_statements s ON s.id=l.statement_id WHERE l.id=$1 AND s.id=$2 FOR UPDATE OF l,s`,[id(req.params.lineId),id(req.params.statementId)])).rows[0];
+    if(!line)reject('Строка выписки не найдена','NOT_FOUND',404);if(line.status!=='DRAFT')reject('Выписка уже сверена','STATEMENT_CLOSED',409);if(!line.matched_transaction_id)return line;
+    const out=(await c.query('UPDATE finance_bank_statement_lines SET matched_transaction_id=NULL,matched_by=NULL,matched_at=NULL WHERE id=$1 RETURNING *',[line.id])).rows[0];
+    await c.query(`INSERT INTO finance_audit_log(account_id,transaction_id,actor_id,actor_name,action,details) VALUES($1,$2,$3,$4,'BANK_LINE_UNMATCHED',$5)`,[line.account_id,line.matched_transaction_id,req.user.id,req.user.name,{statement_id:line.statement_id,line_id:line.id,reason:String(req.body?.reason||'Исправление сопоставления').slice(0,500)}]);return out;
+  })}));
+  app.post('/api/v1/bank-statements/:id/reconcile',{preHandler:owner},async req=>({data:await transaction(pool,req.user,async c=>{
+    const s=(await c.query('SELECT * FROM finance_bank_statements WHERE id=$1 FOR UPDATE',[id(req.params.id,'Выписка')])).rows[0];if(!s)reject('Выписка не найдена','NOT_FOUND',404);if(s.status==='RECONCILED')return s;
+    const totals=(await c.query(`SELECT count(*) FILTER(WHERE matched_transaction_id IS NULL)::int unmatched,COALESCE(sum(CASE WHEN type='INCOME' THEN amount ELSE -amount END),0) movement FROM finance_bank_statement_lines WHERE statement_id=$1`,[s.id])).rows[0];
+    if(totals.unmatched)reject(`Не сопоставлено строк: ${totals.unmatched}`,'UNMATCHED_LINES',409);
+    if(Number(s.opening_balance)+Number(totals.movement)!==Number(s.closing_balance))reject('Начальный остаток и движения не сходятся с конечным остатком выписки','STATEMENT_BALANCE_MISMATCH',409);
+    const out=(await c.query("UPDATE finance_bank_statements SET status='RECONCILED',reconciled_by=$1,reconciled_at=clock_timestamp() WHERE id=$2 RETURNING *",[req.user.id,s.id])).rows[0];
+    await c.query(`INSERT INTO finance_audit_log(account_id,actor_id,actor_name,action,details) VALUES($1,$2,$3,'BANK_STATEMENT_RECONCILED',$4)`,[s.account_id,req.user.id,req.user.name,{statement_id:s.id,closing_balance:s.closing_balance}]);return out;
+  })}));
   const noDelete=()=>reject('Удаление денежных операций запрещено. Собственник или бухгалтер может оформить сторно с причиной.','IMMUTABLE',409);
   app.delete('/api/v1/transactions/:id',{preHandler:owner},noDelete);
   app.delete('/api/v1/requests/:requestId/expenses/:id',{preHandler:auth},noDelete);
