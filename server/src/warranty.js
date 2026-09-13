@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import pg from 'pg';
 import crypto from 'crypto';
+import {installDocumentVersionSchema} from './document-version-schema.js';
 
 const app = Fastify({ logger: true });
 await app.register(cors, { origin: true });
@@ -23,9 +24,17 @@ for (const s of [
     created_at TIMESTAMPTZ DEFAULT now()
   )`,
   `CREATE INDEX IF NOT EXISTS idx_warranty_cards_token ON warranty_cards(token)`,
+  `ALTER TABLE warranty_cards ADD COLUMN IF NOT EXISTS snapshot JSONB`,
+  `ALTER TABLE warranty_cards ADD COLUMN IF NOT EXISTS content_hash TEXT`,
+  `CREATE OR REPLACE FUNCTION warranty_card_immutable() RETURNS trigger AS $$ BEGIN
+    RAISE EXCEPTION 'Выданный гарантийный талон нельзя изменять или удалять' USING ERRCODE='P2401';
+  END $$ LANGUAGE plpgsql`,
+  `DROP TRIGGER IF EXISTS trg_warranty_card_immutable ON warranty_cards`,
+  `CREATE TRIGGER trg_warranty_card_immutable BEFORE UPDATE OR DELETE ON warranty_cards FOR EACH ROW EXECUTE FUNCTION warranty_card_immutable()`,
   `CREATE TABLE IF NOT EXISTS warranty_state(id INT PRIMARY KEY DEFAULT 1,last_history_id BIGINT NOT NULL DEFAULT 0,updated_at TIMESTAMPTZ DEFAULT now())`,
   `INSERT INTO warranty_state(id,last_history_id) VALUES(1,0) ON CONFLICT(id) DO NOTHING`
 ]) await q(s);
+await installDocumentVersionSchema(pool);
 
 async function warrantyDays(requestId) {
   try {
@@ -41,20 +50,28 @@ async function warrantyDays(requestId) {
 async function issue(requestId) {
   const r = (await q(`SELECT r.*,c.name customer_name,c.phone,c.address,e.category,e.brand,e.model,e.serial_number
     FROM requests r JOIN customers c ON c.id=r.customer_id
-    LEFT JOIN equipment e ON e.id=r.equipment_id WHERE r.id=$1 AND r.deleted_at IS NULL`, [requestId])).rows[0];
+    LEFT JOIN equipment e ON e.id=r.equipment_id LEFT JOIN users eng ON eng.id=r.engineer_id
+    WHERE r.id=$1 AND r.deleted_at IS NULL`, [requestId])).rows[0];
   if (!r || r.status !== 'CLOSED' || !r.closed_at || !r.warranty_until || Number(r.paid) + 0.01 < Number(r.total)) return null;
 
   let card = (await q('SELECT * FROM warranty_cards WHERE request_id=$1', [requestId])).rows[0];
   if (!card) {
     const days = Math.max(1,Math.ceil((new Date(r.warranty_until)-new Date(r.closed_at))/86400000));
     const token = crypto.randomBytes(24).toString('hex');
-    card = (await q(`INSERT INTO warranty_cards(request_id,token,warranty_days,warranty_until)
-      VALUES($1,$2,$3,$4) ON CONFLICT(request_id) DO UPDATE SET warranty_until=EXCLUDED.warranty_until,warranty_days=EXCLUDED.warranty_days RETURNING *`, [requestId, token, days, r.warranty_until])).rows[0];
-    const no = `WARRANTY-${requestId}-${Date.now().toString().slice(-8)}`;
-    await q(`INSERT INTO generated_documents(request_id,document_type,document_number)
-      SELECT $1,'WARRANTY',$2 WHERE NOT EXISTS(SELECT 1 FROM generated_documents WHERE request_id=$1 AND document_type='WARRANTY')`, [requestId, no]);
+    const [works,parts]=await Promise.all([
+      q('SELECT id,name,qty,unit_price,direct_cost,performed_by FROM request_works WHERE request_id=$1 ORDER BY id',[requestId]),
+      q("SELECT id,name,qty,sale_price,purchase_price,status FROM parts WHERE request_id=$1 AND status<>'CANCELLED' ORDER BY id",[requestId])
+    ]);
+    const snapshot={request:{id:r.id,number:r.number,customer_name:r.customer_name,phone:r.phone,address:r.address,category:r.category,brand:r.brand,model:r.model,serial_number:r.serial_number,engineer_id:r.engineer_id,engineer_name:r.engineer_name,total:r.total,paid:r.paid,closed_at:r.closed_at,warranty_until:r.warranty_until},works:works.rows,parts:parts.rows,warranty_days:days};
+    const contentHash=crypto.createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
+    card = (await q(`INSERT INTO warranty_cards(request_id,token,warranty_days,warranty_until,snapshot,content_hash)
+      VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(request_id) DO NOTHING RETURNING *`, [requestId, token, days, r.warranty_until,snapshot,contentHash])).rows[0];
+    if(!card)card=(await q('SELECT * FROM warranty_cards WHERE request_id=$1',[requestId])).rows[0];
+    const no = `WARRANTY-${requestId}-V01`;
+    await q(`INSERT INTO generated_documents(request_id,document_type,document_number,version,snapshot,content_hash)
+      SELECT $1,'WARRANTY',$2,1,$3,$4 WHERE NOT EXISTS(SELECT 1 FROM generated_documents WHERE request_id=$1 AND document_type='WARRANTY')`, [requestId, no,snapshot,contentHash]);
     await q(`INSERT INTO request_history(request_id,action,details)
-      VALUES($1,'WARRANTY_ISSUED',$2)`, [requestId, { warranty_days: days, warranty_until: card.warranty_until, document_number: no }]);
+      VALUES($1,'WARRANTY_ISSUED',$2)`, [requestId, { warranty_days: days, warranty_until: card.warranty_until, document_number: no,content_hash:contentHash }]);
   }
 
   const url = `${baseUrl()}/warranty/${card.token}`;
@@ -91,10 +108,8 @@ app.get('/public/warranty/:token', async (req, reply) => {
     LEFT JOIN equipment e ON e.id=r.equipment_id LEFT JOIN users eng ON eng.id=r.engineer_id
     WHERE r.id=$1 AND r.deleted_at IS NULL AND r.status='CLOSED' AND r.closed_at IS NOT NULL AND r.paid+0.01>=r.total`, [card.request_id])).rows[0];
   if (!r) return reply.code(404).send({ data: null, error: { code: 'WARRANTY_INACTIVE', message: 'Гарантийный талон недействителен' } });
-  const [works, parts] = await Promise.all([
-    q('SELECT name,qty,unit_price FROM request_works WHERE request_id=$1 ORDER BY id', [card.request_id]),
-    q("SELECT name,qty,sale_price FROM parts WHERE request_id=$1 AND status<>'CANCELLED' ORDER BY id", [card.request_id])
-  ]);
+  if(card.snapshot?.request)return {data:{...card,...card.snapshot.request,works:card.snapshot.works||[],parts:card.snapshot.parts||[]}};
+  const [works, parts] = await Promise.all([q('SELECT name,qty,unit_price FROM request_works WHERE request_id=$1 ORDER BY id', [card.request_id]),q("SELECT name,qty,sale_price FROM parts WHERE request_id=$1 AND status<>'CANCELLED' ORDER BY id", [card.request_id])]);
   return { data: { ...card, ...r, works: works.rows, parts: parts.rows } };
 });
 

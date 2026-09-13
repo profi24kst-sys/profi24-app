@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import {ATTACHMENT_KINDS,isAttachmentKind,normalizeAttachmentKind} from '../src/attachment-policy.js';
+import './document-versioning.test.js';
 
 const webFiles=[
   new URL('../../web/documents-addon.jsx',import.meta.url),
