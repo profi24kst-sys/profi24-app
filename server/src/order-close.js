@@ -1,3 +1,5 @@
+import {insertDocumentVersion} from './document-version-schema.js';
+
 export class OrderCloseError extends Error {
   constructor(message,code='CLOSE_BLOCKED',statusCode=409){super(message);Object.assign(this,{code,statusCode});}
 }
@@ -31,12 +33,21 @@ export async function closeOrder(c,{requestId,userId}){
   const closed=(await c.query(`UPDATE requests SET status='CLOSED',closed_at=now(),warranty_until=CURRENT_DATE+$1::int,updated_at=now()
     WHERE id=$2 AND status='PAYMENT_REQUIRED' AND deleted_at IS NULL RETURNING closed_at,warranty_until`,[warranty,request.id])).rows[0];
   if(!closed)throw new OrderCloseError('Статус заказа изменился. Обновите данные','STATE_CONFLICT');
+  const [details,works,parts,signatures]=await Promise.all([
+    c.query(`SELECT r.*,cu.name customer_name,cu.phone,cu.address,e.category,e.brand,e.model,e.serial_number,eng.name engineer_name
+      FROM requests r JOIN customers cu ON cu.id=r.customer_id LEFT JOIN equipment e ON e.id=r.equipment_id
+      LEFT JOIN users eng ON eng.id=r.engineer_id WHERE r.id=$1`,[request.id]),
+    c.query('SELECT id,name,qty,unit_price,direct_cost,performed_by FROM request_works WHERE request_id=$1 ORDER BY id',[request.id]),
+    c.query("SELECT id,name,qty,sale_price,purchase_price,status FROM parts WHERE request_id=$1 AND status<>'CANCELLED' ORDER BY id",[request.id]),
+    c.query('SELECT id,signer_type,signer_name,signature_data,created_at FROM request_signatures WHERE request_id=$1 ORDER BY id',[request.id])
+  ]);
+  const snapshot={request:details.rows[0],works:works.rows,parts:parts.rows,signatures:signatures.rows};
   const documents=[];
-  for(const [index,type] of ['COMPLETION_ACT','WARRANTY'].entries()){
-    const number=`${type}-${request.id}-${Date.now().toString().slice(-8)}-${index+1}`;
-    const row=(await c.query(`INSERT INTO generated_documents(request_id,document_type,document_number,created_by)
-      SELECT $1,$2,$3,$4 WHERE NOT EXISTS(SELECT 1 FROM generated_documents WHERE request_id=$1 AND document_type=$2) RETURNING document_type`,[request.id,type,number,userId])).rows[0];
-    if(row)documents.push(row.document_type);
+  for(const type of ['COMPLETION_ACT','WARRANTY']){
+    const existing=(await c.query('SELECT id FROM generated_documents WHERE request_id=$1 AND document_type=$2 LIMIT 1',[request.id,type])).rows[0];
+    if(existing)continue;
+    const row=await insertDocumentVersion(c,{requestId:request.id,documentType:type,snapshot,createdBy:userId});
+    documents.push(row.document_type);
   }
   await c.query(`INSERT INTO request_history(request_id,user_id,action,details) VALUES($1,$2,'REQUEST_CLOSED',$3)`,[request.id,userId,{warranty_days:warranty,paid:request.paid,total:request.total,checks:{repair:true,test:true,after_photos:counts.after_photos,client_signature:true},documents}]);
   return {status:'CLOSED',closed_at:closed.closed_at,warranty_days:warranty,warranty_until:closed.warranty_until,documents};

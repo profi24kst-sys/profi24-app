@@ -1,4 +1,4 @@
-import {authenticate,installOrderAccess,protectOrderTables} from './access.js';
+import {authenticate,installOrderAccess,protectOrderTables,requireOrder} from './access.js';
 import {ATTACHMENT_KIND_SET,normalizeAttachmentKind} from './attachment-policy.js';
 import {contentDispositionAttachment,decodeDataUrl,inspectUpload,fileSecurityError} from './file-security.js';
 import Fastify from 'fastify';
@@ -10,7 +10,7 @@ import pg from 'pg';
 import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
-import {installDocumentVersionSchema} from './document-version-schema.js';
+import {installDocumentVersionSchema,insertDocumentVersion} from './document-version-schema.js';
 
 const app=Fastify({logger:true,bodyLimit:12*1024*1024});
 await app.register(cors,{origin:(process.env.CORS_ORIGIN||'http://localhost:5173').split(',').map(x=>x.trim()),credentials:true});
@@ -40,7 +40,6 @@ async function requestAccess(req,r,id){
   return true;
 }
 const hist=(id,u,a,d={})=>q('INSERT INTO request_history(request_id,user_id,action,details) VALUES($1,$2,$3,$4)',[id,u,a,d]);
-const hashSnapshot=snapshot=>crypto.createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
 async function documentSnapshot(client,requestId){
   const x=(await client.query(`SELECT r.*,c.name customer_name,c.phone,c.address,e.category,e.brand,e.model,e.serial_number,eng.name engineer_name
     FROM requests r JOIN customers c ON c.id=r.customer_id LEFT JOIN equipment e ON e.id=r.equipment_id
@@ -171,7 +170,7 @@ app.get('/api/v1/documents/:id',async(req,r)=>{
   if(!await auth(req,r))return;
   const doc=(await q('SELECT * FROM generated_documents WHERE id=$1',[req.params.id])).rows[0];
   if(!doc)return fail(r,'NOT_FOUND','Документ не найден',404);
-  if(!await requestAccess(req,r,doc.request_id))return;
+  await requireOrder(pool,req.user,doc.request_id);
   return{data:doc};
 });
 
@@ -185,11 +184,8 @@ app.post('/api/v1/requests/:id/documents',async(req,r)=>{
     await client.query('SELECT id FROM requests WHERE id=$1 FOR UPDATE',[req.params.id]);
     const snapshot=await documentSnapshot(client,req.params.id);
     if(!snapshot){await client.query('ROLLBACK');return fail(r,'NOT_FOUND','Заказ не найден',404)}
-    const previous=(await client.query('SELECT id,version FROM generated_documents WHERE request_id=$1 AND document_type=$2 ORDER BY version DESC NULLS LAST,id DESC LIMIT 1',[req.params.id,type])).rows[0];
-    const version=Number(previous?.version||0)+1,no=`${type}-${req.params.id}-V${String(version).padStart(2,'0')}`,contentHash=hashSnapshot(snapshot);
-    const x=(await client.query(`INSERT INTO generated_documents(request_id,document_type,document_number,version,snapshot,content_hash,supersedes_id,created_by)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,[req.params.id,type,no,version,snapshot,contentHash,previous?.id||null,req.user.id])).rows[0];
-    await client.query('INSERT INTO request_history(request_id,user_id,action,details) VALUES($1,$2,$3,$4)',[req.params.id,req.user.id,'DOCUMENT_GENERATED',{document_id:x.id,document_type:type,document_number:no,version,content_hash:contentHash,supersedes_id:previous?.id||null}]);
+    const x=await insertDocumentVersion(client,{requestId:Number(req.params.id),documentType:type,snapshot,createdBy:req.user.id});
+    await client.query('INSERT INTO request_history(request_id,user_id,action,details) VALUES($1,$2,$3,$4)',[req.params.id,req.user.id,'DOCUMENT_GENERATED',{document_id:x.id,document_type:type,document_number:x.document_number,version:x.version,content_hash:x.content_hash,supersedes_id:x.supersedes_id}]);
     await client.query('COMMIT');
     return r.code(201).send({data:x});
   }catch(error){try{await client.query('ROLLBACK')}catch{}throw error}finally{client.release()}

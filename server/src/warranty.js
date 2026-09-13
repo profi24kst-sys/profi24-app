@@ -50,7 +50,8 @@ async function warrantyDays(requestId) {
 async function issue(requestId) {
   const r = (await q(`SELECT r.*,c.name customer_name,c.phone,c.address,e.category,e.brand,e.model,e.serial_number
     FROM requests r JOIN customers c ON c.id=r.customer_id
-    LEFT JOIN equipment e ON e.id=r.equipment_id WHERE r.id=$1 AND r.deleted_at IS NULL`, [requestId])).rows[0];
+    LEFT JOIN equipment e ON e.id=r.equipment_id LEFT JOIN users eng ON eng.id=r.engineer_id
+    WHERE r.id=$1 AND r.deleted_at IS NULL`, [requestId])).rows[0];
   if (!r || r.status !== 'CLOSED' || !r.closed_at || !r.warranty_until || Number(r.paid) + 0.01 < Number(r.total)) return null;
 
   let card = (await q('SELECT * FROM warranty_cards WHERE request_id=$1', [requestId])).rows[0];
@@ -61,7 +62,7 @@ async function issue(requestId) {
       q('SELECT id,name,qty,unit_price,direct_cost,performed_by FROM request_works WHERE request_id=$1 ORDER BY id',[requestId]),
       q("SELECT id,name,qty,sale_price,purchase_price,status FROM parts WHERE request_id=$1 AND status<>'CANCELLED' ORDER BY id",[requestId])
     ]);
-    const snapshot={request:{id:r.id,number:r.number,customer_name:r.customer_name,phone:r.phone,address:r.address,category:r.category,brand:r.brand,model:r.model,serial_number:r.serial_number,engineer_id:r.engineer_id,total:r.total,paid:r.paid,closed_at:r.closed_at,warranty_until:r.warranty_until},works:works.rows,parts:parts.rows,warranty_days:days};
+    const snapshot={request:{id:r.id,number:r.number,customer_name:r.customer_name,phone:r.phone,address:r.address,category:r.category,brand:r.brand,model:r.model,serial_number:r.serial_number,engineer_id:r.engineer_id,engineer_name:r.engineer_name,total:r.total,paid:r.paid,closed_at:r.closed_at,warranty_until:r.warranty_until},works:works.rows,parts:parts.rows,warranty_days:days};
     const contentHash=crypto.createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
     card = (await q(`INSERT INTO warranty_cards(request_id,token,warranty_days,warranty_until,snapshot,content_hash)
       VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(request_id) DO NOTHING RETURNING *`, [requestId, token, days, r.warranty_until,snapshot,contentHash])).rows[0];

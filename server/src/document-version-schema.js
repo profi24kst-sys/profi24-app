@@ -1,3 +1,5 @@
+import {createHash} from 'node:crypto';
+
 export const documentVersionStatements=[
   `ALTER TABLE generated_documents ADD COLUMN IF NOT EXISTS version INT`,
   `ALTER TABLE generated_documents ADD COLUMN IF NOT EXISTS snapshot JSONB`,
@@ -13,4 +15,14 @@ export const documentVersionStatements=[
 
 export async function installDocumentVersionSchema(db){
   for(const statement of documentVersionStatements)await db.query(statement);
+}
+
+export async function insertDocumentVersion(db,{requestId,documentType,snapshot,createdBy}){
+  const previous=(await db.query(`SELECT id,version FROM generated_documents
+    WHERE request_id=$1 AND document_type=$2 ORDER BY version DESC NULLS LAST,id DESC LIMIT 1`,[requestId,documentType])).rows[0];
+  const version=Number(previous?.version||0)+1;
+  const documentNumber=`${documentType}-${requestId}-V${String(version).padStart(2,'0')}`;
+  const contentHash=createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
+  return (await db.query(`INSERT INTO generated_documents(request_id,document_type,document_number,version,snapshot,content_hash,supersedes_id,created_by)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,[requestId,documentType,documentNumber,version,snapshot,contentHash,previous?.id||null,createdBy])).rows[0];
 }
