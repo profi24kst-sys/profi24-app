@@ -51,8 +51,13 @@ async function clickBase(page, label, expectedHeading) {
     const version = await page.evaluate(() => window.Profi24UI?.version || 'missing');
     const readyCount = await page.evaluate(() => window.__profi24ReadyCount || 0);
     console.log(`core_ui_version=${version} ready_events=${readyCount}`);
-    if (version !== '1.10.0') fail(`expected Core UI 1.10.0, got ${version}`);
+    if (version !== '1.11.0') fail(`expected Core UI 1.11.0, got ${version}`);
     if (readyCount > 3) fail(`core-ui-ready event storm detected: ${readyCount} events after login`);
+
+    const groupTitles = await page.locator('.coreNavGroupTitle').allTextContents();
+    for (const title of ['Работа','Клиенты','Склад и закупки','Команда','Финансы','Аналитика и управление']) {
+      if (!groupTitles.includes(title)) fail(`navigation group missing: ${title}`);
+    }
 
     await clickBase(page, 'Клиенты', 'Клиенты');
     await clickBase(page, 'Техника', 'Техника');
@@ -86,7 +91,19 @@ async function clickBase(page, label, expectedHeading) {
     await branches.waitFor({ state: 'visible', timeout: 8000 });
     await branches.click({ timeout: 6000 });
     await page.locator('.branchScreen h1').filter({ hasText: 'Филиалы' }).waitFor({ state: 'visible', timeout: 8000 });
+    if (!(await branches.evaluate(button => button.classList.contains('on')))) fail('active addon navigation item is not highlighted');
     console.log('addon_branches=ok');
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    const more = page.locator('aside nav .coreNavMore');
+    await more.waitFor({ state: 'visible', timeout: 6000 });
+    const primaryCount = await page.locator('aside nav button[data-core-mobile-primary="1"]:visible').count();
+    if (primaryCount < 3 || primaryCount > 4) fail(`unexpected mobile primary navigation count: ${primaryCount}`);
+    await more.click();
+    await page.locator('aside.coreMobileMenuOpen').waitFor({ state: 'visible', timeout: 6000 });
+    await page.locator('.coreNavGroupTitle').filter({ hasText: 'Склад и закупки' }).waitFor({ state: 'visible', timeout: 6000 });
+    await page.locator('aside nav button[data-core-nav-id="supplier-catalog"]').waitFor({ state: 'visible', timeout: 6000 });
+    console.log('mobile_more_navigation=ok');
 
     const finalReadyCount = await page.evaluate(() => window.__profi24ReadyCount || 0);
     if (finalReadyCount > 3) fail(`core-ui-ready event storm detected after reload: ${finalReadyCount}`);

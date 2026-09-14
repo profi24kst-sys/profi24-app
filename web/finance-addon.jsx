@@ -19,7 +19,7 @@ function App(){
   const [open,setOpen]=useState(false),[tab,setTab]=useState('accounts'),[month,setMonth]=useState(financeDate().slice(0,7)),[accountFilter,setAccountFilter]=useState(''),[page,setPage]=useState(1),[version,setVersion]=useState(0);
   const [accounts,setAccounts]=useState([]),[users,setUsers]=useState([]),[branches,setBranches]=useState([]),[ledger,setLedger]=useState(null),[pnl,setPnl]=useState(null),[audit,setAudit]=useState([]),[auditBefore,setAuditBefore]=useState(''),[modal,setModal]=useState(null),[error,setError]=useState(''),[busy,setBusy]=useState(false);
   const reload=()=>setVersion(v=>v+1),done=()=>{setModal(null);reload();};
-  useEffect(()=>{if(!view||!window.Profi24UI)return;return window.Profi24UI.registerNav({id:'finance',label:'Финансы',group:'finance',permission:P.FINANCE_VIEW,onClick:()=>{setOpen(true);reload();}});},[user?.id,user?.role,view]);
+  useEffect(()=>{if(!view||!window.Profi24UI)return;return window.Profi24UI.registerNav({id:'finance',label:'Денежные счета',group:'finance',permission:P.FINANCE_VIEW,onClick:()=>{setOpen(true);reload();}});},[user?.id,user?.role,view]);
   useEffect(()=>{setOpen(false);setAccounts([]);setLedger(null);setPnl(null);setUsers([]);setBranches([]);setAudit([]);setModal(null);setAccountFilter('');setTab('accounts');},[user?.id,user?.role]);
   useEffect(()=>{setPage(1);setAuditBefore('');},[month,accountFilter,tab]);
   useEffect(()=>{
