@@ -6,6 +6,7 @@ const BASE_URL = process.env.BASE_URL || 'http://127.0.0.1:5173';
 const EMAIL = process.env.E2E_EMAIL || 'browser-owner@test.invalid';
 const PASSWORD = process.env.E2E_PASSWORD || 'BrowserOwner2026Kst9';
 const artifacts = path.resolve(__dirname, 'artifacts');
+const routePaths = { 'Заказы':'/orders', 'Клиенты':'/customers', 'Техника':'/equipment', 'Задачи':'/tasks', 'Рекламации':'/complaints', 'Финансы':'/finance', 'Сотрудники':'/staff', 'Отчеты':'/reports' };
 fs.mkdirSync(artifacts, { recursive: true });
 
 function fail(message) { throw new Error(message); }
@@ -27,6 +28,8 @@ async function clickBase(page, label, expectedHeading) {
   console.log('click_target', label, JSON.stringify(stack));
   await button.click({ timeout: 6000 });
   await heading(page, expectedHeading);
+  const expectedPath=routePaths[expectedHeading];
+  if(expectedPath&&new URL(page.url()).pathname!==expectedPath)fail(`expected route ${expectedPath}, got ${new URL(page.url()).pathname}`);
 }
 
 (async () => {
@@ -49,6 +52,7 @@ async function clickBase(page, label, expectedHeading) {
     await page.getByRole('button', { name: 'Войти', exact: true }).click();
     await heading(page, 'Заказы');
     await page.waitForFunction(()=>document.title==='Заказы — PROFI24');
+    if(new URL(page.url()).pathname!=='/orders')fail(`login route was not normalized: ${page.url()}`);
     await page.waitForTimeout(1200);
 
     const version = await page.evaluate(() => window.Profi24UI?.version || 'missing');
@@ -64,7 +68,13 @@ async function clickBase(page, label, expectedHeading) {
 
     await clickBase(page, 'Клиенты', 'Клиенты');
     if(await page.title()!=='Клиенты — PROFI24')fail(`unexpected clients title: ${await page.title()}`);
+    await page.reload({waitUntil:'domcontentloaded',timeout:30000});
+    await heading(page,'Клиенты');
+    if(new URL(page.url()).pathname!=='/customers')fail('clients route was not preserved after reload');
     await clickBase(page, 'Техника', 'Техника');
+    await page.evaluate(()=>history.back());await page.waitForFunction(()=>location.pathname==='/customers');await heading(page,'Клиенты');
+    await page.evaluate(()=>history.forward());await page.waitForFunction(()=>location.pathname==='/equipment');await heading(page,'Техника');
+    console.log('spa_history_navigation=ok');
     await clickBase(page, 'Финансы', 'Финансы');
     const financeGross=await page.locator('main .metric').filter({hasText:'Валовая прибыль'}).first().locator('b').textContent();
     await clickBase(page, 'Отчеты', 'Отчеты');
