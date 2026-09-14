@@ -156,8 +156,16 @@ Compose up '-d' '--build' 'api'
 $coreDeadline = (Get-Date).AddSeconds([Math]::Min($TimeoutSeconds, 180))
 $coreReady = $false
 while ((Get-Date) -lt $coreDeadline) {
-  & docker compose exec -T api node -e "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" *> $null
-  if ($LASTEXITCODE -eq 0) { $coreReady = $true; break }
+  # PowerShell 7 can promote a transient non-zero native exit into a terminating
+  # error when $ErrorActionPreference='Stop'. A container is legitimately not
+  # exec-ready for a few seconds after `compose up`, so keep polling instead of
+  # aborting on the first "container is restarting/not running" response.
+  try {
+    & docker compose exec -T api node -e "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" *> $null
+    if ($LASTEXITCODE -eq 0) { $coreReady = $true; break }
+  } catch {
+    # The timeout block below prints container state and the actual API logs.
+  }
   Start-Sleep -Seconds 3
 }
 if (-not $coreReady) {
