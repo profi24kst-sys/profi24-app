@@ -42,10 +42,13 @@ async function clickBase(page, label, expectedHeading) {
 
   try {
     await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    const documentMeta=await page.evaluate(()=>({compat:document.compatMode,charset:document.characterSet,lang:document.documentElement.lang,viewport:document.querySelector('meta[name="viewport"]')?.content,title:document.title}));
+    if(documentMeta.compat!=='CSS1Compat'||documentMeta.charset!=='UTF-8'||documentMeta.lang!=='ru'||!documentMeta.viewport?.includes('width=device-width')||documentMeta.title!=='PROFI24 CRM')fail(`invalid document metadata: ${JSON.stringify(documentMeta)}`);
     await page.getByPlaceholder('Email').fill(EMAIL);
     await page.getByPlaceholder('Пароль').fill(PASSWORD);
     await page.getByRole('button', { name: 'Войти', exact: true }).click();
     await heading(page, 'Заказы');
+    await page.waitForFunction(()=>document.title==='Заказы — PROFI24');
     await page.waitForTimeout(1200);
 
     const version = await page.evaluate(() => window.Profi24UI?.version || 'missing');
@@ -60,6 +63,7 @@ async function clickBase(page, label, expectedHeading) {
     }
 
     await clickBase(page, 'Клиенты', 'Клиенты');
+    if(await page.title()!=='Клиенты — PROFI24')fail(`unexpected clients title: ${await page.title()}`);
     await clickBase(page, 'Техника', 'Техника');
     await clickBase(page, 'Финансы', 'Финансы');
 
@@ -81,6 +85,10 @@ async function clickBase(page, label, expectedHeading) {
 
     await page.getByRole('button', { name: /Новый заказ/ }).click({ timeout: 6000 });
     await page.locator('.drawer').waitFor({ state: 'visible', timeout: 6000 });
+    await page.keyboard.press('Escape');
+    await page.locator('.drawer').waitFor({ state: 'hidden', timeout: 6000 });
+    const focused=await page.evaluate(()=>document.activeElement?.textContent?.includes('Новый заказ'));
+    if(!focused)fail('focus did not return to New Order button');
     console.log('new_order_drawer=ok');
 
     // Reload gives the addon assertion a clean base screen while preserving the authenticated session.
