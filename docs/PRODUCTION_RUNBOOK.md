@@ -270,6 +270,14 @@ A production release is accepted only when:
 - login and core authenticated operations are verified after deployment;
 - no parent stacked PR is skipped during merge/rebase.
 
+The checks that can be automated on the production host are combined in one command:
+
+```sh
+ENV_FILE=.env.production BASE_URL=https://crm.example.kz sh ops/go-live-check.sh
+```
+
+In addition to preflight, account security, backup integrity and public acceptance, it blocks launch when an active branch has no manager, engineer, cash desk or bank/card account; when required operational roles are absent; when an active employee has no valid primary-branch membership; or when WhatsApp delivery is not configured. The default required roles are `OWNER,ACCOUNTANT,MANAGER,ENGINEER`; set `GO_LIVE_REQUIRED_ROLES` only when the real approved staffing model differs. Website intake and Telegram are reported as warnings when not configured.
+
 CI acceptance proves repository/runtime behavior in an isolated environment. It does not replace the final checks against the actual production host, TLS edge, persistent production database and off-site backup destination.
 
 ## 19. Current stacked merge order
