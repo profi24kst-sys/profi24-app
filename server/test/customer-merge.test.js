@@ -20,9 +20,10 @@ async function setup(){
  const branch=Number((await query("SELECT id FROM branches WHERE code='KST'")).rows[0].id);
  await query(`INSERT INTO users(name,email,password_hash,role,active,primary_branch_id) VALUES
   ('Merge Owner','merge-owner@test.invalid','unused','OWNER',true,$1),
+  ('Merge Supervisor','merge-supervisor@test.invalid','unused','SUPERVISOR',true,$1),
   ('Merge Manager','merge-manager@test.invalid','unused','MANAGER',true,$1)`,[branch]);
  const users=(await query("SELECT id,role FROM users WHERE email LIKE 'merge-%@test.invalid' ORDER BY id")).rows;
- const owner=Number(users.find(x=>x.role==='OWNER').id),manager=Number(users.find(x=>x.role==='MANAGER').id);
+ const owner=Number(users.find(x=>x.role==='OWNER').id),supervisor=Number(users.find(x=>x.role==='SUPERVISOR').id),manager=Number(users.find(x=>x.role==='MANAGER').id);
  await query(`INSERT INTO customers(name,phone,phone_norm,email,address,notes,latitude,longitude,location_source) VALUES
   ('Основной клиент','+7 701 111 22 33','77011112233','main@test.invalid',NULL,'Основная заметка',NULL,NULL,NULL),
   ('Дубликат клиента','8 701 111 22 33','77011112233',NULL,'Адрес дубликата','Заметка дубликата',53.2145,63.6250,'MANUAL')`);
@@ -46,9 +47,9 @@ async function setup(){
  src=src.replace(/logger:\s*true/g,'logger:false').replaceAll('app.listen(','testListen(').replaceAll('process.on(','testOn(');
  src='const testListen=async()=>{};const testOn=()=>{};\n'+src+'\nexport {app};';
  const {app}=await import('data:text/javascript;base64,'+Buffer.from(src).toString('base64')+'#'+Date.now()+'-'+Math.random());await app.ready();
- const tokens={owner:app.jwt.sign({id:owner,role:'OWNER'}),manager:app.jwt.sign({id:manager,role:'MANAGER'})};
+ const tokens={owner:app.jwt.sign({id:owner,role:'OWNER'}),supervisor:app.jwt.sign({id:supervisor,role:'SUPERVISOR'}),manager:app.jwt.sign({id:manager,role:'MANAGER'})};
  const call=async(role,method,url,payload)=>{const r=await app.inject({method,url,payload,headers:{authorization:'Bearer '+tokens[role]}});return{status:r.statusCode,...r.json()}};
- return{db,query,app,call,owner,manager,source,target,request,equipment,close:async()=>{await app.close();await db.close();delete globalThis.__customerMergePool}};
+ return{db,query,app,call,owner,supervisor,manager,source,target,request,equipment,close:async()=>{await app.close();await db.close();delete globalThis.__customerMergePool}};
 }
 
 test('F02: безопасное объединение клиента сохраняет всю историю и неизменяемый аудит',async()=>{
@@ -84,5 +85,18 @@ test('F02: новая ссылка на объединённую карточк�
   const branch=Number((await s.query("SELECT id FROM branches WHERE code='KST'")).rows[0].id);
   const inserted=(await s.query("INSERT INTO requests(number,customer_id,branch_id,status,complaint) VALUES('MERGE-LATE',$1,$2,'NEW','Поздний заказ') RETURNING customer_id",[s.source,branch])).rows[0];
   assert.equal(Number(inserted.customer_id),s.target);
+ }finally{await s.close()}
+});
+
+
+test('F02: управляющий видит корзину и восстанавливает клиента без потери истории',async()=>{
+ const s=await setup();
+ try{
+  const id=Number((await s.query("INSERT INTO customers(name,phone,phone_norm) VALUES('Клиент корзины','+7 777 000 11 22','77770001122') RETURNING id")).rows[0].id);
+  const removed=await s.call('owner','DELETE',`/api/v1/customers/${id}`,{reason:'Тест восстановления'});assert.equal(removed.status,200,JSON.stringify(removed));
+  assert.equal((await s.call('manager','GET','/api/v1/deleted')).status,403);
+  const trash=await s.call('supervisor','GET','/api/v1/deleted');assert.equal(trash.status,200,JSON.stringify(trash));assert.ok(trash.data.customers.some(x=>Number(x.id)===id));
+  const restored=await s.call('supervisor','POST',`/api/v1/customers/${id}/restore`,{});assert.equal(restored.status,200,JSON.stringify(restored));
+  const row=(await s.query('SELECT deleted_at FROM customers WHERE id=$1',[id])).rows[0];assert.equal(row.deleted_at,null);
  }finally{await s.close()}
 });
