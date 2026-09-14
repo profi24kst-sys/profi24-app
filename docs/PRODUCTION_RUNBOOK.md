@@ -69,7 +69,7 @@ The backend and CLI both enforce at least 10 characters, letters + digits, and r
 ## 4. Start production
 
 ```sh
-ENV_FILE=.env.production sh ops/start-production.sh
+ENV_FILE=.env.production BASE_URL=https://crm.example.kz sh ops/start-production.sh
 ```
 
 This sequence:
@@ -79,7 +79,13 @@ This sequence:
 4. starts PostgreSQL only;
 5. builds the API image and runs migration/account-security validation;
 6. requires a safe active OWNER;
-7. only then starts the complete CRM stack.
+7. starts the application stack without the periodic backup worker;
+8. checks real staffing, branch, finance-account and integration readiness;
+9. requires public acceptance against `BASE_URL`;
+10. starts the periodic backup worker;
+11. waits for a fresh checksum-valid post-start backup and only then reports success.
+
+The first deployment does not require a backup of a database that has never run. Instead, the supported start creates the first backup after migrations, operational readiness and public acceptance succeed. If readiness or acceptance fails, the application containers remain available for diagnosis/configuration, but the script exits non-zero and does not report a successful production start.
 
 Do not use raw `docker compose up` as the normal production release path.
 
@@ -270,7 +276,7 @@ A production release is accepted only when:
 - login and core authenticated operations are verified after deployment;
 - no parent stacked PR is skipped during merge/rebase.
 
-The checks that can be automated on the production host are combined in one command:
+The checks that can be automated on the production host are combined in one command. `BASE_URL` is mandatory: the command fails closed instead of accepting a release whose public HTTPS edge was not tested.
 
 ```sh
 ENV_FILE=.env.production BASE_URL=https://crm.example.kz sh ops/go-live-check.sh

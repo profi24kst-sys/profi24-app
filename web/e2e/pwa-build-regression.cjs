@@ -12,6 +12,8 @@ const manifestPath=path.join(dist,'manifest.webmanifest');
 const swPath=path.join(dist,'sw.js');
 const installJsPath=path.join(dist,'pwa-install.js');
 const installCssPath=path.join(dist,'pwa-install.css');
+const uiStabilityPath=path.resolve(__dirname,'..','ui-stability.css');
+const orderWorkspacePath=path.resolve(__dirname,'..','order-workspace-final.css');
 const svgIconPath=path.join(dist,'icons','profi24.svg');
 const icon192Path=path.join(dist,'icons','profi24-192.png');
 const icon512Path=path.join(dist,'icons','profi24-512.png');
@@ -47,5 +49,15 @@ const installJs=fs.readFileSync(installJsPath,'utf8');
 if(!installJs.includes("serviceWorker.register('/sw.js'")) fail('install helper must register the service worker');
 if(!installJs.includes('beforeinstallprompt')) fail('install helper must support the browser install prompt');
 if(!installJs.includes('appinstalled')) fail('install helper must handle successful installation');
+
+const uiStability=fs.readFileSync(uiStabilityPath,'utf8');
+const orderWorkspace=fs.readFileSync(orderWorkspacePath,'utf8');
+if(!uiStability.includes('--crm-sidebar-width:236px')) fail('desktop sidebar width contract is missing');
+for(const screen of ['.ermScreen','.feedbackScreen','.finScreen']){
+  if(!uiStability.includes(screen)) fail(`workspace constraint missing for ${screen}`);
+}
+if(!orderWorkspace.includes('grid-template-columns:var(--crm-sidebar-width,236px)')) fail('order workspace must use the shared sidebar width');
+if(!orderWorkspace.includes('@media(max-width:700px)')) fail('order workspace mobile breakpoint must match the sidebar breakpoint');
+if(orderWorkspace.includes('grid-template-columns:220px')) fail('legacy 220px order sidebar width must not return');
 
 console.log('PWA_BUILD_REGRESSION: ok');

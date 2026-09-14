@@ -129,6 +129,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Verify production release is fail-closed
+        run: sh ops/production-release-regression.sh
       - name: Create checksum-valid fake backup set
         run: |
           mkdir -p /tmp/profi24-backups/20260907-120000 /tmp/profi24-offsite
