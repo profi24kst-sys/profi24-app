@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
+import {readFileSync} from 'node:fs';
 
 function run(env={}){
   return spawnSync('sh',['docker-entrypoint.sh','sh','-c','exit 0'],{
@@ -9,6 +10,12 @@ function run(env={}){
     encoding:'utf8'
   });
 }
+
+test('Docker build normalizes a Windows CRLF entrypoint before execution',()=>{
+  const dockerfile=readFileSync(new URL('../Dockerfile',import.meta.url),'utf8');
+  assert.match(dockerfile,/sed -i 's\/\\r\$\/\/' \/usr\/local\/bin\/profi24-entrypoint/);
+  assert.match(dockerfile,/chmod 755 \/usr\/local\/bin\/profi24-entrypoint/);
+});
 
 test('production runtime guard rejects missing JWT secret',()=>{
   const r=run({NODE_ENV:'production',DATABASE_URL:'postgresql://u:p@db:5432/x',JWT_SECRET:'',CORS_ORIGIN:'https://crm.example.kz'});
