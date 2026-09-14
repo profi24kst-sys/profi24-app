@@ -66,6 +66,10 @@ async function clickBase(page, label, expectedHeading) {
     if(await page.title()!=='Клиенты — PROFI24')fail(`unexpected clients title: ${await page.title()}`);
     await clickBase(page, 'Техника', 'Техника');
     await clickBase(page, 'Финансы', 'Финансы');
+    const financeGross=await page.locator('main .metric').filter({hasText:'Валовая прибыль'}).first().locator('b').textContent();
+    await clickBase(page, 'Отчеты', 'Отчеты');
+    const reportsGross=await page.locator('main .metric').filter({hasText:'Валовая прибыль'}).first().locator('b').textContent();
+    if(financeGross!==reportsGross)fail(`finance/report gross profit mismatch: ${financeGross} vs ${reportsGross}`);
 
     // Staff used to freeze the browser: rbac-ui-v2 rewrote option.textContent on
     // every MutationObserver pass, which scheduled itself forever. Exercise the
