@@ -14,6 +14,9 @@ const installJsPath=path.join(dist,'pwa-install.js');
 const installCssPath=path.join(dist,'pwa-install.css');
 const uiStabilityPath=path.resolve(__dirname,'..','ui-stability.css');
 const orderWorkspacePath=path.resolve(__dirname,'..','order-workspace-final.css');
+const coreUiPath=path.resolve(__dirname,'..','core-ui-platform.js');
+const supplierCatalogCssPath=path.resolve(__dirname,'..','supplier-catalog.css');
+const supplierCatalogUiPath=path.resolve(__dirname,'..','supplier-catalog-addon.jsx');
 const svgIconPath=path.join(dist,'icons','profi24.svg');
 const icon192Path=path.join(dist,'icons','profi24-192.png');
 const icon512Path=path.join(dist,'icons','profi24-512.png');
@@ -59,5 +62,15 @@ for(const screen of ['.ermScreen','.feedbackScreen','.finScreen']){
 if(!orderWorkspace.includes('grid-template-columns:var(--crm-sidebar-width,236px)')) fail('order workspace must use the shared sidebar width');
 if(!orderWorkspace.includes('@media(max-width:700px)')) fail('order workspace mobile breakpoint must match the sidebar breakpoint');
 if(orderWorkspace.includes('grid-template-columns:220px')) fail('legacy 220px order sidebar width must not return');
+
+const coreUi=fs.readFileSync(coreUiPath,'utf8');
+if(!coreUi.includes("title:'Работа'")||!coreUi.includes("title:'Клиенты'")||!coreUi.includes("title:'Склад и закупки'")) fail('role navigation groups are missing');
+if(!coreUi.includes('coreNavMore')||!coreUi.includes('coreMobileMoreOpen')) fail('mobile navigation overflow menu is missing');
+if(!coreUi.includes("classList.toggle('on'")) fail('active addon navigation state is missing');
+for(const file of [supplierCatalogCssPath,supplierCatalogUiPath]){
+  const source=fs.readFileSync(file,'utf8');
+  if(/\bsc[A-Z]/.test(source)) fail(`supplier catalog still collides with service-contract sc* namespace: ${path.basename(file)}`);
+  if(!/\bsup[A-Z]/.test(source)) fail(`supplier catalog namespace is missing: ${path.basename(file)}`);
+}
 
 console.log('PWA_BUILD_REGRESSION: ok');
