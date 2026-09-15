@@ -17,6 +17,7 @@ const orderWorkspacePath=path.resolve(__dirname,'..','order-workspace-final.css'
 const coreUiPath=path.resolve(__dirname,'..','core-ui-platform.js');
 const supplierCatalogCssPath=path.resolve(__dirname,'..','supplier-catalog.css');
 const supplierCatalogUiPath=path.resolve(__dirname,'..','supplier-catalog-addon.jsx');
+const appPath=path.resolve(__dirname,'..','app3.jsx');
 const svgIconPath=path.join(dist,'icons','profi24.svg');
 const icon192Path=path.join(dist,'icons','profi24-192.png');
 const icon512Path=path.join(dist,'icons','profi24-512.png');
@@ -71,6 +72,11 @@ for(const file of [supplierCatalogCssPath,supplierCatalogUiPath]){
   const source=fs.readFileSync(file,'utf8');
   if(/\bsc[A-Z]/.test(source)) fail(`supplier catalog still collides with service-contract sc* namespace: ${path.basename(file)}`);
   if(!/\bsup[A-Z]/.test(source)) fail(`supplier catalog namespace is missing: ${path.basename(file)}`);
+}
+
+const app=fs.readFileSync(appPath,'utf8');
+for(const component of ['App','Orders','Order','NewOrder','Staff','SimpleCustomers','SimpleEquipment','TaskPage','ComplaintPage','Finance','Reports']){
+  if(!app.includes(`function ${component}(`)) fail(`main CRM component missing: ${component}`);
 }
 
 console.log('PWA_BUILD_REGRESSION: ok');
