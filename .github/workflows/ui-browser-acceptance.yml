@@ -108,6 +108,7 @@ jobs:
           set -euo pipefail
           scripts=(
             form-validation-regression.cjs
+            global-search-regression.cjs
             sidebar-navigation.cjs
             customer-merge-regression.cjs
             current-order360-regression.cjs

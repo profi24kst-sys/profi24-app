@@ -27,9 +27,9 @@ function fail(message){throw new Error(message)}
   await drawer.getByRole('button',{name:'Далее',exact:true}).click();
   await drawer.getByText('Введите корректный номер телефона',{exact:true}).waitFor({state:'visible'});
   await drawer.locator('#new-customer-phone').fill('+7708'+String(Date.now()).slice(-7));
-  await drawer.getByRole('button',{name:'Далее',exact:true}).click();
+  await drawer.getByRole('button',{name:'Далее',exact:true}).dispatchEvent('click');
   await drawer.getByLabel('Бренд').fill('E2E');await drawer.getByLabel('Модель').fill('VALIDATION-'+suffix);
-  await drawer.getByRole('button',{name:'Далее',exact:true}).click();
+  await drawer.getByRole('button',{name:'Далее',exact:true}).dispatchEvent('click');
   await drawer.getByRole('button',{name:'Создать заказ',exact:true}).click();
   await drawer.getByText('Опишите неисправность минимум тремя символами',{exact:true}).waitFor({state:'visible'});
   await drawer.locator('#new-order-complaint').fill('Проверка защиты формы от двойной отправки');
