@@ -14,7 +14,7 @@ async function api(page,url,opt={}){return page.evaluate(async({url,method='GET'
   await Promise.all([page.waitForResponse(resp=>resp.url().includes('/api/v1/customers')&&resp.ok()),page.getByRole('button',{name:'Обновить данные'}).click()]);
   const search=page.getByRole('combobox',{name:'Глобальный поиск'});
   await search.fill(serial);let option=page.getByRole('option').filter({hasText:'Техника'}).filter({hasText:serial});await option.waitFor({state:'visible',timeout:6000});await option.click();
-  await page.getByRole('heading',{name:'Техника'}).waitFor({state:'visible'});const equipmentRow=page.locator(`[data-search-record="equipment-${equipment.id}"]`);await equipmentRow.waitFor({state:'visible'});if(!(await equipmentRow.evaluate(x=>x.classList.contains('searchHit'))))fail('equipment result was not highlighted');
+  await page.getByRole('heading',{name:'Техника'}).waitFor({state:'visible'});const equipmentRow=page.locator(`[data-search-record="equipment-${equipment.id}"]`);await equipmentRow.waitFor({state:'visible'});await page.waitForFunction(id=>document.querySelector(`[data-search-record="equipment-${id}"]`)?.classList.contains('searchHit'),String(equipment.id),{timeout:3000});
   await search.fill(phone);option=page.getByRole('option').filter({hasText:'Клиент'}).filter({hasText:phone});await option.waitFor({state:'visible'});await option.click();
   await page.getByRole('heading',{name:'Клиенты'}).waitFor({state:'visible'});await page.locator(`[data-search-record="customers-${customer.id}"]`).waitFor({state:'visible'});
   await search.fill(order.number);option=page.getByRole('option').filter({hasText:'Заказ'}).filter({hasText:order.number});await option.waitFor({state:'visible'});await option.click();
