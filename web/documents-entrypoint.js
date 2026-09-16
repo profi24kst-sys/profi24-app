@@ -1,28 +1,18 @@
 const BUTTON_ID='profi24-documents-entrypoint';
 
 function removeButton(){document.getElementById(BUTTON_ID)?.remove()}
-function normalizeLegacyDocumentsUi(){
-  document.querySelectorAll('.docsHint').forEach(node=>{node.style.display='none'});
-  document.querySelector('.warehouseScreen>.whTop>button')?.setAttribute('aria-label','Закрыть документы');
-}
+function normalizeDocumentsUi(){document.querySelectorAll('.docsHint').forEach(node=>{node.style.display='none'})}
 
 function openDocuments(order360){
+  const id=Number(order360.dataset.currentRequestId||0);
   const number=order360.querySelector('.o360Hero small')?.textContent?.trim();
-  if(!number)return;
-  const bridge=document.createElement('div');
-  bridge.className='ordertitle';
-  bridge.hidden=true;
-  const title=document.createElement('h2');
-  title.textContent=number;
-  bridge.appendChild(title);
-  document.body.appendChild(bridge);
-  bridge.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true,view:window}));
-  bridge.remove();
+  if((!Number.isSafeInteger(id)||id<1)&&!number)return;
   window.dispatchEvent(new CustomEvent('profi24:close-overlays'));
+  window.dispatchEvent(new CustomEvent('profi24:open-documents',{detail:{id:Number.isSafeInteger(id)&&id>0?id:undefined,number}}));
 }
 
 function render(){
-  normalizeLegacyDocumentsUi();
+  normalizeDocumentsUi();
   const order360=document.querySelector('.o360[data-current-request-id]');
   if(!order360){removeButton();return}
   const quick=order360.querySelector('.o360Quick');
