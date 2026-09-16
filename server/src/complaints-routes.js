@@ -76,6 +76,12 @@ async function detail(db,id,user,requireOrder){
     row.financial_impact=impact?.amount??0;
     row.financial_note=impact?.note??null;
     row.financial_updated_at=impact?.updated_at??null;
+    row.audit=(await db.query(`
+      SELECT h.id,h.action,h.details,h.created_at,u.name user_name
+      FROM request_history h
+      LEFT JOIN users u ON u.id=h.user_id
+      WHERE h.request_id=$1 AND h.details->>'complaint_id'=$2
+      ORDER BY h.id ASC`,[row.request_id,String(row.id)])).rows;
   }
   return row;
 }
