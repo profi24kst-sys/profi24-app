@@ -1,7 +1,10 @@
 const BUTTON_ID='profi24-documents-entrypoint';
 
 function removeButton(){document.getElementById(BUTTON_ID)?.remove()}
-function hideLegacyHint(){document.querySelectorAll('.docsHint').forEach(node=>{node.style.display='none'})}
+function normalizeLegacyDocumentsUi(){
+  document.querySelectorAll('.docsHint').forEach(node=>{node.style.display='none'});
+  document.querySelector('.warehouseScreen>.whTop>button')?.setAttribute('aria-label','Закрыть документы');
+}
 
 function openDocuments(order360){
   const number=order360.querySelector('.o360Hero small')?.textContent?.trim();
@@ -19,7 +22,7 @@ function openDocuments(order360){
 }
 
 function render(){
-  hideLegacyHint();
+  normalizeLegacyDocumentsUi();
   const order360=document.querySelector('.o360[data-current-request-id]');
   if(!order360){removeButton();return}
   const quick=order360.querySelector('.o360Quick');
