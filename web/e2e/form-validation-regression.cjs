@@ -1,11 +1,12 @@
 const{chromium}=require('playwright');
 const fs=require('fs'),path=require('path');
-const BASE=process.env.BASE_URL||'http://127.0.0.1:5173',EMAIL=process.env.E2E_EMAIL||'browser-owner@test.invalid',PASSWORD=process.env.E2E_PASSWORD||'BrowserOwner2026Kst9',artifacts=path.join(__dirname,'artifacts');fs.mkdirSync(artifacts,{recursive:true});
+const BASE=process.env.BASE_URL||'http://127.0.0.1:5173',EMAIL=process.env.E2E_EMAIL||'browser-owner@test.invalid',PASSWORD=process.env.E2E_PASSWORD||'',artifacts=path.join(__dirname,'artifacts');fs.mkdirSync(artifacts,{recursive:true});
 function fail(message){throw new Error(message)}
 (async()=>{
  const browser=await chromium.launch({headless:true}),page=await browser.newPage({viewport:{width:1400,height:900}});let requestPosts=0;
  page.on('request',r=>{if(r.method()==='POST'&&new URL(r.url()).pathname==='/api/v1/requests')requestPosts++});
  try{
+  if(!PASSWORD)fail('E2E_PASSWORD is required');
   await page.goto(BASE,{waitUntil:'domcontentloaded',timeout:30000});
   await page.getByRole('button',{name:'Войти',exact:true}).click();
   await page.getByRole('alert').filter({hasText:'Введите email'}).waitFor({state:'visible',timeout:5000});
@@ -16,6 +17,7 @@ function fail(message){throw new Error(message)}
   await page.getByPlaceholder('Email').fill(EMAIL);await page.getByPlaceholder('Пароль').fill(PASSWORD);
   await page.getByRole('button',{name:'Войти',exact:true}).click();
   await page.locator('aside').waitFor({state:'visible',timeout:10000});
+  await page.waitForURL(url=>new URL(url).pathname==='/orders',{timeout:10000});
   await page.getByRole('button',{name:/Новый заказ/}).click();
   const drawer=page.locator('.drawer');await drawer.waitFor({state:'visible',timeout:6000});
   await drawer.getByRole('button',{name:'Далее',exact:true}).click();
@@ -27,9 +29,9 @@ function fail(message){throw new Error(message)}
   await drawer.getByRole('button',{name:'Далее',exact:true}).click();
   await drawer.getByText('Введите корректный номер телефона',{exact:true}).waitFor({state:'visible'});
   await drawer.locator('#new-customer-phone').fill('+7708'+String(Date.now()).slice(-7));
-  await drawer.getByRole('button',{name:'Далее',exact:true}).dispatchEvent('click');
+  await drawer.getByRole('button',{name:'Далее',exact:true}).click();
   await drawer.getByLabel('Бренд').fill('E2E');await drawer.getByLabel('Модель').fill('VALIDATION-'+suffix);
-  await drawer.getByRole('button',{name:'Далее',exact:true}).dispatchEvent('click');
+  await drawer.getByRole('button',{name:'Далее',exact:true}).click();
   await drawer.getByRole('button',{name:'Создать заказ',exact:true}).click();
   await drawer.getByText('Опишите неисправность минимум тремя символами',{exact:true}).waitFor({state:'visible'});
   await drawer.locator('#new-order-complaint').fill('Проверка защиты формы от двойной отправки');
