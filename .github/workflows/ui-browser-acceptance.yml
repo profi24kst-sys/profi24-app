@@ -113,6 +113,7 @@ jobs:
             customer-merge-regression.cjs
             current-order360-regression.cjs
             documents-entrypoint-regression.cjs
+            customer-portal-regression.cjs
             engineer-capacity-regression.cjs
             engineer-route-regression.cjs
             engineer-route-execution-regression.cjs
