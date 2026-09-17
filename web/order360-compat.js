@@ -1,3 +1,5 @@
+import './customer-portal-admin.js';
+
 // Safe compatibility bridge for legacy Order 360 addons.
 // Keeps a hidden technical current-order marker outside React-owned DOM and refreshes React after external writes.
 (function(){
