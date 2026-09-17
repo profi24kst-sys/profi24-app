@@ -1,6 +1,14 @@
 const BUTTON_ID='profi24-documents-entrypoint';
 const PANEL_ID='order-documents';
+const STYLE_ID='profi24-documents-entrypoint-style';
 
+function ensureStyle(){
+  if(document.getElementById(STYLE_ID))return;
+  const style=document.createElement('style');
+  style.id=STYLE_ID;
+  style.textContent='.docsHint{display:none!important}';
+  document.head.appendChild(style);
+}
 function removeButton(){document.getElementById(BUTTON_ID)?.remove()}
 function documentsHost(){
   const node=document.querySelector('[data-documents-center],.docsHint');
@@ -9,7 +17,7 @@ function documentsHost(){
   return host||null;
 }
 function normalizeDocumentsUi(){
-  document.querySelectorAll('.docsHint').forEach(node=>{node.style.display='none'});
+  ensureStyle();
   documentsHost();
 }
 function revealDocumentsPanel(){
