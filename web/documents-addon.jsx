@@ -37,15 +37,25 @@ async function openProtectedFile(id){
 function App(){
   const[orderId,setOrderId]=useState(null),[files,setFiles]=useState([]),[signs,setSigns]=useState([]),[docs,setDocs]=useState([]),[open,setOpen]=useState(false),[err,setErr]=useState('');
   useEffect(()=>{
+    const openTarget=async detail=>{
+      try{
+        let id=Number(detail?.id||detail?.request_id||0);
+        if((!Number.isSafeInteger(id)||id<1)&&detail?.number){
+          const response=await fetch('/api/v1/requests',{headers:{Authorization:`Bearer ${token()}`}}),json=await response.json();
+          id=Number(json.data?.find(v=>String(v.number)===String(detail.number))?.id||0);
+        }
+        if(!Number.isSafeInteger(id)||id<1)return;
+        setOrderId(id);setOpen(true);
+      }catch(error){setErr(error.message)}
+    };
     const click=e=>{
       const title=e.target.closest?.('.ordertitle');if(!title)return;
-      const number=title.querySelector('h2')?.textContent;if(!number)return;
-      fetch('/api/v1/requests',{headers:{Authorization:`Bearer ${token()}`}}).then(r=>r.json()).then(j=>{
-        const order=j.data?.find(v=>v.number===number);if(order){setOrderId(order.id);setOpen(true)}
-      }).catch(()=>{});
+      const number=title.querySelector('h2')?.textContent;if(number)openTarget({number});
     };
+    const event=e=>openTarget(e.detail||{});
     document.addEventListener('dblclick',click);
-    return()=>document.removeEventListener('dblclick',click);
+    window.addEventListener('profi24:open-documents',event);
+    return()=>{document.removeEventListener('dblclick',click);window.removeEventListener('profi24:open-documents',event)};
   },[]);
 
   async function load(){
@@ -92,7 +102,7 @@ function App(){
     }catch(error){setErr(error.message)}
   }
 
-  return <div className="warehouseScreen"><div className="whTop"><div><h1>Фото и документы заказа</h1><p>Заказ ID {orderId}</p></div><button onClick={()=>setOpen(false)}><X/></button></div>{err&&<div className="whError">{err}</div>}{canUpload()&&<div className="whTopActions"><Label text="Фото до" accept={SAFE_IMAGE_ACCEPT} icon={<Camera/>} on={e=>upload(e,'PHOTO_BEFORE')}/><Label text="Фото после" accept={SAFE_IMAGE_ACCEPT} icon={<Camera/>} on={e=>upload(e,'PHOTO_AFTER')}/><Label text="Шильдик" accept={SAFE_IMAGE_ACCEPT} icon={<Camera/>} on={e=>upload(e,'NAMEPLATE')}/><Label text="Файл" accept={SAFE_FILE_ACCEPT} icon={<Upload/>} on={e=>upload(e,'OTHER')}/>{canSign()&&<button className="whPrimary" onClick={()=>setOpen('sign')}><PenLine/>Подписи</button>}</div>}<div className="whGrid2"><div className="whTable"><div className="whTop"><h2>Вложения</h2></div>{files.map(file=><div className="whRow" key={file.id}><div><b>{file.original_name}</b><small>{file.kind} · {Math.round(file.size_bytes/1024)} КБ</small></div><span></span><button onClick={()=>openProtectedFile(file.id).catch(error=>setErr(error.message))}>Открыть</button><span></span>{canDelete()?<button onClick={async()=>{try{await api('/files/'+file.id,{method:'DELETE'});await load()}catch(error){setErr(error.message)}}}><Trash2 size={16}/></button>:<span/>}</div>)}</div><div className="whTable"><div className="whTop"><h2>Документы</h2></div>{[['WORK_ORDER','Заказ-наряд'],['DEFECT_ACT','Дефектный акт'],['COMPLETION_ACT','АВР'],['WARRANTY','Гарантийный талон']].map(([type,name])=><div className="whRow" key={type}><div><b>{name}</b><small>Новая неизменяемая версия из текущих данных</small></div><span></span><button className="whPrimary" onClick={()=>printDocument(type)}><Printer size={16}/>Выпустить</button><span></span><span></span></div>)}{docs.map(doc=><div className="whRow" key={'doc-'+doc.id}><div><b>{doc.document_number}</b><small>Версия {doc.version||'архив'} · SHA-256 {(doc.content_hash||'нет').slice(0,12)}…</small></div><span></span><button onClick={async()=>{try{const full=await api('/documents/'+doc.id);await renderDocument(full,doc.document_type)}catch(error){setErr(error.message)}}}>Открыть копию</button><span></span><span></span></div>)}</div></div>{open==='sign'&&canSign()&&<Signature orderId={orderId} close={()=>{setOpen(true);load()}}/>}</div>;
+  return <div className="warehouseScreen" data-documents-center><div className="whTop"><div><h1>Фото и документы заказа</h1><p>Заказ ID {orderId}</p></div><button aria-label="Закрыть документы" onClick={()=>setOpen(false)}><X/></button></div>{err&&<div className="whError">{err}</div>}{canUpload()&&<div className="whTopActions"><Label text="Фото до" accept={SAFE_IMAGE_ACCEPT} icon={<Camera/>} on={e=>upload(e,'PHOTO_BEFORE')}/><Label text="Фото после" accept={SAFE_IMAGE_ACCEPT} icon={<Camera/>} on={e=>upload(e,'PHOTO_AFTER')}/><Label text="Шильдик" accept={SAFE_IMAGE_ACCEPT} icon={<Camera/>} on={e=>upload(e,'NAMEPLATE')}/><Label text="Файл" accept={SAFE_FILE_ACCEPT} icon={<Upload/>} on={e=>upload(e,'OTHER')}/>{canSign()&&<button className="whPrimary" onClick={()=>setOpen('sign')}><PenLine/>Подписи</button>}</div>}<div className="whGrid2"><div className="whTable"><div className="whTop"><h2>Вложения</h2></div>{files.map(file=><div className="whRow" key={file.id}><div><b>{file.original_name}</b><small>{file.kind} · {Math.round(file.size_bytes/1024)} КБ</small></div><span></span><button onClick={()=>openProtectedFile(file.id).catch(error=>setErr(error.message))}>Открыть</button><span></span>{canDelete()?<button onClick={async()=>{try{await api('/files/'+file.id,{method:'DELETE'});await load()}catch(error){setErr(error.message)}}}><Trash2 size={16}/></button>:<span/>}</div>)}</div><div className="whTable"><div className="whTop"><h2>Документы</h2></div>{[['WORK_ORDER','Заказ-наряд'],['DEFECT_ACT','Дефектный акт'],['COMPLETION_ACT','АВР'],['WARRANTY','Гарантийный талон']].map(([type,name])=><div className="whRow" key={type}><div><b>{name}</b><small>Новая неизменяемая версия из текущих данных</small></div><span></span><button className="whPrimary" onClick={()=>printDocument(type)}><Printer size={16}/>Выпустить</button><span></span><span></span></div>)}{docs.map(doc=><div className="whRow" key={'doc-'+doc.id}><div><b>{doc.document_number}</b><small>Версия {doc.version||'архив'} · SHA-256 {(doc.content_hash||'нет').slice(0,12)}…</small></div><span></span><button onClick={async()=>{try{const full=await api('/documents/'+doc.id);await renderDocument(full,doc.document_type)}catch(error){setErr(error.message)}}}>Открыть копию</button><span></span><span></span></div>)}</div></div>{open==='sign'&&canSign()&&<Signature orderId={orderId} close={()=>{setOpen(true);load()}}/>}</div>;
 }
 
 function Label({text,icon,on,accept}){return <label className="whPrimary">{icon}{text}<input hidden type="file" accept={accept} onChange={on}/></label>}
