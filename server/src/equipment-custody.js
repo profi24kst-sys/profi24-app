@@ -19,8 +19,8 @@ const transitions={
  ENGINEER_TO_STORAGE:{from:'ENGINEER',to:'STORAGE',engineerReturn:true},
  STORAGE_TO_OFFICE:{from:'STORAGE',to:'OFFICE',office:true},
  STORAGE_TO_DELIVERY:{from:'STORAGE',to:'DELIVERY',office:true},
- DELIVERY_TO_CUSTOMER:{from:'DELIVERY',to:'CUSTOMER',office:true,closed:true},
- OFFICE_TO_CUSTOMER:{from:'OFFICE',to:'CUSTOMER',office:true,closed:true}
+ DELIVERY_TO_CUSTOMER:{from:'DELIVERY',to:'CUSTOMER',office:true,closed:true,recipientProof:true},
+ OFFICE_TO_CUSTOMER:{from:'OFFICE',to:'CUSTOMER',office:true,closed:true,recipientProof:true}
 };
 
 export function installEquipmentCustody(app,pool){
@@ -37,7 +37,7 @@ export function installEquipmentCustody(app,pool){
  async function history(c,requestId){return (await c.query(`SELECT e.*,fu.name from_user_name,tu.name to_user_name,cb.name created_by_name FROM equipment_custody_events e LEFT JOIN users fu ON fu.id=e.from_user_id LEFT JOIN users tu ON tu.id=e.to_user_id LEFT JOIN users cb ON cb.id=e.created_by WHERE e.request_id=$1 ORDER BY e.id DESC`,[requestId])).rows}
  const cleanAccessories=value=>Array.isArray(value)?value.map(v=>text(v,120)).filter(Boolean).slice(0,50):[];
 
- app.get('/health',async()=>{await pool.query('SELECT 1');return{ok:true,service:'profi24-equipment-custody',version:'1.0.0'}});
+ app.get('/health',async()=>{await pool.query('SELECT 1');return{ok:true,service:'profi24-equipment-custody',version:'1.1.0'}});
  app.get('/api/v1/requests/:id/custody',{preHandler:auth},async req=>{
   const order=await requireOrder(pool,req.user,req.params.id),events=await history(pool,order.id);return{data:{order_id:order.id,request_number:order.number,request_status:order.status,current:events[0]||null,events}};
  });
@@ -54,8 +54,11 @@ export function installEquipmentCustody(app,pool){
  app.post('/api/v1/requests/:id/custody/events',{preHandler:auth},async(req,reply)=>{
   const eventType=String(req.body?.event_type||'').toUpperCase(),rule=transitions[eventType];if(!rule)return fail(reply,'VALIDATION','Некорректный тип передачи');
   const location=text(req.body?.location_text,220),condition=text(req.body?.condition_text,500),note=text(req.body?.note,500),accessories=cleanAccessories(req.body?.accessories),toUserId=positiveId(req.body?.to_user_id);
+  const recipientName=text(req.body?.recipient_name,160),recipientRelation=text(req.body?.recipient_relation,120),recipientConfirmed=req.body?.recipient_confirmed===true;
   if(rule.office&&!officeRoles.has(req.user.role))return fail(reply,'FORBIDDEN','Передачу выполняет сотрудник офиса',403);
   if(rule.engineerReturn&&req.user.role!=='ENGINEER'&&!officeRoles.has(req.user.role))return fail(reply,'FORBIDDEN','Вернуть технику может ответственный инженер или сотрудник офиса',403);
+  if(rule.recipientProof&&recipientName.length<3)return fail(reply,'RECIPIENT_REQUIRED','Перед выдачей укажите ФИО получателя');
+  if(rule.recipientProof&&!recipientConfirmed)return fail(reply,'RECIPIENT_CONFIRMATION_REQUIRED','Подтвердите, что получатель фактически принял технику');
   try{const result=await tx(async c=>{
    const order=await requireOrder(c,req.user,req.params.id,{lock:true}),current=await latest(c,req.params.id,{lock:true});
    if(!current&&eventType!=='CUSTOMER_TO_OFFICE')throw Object.assign(new Error('Сначала оформите приём техники от клиента'),{code:'CUSTODY_INTAKE_REQUIRED',statusCode:409});
@@ -66,8 +69,8 @@ export function installEquipmentCustody(app,pool){
    let effectiveToUser=null;
    if(rule.engineerTarget){effectiveToUser=toUserId||positiveId(order.engineer_id);if(!effectiveToUser)throw Object.assign(new Error('Укажите инженера-получателя'),{code:'ENGINEER_REQUIRED',statusCode:422});if(Number(order.engineer_id)!==Number(effectiveToUser))throw Object.assign(new Error('Передача допускается только основному инженеру заказа'),{code:'PRIMARY_ENGINEER_REQUIRED',statusCode:409});if(!await sameBranchUser(c,effectiveToUser,order.branch_id,{engineer:true}))throw Object.assign(new Error('Инженер не относится к филиалу заказа'),{code:'ENGINEER_BRANCH_MISMATCH',statusCode:422})}
    if(rule.engineerReturn){const holder=positiveId(current?.to_user_id);if(!holder)throw Object.assign(new Error('В журнале не указан ответственный инженер'),{code:'CUSTODY_ENGINEER_MISSING',statusCode:409});if(req.user.role==='ENGINEER'&&Number(req.user.id)!==Number(holder))throw Object.assign(new Error('Инженер может вернуть только технику, которая числится за ним'),{code:'NOT_CUSTODIAN',statusCode:403})}
-   const fromUser=positiveId(current?.to_user_id),event=(await c.query(`INSERT INTO equipment_custody_events(request_id,event_type,from_holder,to_holder,from_user_id,to_user_id,location_text,condition_text,accessories,note,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11) RETURNING *`,[order.id,eventType,current?.to_holder||'CUSTOMER',rule.to,fromUser,effectiveToUser,location||null,condition||null,JSON.stringify(accessories),note||null,req.user.id])).rows[0];
-   await c.query(`INSERT INTO request_history(request_id,user_id,action,details) VALUES($1,$2,'EQUIPMENT_CUSTODY_EVENT',$3)`,[order.id,req.user.id,{custody_event_id:event.id,event_type:eventType,from_holder:event.from_holder,to_holder:event.to_holder,from_user_id:fromUser,to_user_id:effectiveToUser,location_text:location||null,condition_text:condition||null,accessories}]);return event;
+   const fromUser=positiveId(current?.to_user_id),event=(await c.query(`INSERT INTO equipment_custody_events(request_id,event_type,from_holder,to_holder,from_user_id,to_user_id,location_text,condition_text,accessories,note,recipient_name,recipient_relation,recipient_confirmed,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14) RETURNING *`,[order.id,eventType,current?.to_holder||'CUSTOMER',rule.to,fromUser,effectiveToUser,location||null,condition||null,JSON.stringify(accessories),note||null,rule.recipientProof?recipientName:null,rule.recipientProof?(recipientRelation||'Клиент'):null,rule.recipientProof?recipientConfirmed:false,req.user.id])).rows[0];
+   await c.query(`INSERT INTO request_history(request_id,user_id,action,details) VALUES($1,$2,'EQUIPMENT_CUSTODY_EVENT',$3)`,[order.id,req.user.id,{custody_event_id:event.id,event_type:eventType,from_holder:event.from_holder,to_holder:event.to_holder,from_user_id:fromUser,to_user_id:effectiveToUser,location_text:location||null,condition_text:condition||null,accessories,recipient_name:event.recipient_name,recipient_relation:event.recipient_relation,recipient_confirmed:event.recipient_confirmed}]);return event;
   });return reply.code(201).send({data:result})}catch(e){if(e?.statusCode)return fail(reply,e.code||'CUSTODY_ERROR',e.message,e.statusCode);throw e}
  });
  return app;
