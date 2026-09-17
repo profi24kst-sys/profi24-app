@@ -113,7 +113,7 @@ function Signature({orderId,close}){
     const canvas=ref.current,ctx=canvas.getContext('2d');ctx.lineWidth=2;ctx.lineCap='round';
     const pos=e=>{const r=canvas.getBoundingClientRect(),p=e.touches?.[0]||e;return[(p.clientX-r.left)*canvas.width/r.width,(p.clientY-r.top)*canvas.height/r.height]};
     const down=e=>{drawing.current=true;const[x,y]=pos(e);ctx.beginPath();ctx.moveTo(x,y)};
-    const move=e=>{if(!drawing.current)return;e.preventDefault();const{x,y]=pos(e);ctx.lineTo(x,y);ctx.stroke()};
+    const move=e=>{if(!drawing.current)return;e.preventDefault();const[x,y]=pos(e);ctx.lineTo(x,y);ctx.stroke()};
     const up=()=>drawing.current=false;
     canvas.addEventListener('mousedown',down);canvas.addEventListener('mousemove',move);window.addEventListener('mouseup',up);canvas.addEventListener('touchstart',down);canvas.addEventListener('touchmove',move,{passive:false});canvas.addEventListener('touchend',up);
     return()=>{canvas.removeEventListener('mousedown',down);canvas.removeEventListener('mousemove',move);window.removeEventListener('mouseup',up);canvas.removeEventListener('touchstart',down);canvas.removeEventListener('touchmove',move);canvas.removeEventListener('touchend',up)};
