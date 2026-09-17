@@ -4,14 +4,19 @@ const PANEL_ID='order-documents';
 function removeButton(){document.getElementById(BUTTON_ID)?.remove()}
 function normalizeDocumentsUi(){document.querySelectorAll('.docsHint').forEach(node=>{node.style.display='none'})}
 function revealDocumentsPanel(){
-  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+  let attempts=0;
+  const reveal=()=>{
+    attempts++;
     const center=document.querySelector('[data-documents-center]');
     const host=center?.parentElement;
-    if(!host)return;
-    host.dataset.profi24Panel=PANEL_ID;
-    host.style.display='';
-    window.Profi24UI?.showPanel?.(PANEL_ID);
-  }));
+    if(host){
+      host.dataset.profi24Panel=PANEL_ID;
+      window.Profi24UI?.showPanel?.(PANEL_ID);
+      if(center.getClientRects().length>0)return;
+    }
+    if(attempts<60)requestAnimationFrame(reveal);
+  };
+  requestAnimationFrame(reveal);
 }
 
 function openDocuments(order360){
