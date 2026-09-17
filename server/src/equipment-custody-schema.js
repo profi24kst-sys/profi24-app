@@ -11,16 +11,23 @@ export const equipmentCustodyStatements=[
  condition_text TEXT,
  accessories JSONB NOT NULL DEFAULT '[]'::jsonb,
  note TEXT,
+ recipient_name TEXT,
+ recipient_relation TEXT,
+ recipient_confirmed BOOLEAN NOT NULL DEFAULT false,
  created_by INT NOT NULL REFERENCES users(id),
  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 )`,
+`ALTER TABLE equipment_custody_events ADD COLUMN IF NOT EXISTS recipient_name TEXT`,
+`ALTER TABLE equipment_custody_events ADD COLUMN IF NOT EXISTS recipient_relation TEXT`,
+`ALTER TABLE equipment_custody_events ADD COLUMN IF NOT EXISTS recipient_confirmed BOOLEAN NOT NULL DEFAULT false`,
 `CREATE INDEX IF NOT EXISTS idx_equipment_custody_request ON equipment_custody_events(request_id,id DESC)`,
 `CREATE INDEX IF NOT EXISTS idx_equipment_custody_to_user ON equipment_custody_events(to_user_id,id DESC)`,
 `CREATE INDEX IF NOT EXISTS idx_equipment_custody_created ON equipment_custody_events(created_at DESC)`,
 `CREATE OR REPLACE VIEW equipment_custody_current AS
  SELECT DISTINCT ON (e.request_id)
    e.id event_id,e.request_id,e.event_type,e.to_holder holder,e.to_user_id responsible_user_id,
-   e.location_text,e.condition_text,e.accessories,e.note,e.created_by,e.created_at
+   e.location_text,e.condition_text,e.accessories,e.note,e.created_by,e.created_at,
+   e.recipient_name,e.recipient_relation,e.recipient_confirmed
  FROM equipment_custody_events e
  ORDER BY e.request_id,e.id DESC`
 ];
