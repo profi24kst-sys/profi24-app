@@ -1,7 +1,18 @@
 const BUTTON_ID='profi24-documents-entrypoint';
+const PANEL_ID='order-documents';
 
 function removeButton(){document.getElementById(BUTTON_ID)?.remove()}
 function normalizeDocumentsUi(){document.querySelectorAll('.docsHint').forEach(node=>{node.style.display='none'})}
+function revealDocumentsPanel(){
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    const center=document.querySelector('[data-documents-center]');
+    const host=center?.parentElement;
+    if(!host)return;
+    host.dataset.profi24Panel=PANEL_ID;
+    host.style.display='';
+    window.Profi24UI?.showPanel?.(PANEL_ID);
+  }));
+}
 
 function openDocuments(order360){
   const id=Number(order360.dataset.currentRequestId||0);
@@ -9,6 +20,7 @@ function openDocuments(order360){
   if((!Number.isSafeInteger(id)||id<1)&&!number)return;
   window.dispatchEvent(new CustomEvent('profi24:close-overlays'));
   window.dispatchEvent(new CustomEvent('profi24:open-documents',{detail:{id:Number.isSafeInteger(id)&&id>0?id:undefined,number}}));
+  revealDocumentsPanel();
 }
 
 function render(){
@@ -32,4 +44,8 @@ const observer=new MutationObserver(render);
 observer.observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['data-current-request-id']});
 window.addEventListener('profi24:o360-current',render);
 window.addEventListener('profi24:request-updated',render);
+document.addEventListener('click',event=>{
+  if(!event.target.closest?.('[data-documents-center] button[aria-label="Закрыть документы"]'))return;
+  requestAnimationFrame(()=>window.Profi24UI?.showBase?.());
+});
 render();
