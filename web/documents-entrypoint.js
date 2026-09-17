@@ -2,15 +2,23 @@ const BUTTON_ID='profi24-documents-entrypoint';
 const PANEL_ID='order-documents';
 
 function removeButton(){document.getElementById(BUTTON_ID)?.remove()}
-function normalizeDocumentsUi(){document.querySelectorAll('.docsHint').forEach(node=>{node.style.display='none'})}
+function documentsHost(){
+  const node=document.querySelector('[data-documents-center],.docsHint');
+  const host=node?.parentElement;
+  if(host)host.dataset.profi24Panel=PANEL_ID;
+  return host||null;
+}
+function normalizeDocumentsUi(){
+  document.querySelectorAll('.docsHint').forEach(node=>{node.style.display='none'});
+  documentsHost();
+}
 function revealDocumentsPanel(){
   let attempts=0;
   const reveal=()=>{
     attempts++;
     const center=document.querySelector('[data-documents-center]');
-    const host=center?.parentElement;
-    if(host){
-      host.dataset.profi24Panel=PANEL_ID;
+    const host=documentsHost();
+    if(center&&host){
       window.Profi24UI?.showPanel?.(PANEL_ID);
       if(center.getClientRects().length>0)return;
     }
@@ -23,6 +31,7 @@ function openDocuments(order360){
   const id=Number(order360.dataset.currentRequestId||0);
   const number=order360.querySelector('.o360Hero small')?.textContent?.trim();
   if((!Number.isSafeInteger(id)||id<1)&&!number)return;
+  normalizeDocumentsUi();
   window.dispatchEvent(new CustomEvent('profi24:close-overlays'));
   window.dispatchEvent(new CustomEvent('profi24:open-documents',{detail:{id:Number.isSafeInteger(id)&&id>0?id:undefined,number}}));
   revealDocumentsPanel();
