@@ -35,7 +35,7 @@ test('customer portal is customer-scoped, expiring and stores only a token hash'
  const token=first.url.split('/').at(-1);assert.match(token,/^[a-f0-9]{64}$/);
  const stored=(await query('SELECT token_hash,revoked_at FROM customer_portal_links WHERE id=$1',[first.id])).rows[0];
  assert.notEqual(stored.token_hash,token);assert.equal(stored.revoked_at,null);
- assert.equal((await query('SELECT count(*) n FROM customer_portal_links WHERE token_hash=$1',[token])).rows[0].n,0);
+ assert.equal(Number((await query('SELECT count(*) n FROM customer_portal_links WHERE token_hash=$1',[token])).rows[0].n),0);
 
  res=await app.inject({method:'GET',url:`/public/customer-portal/${token}`});assert.equal(res.statusCode,200,res.body);
  const portal=res.json().data;assert.equal(portal.customer.name,'Portal Client');assert.equal(portal.orders.length,2);
@@ -47,7 +47,7 @@ test('customer portal is customer-scoped, expiring and stores only a token hash'
  assert.notEqual(second.id,first.id);assert.ok((await query('SELECT revoked_at FROM customer_portal_links WHERE id=$1',[first.id])).rows[0].revoked_at);
  res=await app.inject({method:'GET',url:`/public/customer-portal/${token}`});assert.equal(res.statusCode,410,res.body);assert.equal(res.json().error.code,'PORTAL_REVOKED');
 
- const token2=second.url.split('/').at(-1);await query("UPDATE customer_portal_links SET expires_at=now()-interval '1 minute' WHERE id=$1",[second.id]);
+ const token2=second.url.split('/').at(-1);await query("UPDATE customer_portal_links SET created_at=now()-interval '2 days',expires_at=now()-interval '1 day' WHERE id=$1",[second.id]);
  res=await app.inject({method:'GET',url:`/public/customer-portal/${token2}`});assert.equal(res.statusCode,410,res.body);assert.equal(res.json().error.code,'PORTAL_EXPIRED');
 
  await app.close();await db.close();
