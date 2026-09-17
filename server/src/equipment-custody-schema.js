@@ -26,7 +26,8 @@ export const equipmentCustodyStatements=[
 `CREATE OR REPLACE VIEW equipment_custody_current AS
  SELECT DISTINCT ON (e.request_id)
    e.id event_id,e.request_id,e.event_type,e.to_holder holder,e.to_user_id responsible_user_id,
-   e.location_text,e.condition_text,e.accessories,e.note,e.recipient_name,e.recipient_relation,e.recipient_confirmed,e.created_by,e.created_at
+   e.location_text,e.condition_text,e.accessories,e.note,e.created_by,e.created_at,
+   e.recipient_name,e.recipient_relation,e.recipient_confirmed
  FROM equipment_custody_events e
  ORDER BY e.request_id,e.id DESC`
 ];
