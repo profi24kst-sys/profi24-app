@@ -27,10 +27,10 @@ test('customer portal is customer-scoped, expiring and stores only a token hash'
  const ownerToken=app.jwt.sign({id:owner.id,role:'OWNER'}),engineerToken=app.jwt.sign({id:engineer.id,role:'ENGINEER'});
  const auth=token=>({authorization:`Bearer ${token}`});
 
- let res=await app.inject({method:'POST',url:`/api/v1/customer-portal/requests/${order.id}/link`,headers:auth(engineerToken),payload:{expires_days:30}});
+ let res=await app.inject({method:'POST',url:'/api/v1/customer-portal/links',headers:auth(engineerToken),payload:{source_request_id:order.id,expires_days:30}});
  assert.equal(res.statusCode,403,res.body);
 
- res=await app.inject({method:'POST',url:`/api/v1/customer-portal/requests/${order.id}/link`,headers:auth(ownerToken),payload:{expires_days:30}});
+ res=await app.inject({method:'POST',url:'/api/v1/customer-portal/links',headers:auth(ownerToken),payload:{source_request_id:order.id,expires_days:30}});
  assert.equal(res.statusCode,201,res.body);const first=res.json().data;
  const token=first.url.split('/').at(-1);assert.match(token,/^[a-f0-9]{64}$/);
  const stored=(await query('SELECT token_hash,revoked_at FROM customer_portal_links WHERE id=$1',[first.id])).rows[0];
@@ -43,11 +43,16 @@ test('customer portal is customer-scoped, expiring and stores only a token hash'
  const current=portal.orders.find(x=>x.number==='PORTAL-1');assert.equal(Number(current.total),25000);assert.equal(Number(current.paid),10000);assert.equal(current.timeline.length,2);
  assert.deepEqual(current.timeline.map(x=>x.label),['Заявка принята','Ремонт начат']);assert.equal('details' in current.timeline[0],false);assert.equal('direct_cost' in current,false);assert.equal('phone' in portal.customer,false);
 
- res=await app.inject({method:'POST',url:`/api/v1/customer-portal/requests/${order.id}/link`,headers:auth(ownerToken),payload:{expires_days:5}});assert.equal(res.statusCode,201,res.body);const second=res.json().data;
+ await query("UPDATE requests SET status='CLOSED',closed_at=now() WHERE id=$1",[order.id]);
+ res=await app.inject({method:'POST',url:'/api/v1/customer-portal/links',headers:auth(ownerToken),payload:{source_request_id:order.id,expires_days:5}});assert.equal(res.statusCode,201,res.body);const second=res.json().data;
  assert.notEqual(second.id,first.id);assert.ok((await query('SELECT revoked_at FROM customer_portal_links WHERE id=$1',[first.id])).rows[0].revoked_at);
  res=await app.inject({method:'GET',url:`/public/customer-portal/${token}`});assert.equal(res.statusCode,410,res.body);assert.equal(res.json().error.code,'PORTAL_REVOKED');
 
- const token2=second.url.split('/').at(-1);await query("UPDATE customer_portal_links SET created_at=now()-interval '2 days',expires_at=now()-interval '1 day' WHERE id=$1",[second.id]);
+ const token2=second.url.split('/').at(-1);
+ await query('UPDATE customers SET deleted_at=now() WHERE id=$1',[customer.id]);
+ res=await app.inject({method:'GET',url:`/public/customer-portal/${token2}`});assert.equal(res.statusCode,404,res.body);assert.equal(res.json().error.code,'NOT_FOUND');
+ await query('UPDATE customers SET deleted_at=NULL WHERE id=$1',[customer.id]);
+ await query("UPDATE customer_portal_links SET created_at=now()-interval '2 days',expires_at=now()-interval '1 day' WHERE id=$1",[second.id]);
  res=await app.inject({method:'GET',url:`/public/customer-portal/${token2}`});assert.equal(res.statusCode,410,res.body);assert.equal(res.json().error.code,'PORTAL_EXPIRED');
 
  await app.close();await db.close();
