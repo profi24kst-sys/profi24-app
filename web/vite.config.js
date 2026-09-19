@@ -34,7 +34,8 @@ export default defineConfig({
         approve: 'approve.html',
         warranty: 'warranty.html',
         feedback: 'feedback.html',
-        visit: 'visit.html'
+        visit: 'visit.html',
+        customerPortal: 'customer-portal.html'
       }
     }
   }
