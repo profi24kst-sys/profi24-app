@@ -47,9 +47,9 @@ async function publicOrder(pool,row){
 }
 
 export function installCustomerPortal(app,pool){
- app.post('/api/v1/customer-portal/requests/:id/link',async(req,reply)=>{
+ app.post('/api/v1/customer-portal/links',async(req,reply)=>{
   if(!await authenticated(req,reply,pool))return;
-  const requestId=id(req.params.id);if(!requestId)return fail(reply,'VALIDATION','Некорректный заказ');
+  const requestId=id(req.body?.source_request_id);if(!requestId)return fail(reply,'VALIDATION','Некорректный заказ');
   const order=await accessibleOrder(pool,req.user,requestId,reply);if(!order)return;
   const customer=(await pool.query('SELECT id,name,phone FROM customers WHERE id=$1 AND deleted_at IS NULL',[order.customer_id])).rows[0];
   if(!customer)return fail(reply,'CUSTOMER_NOT_FOUND','Клиент не найден',404);
@@ -93,7 +93,7 @@ export function installCustomerPortal(app,pool){
  app.get('/public/customer-portal/:token',async(req,reply)=>{
   const raw=String(req.params.token||'');if(!/^[a-f0-9]{64}$/i.test(raw))return fail(reply,'NOT_FOUND','Кабинет не найден',404);
   const link=(await pool.query(`SELECT l.*,c.name customer_name FROM customer_portal_links l JOIN customers c ON c.id=l.customer_id
-    WHERE l.token_hash=$1`,[hashToken(raw)])).rows[0];
+    WHERE l.token_hash=$1 AND c.deleted_at IS NULL`,[hashToken(raw)])).rows[0];
   if(!link)return fail(reply,'NOT_FOUND','Кабинет не найден',404);
   if(link.revoked_at)return fail(reply,'PORTAL_REVOKED','Ссылка на кабинет отозвана',410);
   if(new Date(link.expires_at)<=new Date())return fail(reply,'PORTAL_EXPIRED','Срок действия ссылки истёк',410);
