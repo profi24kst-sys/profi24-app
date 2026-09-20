@@ -30,13 +30,7 @@ async function creationScope(pool,user,customerId,sourceBranchId){
  if(user.role!=='MANAGER')return null;
  const allowed=await managerBranches(pool,user.id);
  if(!allowed.includes(Number(sourceBranchId)))return [];
- const rows=(await pool.query(`SELECT DISTINCT branch_id
-   FROM requests
-   WHERE customer_id=$1 AND deleted_at IS NULL AND branch_id=ANY($2::int[])
-   ORDER BY branch_id`,[customerId,allowed])).rows;
- const scope=rows.map(x=>Number(x.branch_id)).filter(Number.isSafeInteger);
- if(!scope.includes(Number(sourceBranchId)))scope.push(Number(sourceBranchId));
- return [...new Set(scope)].sort((a,b)=>a-b);
+ return [...new Set(allowed)].sort((a,b)=>a-b);
 }
 async function canManageScope(pool,user,link){
  if(user.role!=='MANAGER')return true;
