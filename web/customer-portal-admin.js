@@ -17,24 +17,31 @@ function renderState(action,revoke,state){
  action.dataset.linkId=state?.id?String(state.id):'';
  action.textContent=active?'Кабинет активен':'Кабинет клиента';
  action.title=active?`Активная ссылка до ${formatExpiry(state.expires_at)}. Нажмите, чтобы выпустить новую.`:'Создать персональную ссылку на историю ремонтов';
+ action.disabled=false;
  revoke.hidden=!active;
  revoke.style.display=active?'':'none';
  revoke.setAttribute('aria-hidden',active?'false':'true');
  revoke.dataset.linkId=state?.id?String(state.id):'';
  revoke.title=active?`Отозвать ссылку, действующую до ${formatExpiry(state.expires_at)}`:'';
+ revoke.disabled=!active;
 }
 
 async function refresh(action,revoke,id){
+ action.disabled=true;revoke.disabled=true;action.textContent='Проверяем…';action.dataset.portalActive='unknown';action.dataset.linkId='';
  try{
   const state=await json(`/approvals-api/api/v1/customer-portal/requests/${id}/link`);
   renderState(action,revoke,state);
  }catch(error){
-  action.dataset.portalActive='false';
-  action.textContent='Кабинет клиента';
-  action.title=error.message;
+  action.dataset.portalActive='unknown';
+  action.dataset.linkId='';
+  action.textContent='Кабинет недоступен';
+  action.title=`Не удалось проверить состояние кабинета: ${error.message}`;
+  action.disabled=true;
   revoke.hidden=true;
   revoke.style.display='none';
   revoke.setAttribute('aria-hidden','true');
+  revoke.dataset.linkId='';
+  revoke.disabled=true;
  }
 }
 
@@ -68,8 +75,8 @@ function mount(){
  top.querySelector('[data-customer-portal-action]')?.remove();
  top.querySelector('[data-customer-portal-revoke]')?.remove();
 
- const action=document.createElement('button');action.type='button';action.dataset.customerPortalAction='true';action.dataset.requestId=String(id);action.textContent='Кабинет клиента';
- const revoke=document.createElement('button');revoke.type='button';revoke.dataset.customerPortalRevoke='true';revoke.dataset.requestId=String(id);revoke.textContent='Отозвать';revoke.hidden=true;revoke.style.display='none';revoke.setAttribute('aria-hidden','true');
+ const action=document.createElement('button');action.type='button';action.dataset.customerPortalAction='true';action.dataset.requestId=String(id);action.dataset.portalActive='unknown';action.textContent='Проверяем…';action.disabled=true;
+ const revoke=document.createElement('button');revoke.type='button';revoke.dataset.customerPortalRevoke='true';revoke.dataset.requestId=String(id);revoke.textContent='Отозвать';revoke.hidden=true;revoke.style.display='none';revoke.setAttribute('aria-hidden','true');revoke.disabled=true;
  action.addEventListener('click',()=>createLink(action,revoke,id));
  revoke.addEventListener('click',()=>revokeLink(action,revoke,id));
  const close=top.querySelector('[aria-label="Закрыть Заказ 360"]')||null;
