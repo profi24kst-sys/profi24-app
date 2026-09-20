@@ -5,12 +5,23 @@ export const customerPortalStatements=[
  source_request_id INT NOT NULL REFERENCES requests(id) ON DELETE CASCADE,
  token_hash TEXT NOT NULL UNIQUE,
  created_by INT NOT NULL REFERENCES users(id),
+ scope_branch_ids INT[],
  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
  expires_at TIMESTAMPTZ NOT NULL,
  revoked_at TIMESTAMPTZ,
  last_used_at TIMESTAMPTZ,
- CHECK(expires_at>created_at)
+ CHECK(expires_at>created_at),
+ CHECK(scope_branch_ids IS NULL OR cardinality(scope_branch_ids)>0)
 )`,
+`ALTER TABLE customer_portal_links ADD COLUMN IF NOT EXISTS scope_branch_ids INT[]`,
+`UPDATE customer_portal_links l
+ SET scope_branch_ids=ARRAY[r.branch_id]::int[]
+ FROM users u,requests r
+ WHERE l.created_by=u.id
+   AND l.source_request_id=r.id
+   AND u.role='MANAGER'
+   AND l.scope_branch_ids IS NULL
+   AND r.branch_id IS NOT NULL`,
 `CREATE INDEX IF NOT EXISTS idx_customer_portal_customer ON customer_portal_links(customer_id,created_at DESC)`,
 `CREATE INDEX IF NOT EXISTS idx_customer_portal_active ON customer_portal_links(customer_id,expires_at) WHERE revoked_at IS NULL`
 ];
