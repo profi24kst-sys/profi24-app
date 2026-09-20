@@ -31,6 +31,8 @@ async function api(page,url,opt={}){for(let attempt=0;attempt<2;attempt++)try{re
  let revokeConfirmed=false;page.once('dialog',async dialog=>{if(dialog.type()!=='confirm')fail('revoke confirmation missing');revokeConfirmed=true;await dialog.accept()});await page.getByRole('button',{name:'Отозвать',exact:true}).click();if(!revokeConfirmed)fail('revoke confirmation was not shown');
  await page.getByRole('button',{name:'Кабинет клиента',exact:true}).waitFor({state:'visible',timeout:10000});if(await page.locator('[data-customer-portal-revoke]').isVisible().catch(()=>false))fail('revoke control stayed visible after revocation');
  r=await api(page,`/approvals-api/api/v1/customer-portal/requests/${order.id}/link`);if(r.status!==200||r.data?.active)fail('portal remained active after revocation');
- r=await page.request.get(portalUrl);if(r.status()!==410)fail(`revoked portal stayed accessible ${r.status()}`);
+ const publicToken=portalUrl.split('/').filter(Boolean).at(-1);
+ r=await page.request.get(`${BASE}/approvals-api/public/customer-portal/${encodeURIComponent(publicToken)}`);if(r.status()!==410)fail(`revoked portal API stayed accessible ${r.status()}`);
+ await page.goto(portalUrl,{waitUntil:'domcontentloaded'});await page.getByRole('heading',{name:'Кабинет недоступен',exact:true}).waitFor({state:'visible',timeout:10000});await page.getByText('Ссылка на кабинет отозвана',{exact:true}).waitFor({state:'visible',timeout:10000});
  console.log(`customer_portal_regression=ok order=${order.number} lifecycle=ok`);
 }catch(error){try{await page.screenshot({path:path.join(artifacts,'customer-portal-failure.png'),fullPage:true})}catch{}fs.writeFileSync(path.join(artifacts,'customer-portal-error.txt'),String(error.stack||error));console.error(error);process.exitCode=1}finally{await browser.close()}})();
