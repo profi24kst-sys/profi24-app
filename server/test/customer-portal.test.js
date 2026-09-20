@@ -114,3 +114,36 @@ test('manager customer portal is branch-scoped and cannot revoke a global portal
 
  await app.close();await db.close();
 });
+
+
+test('manager portal keeps the full branch permission snapshot for later customer orders',async()=>{
+ const db=await PGlite.create();
+ const query=(sql,params=[])=>params.length?db.query(sql,params):db.exec(sql).then(r=>r.at(-1));
+ let queue=Promise.resolve();
+ const pool={query,connect:async()=>{const before=queue;let release;queue=new Promise(r=>{release=r});await before;return{query,release}},end:async()=>{}};
+ await migrateCore(pool);
+ const kst=(await query("SELECT id FROM branches WHERE code='KST'")).rows[0];
+ const allowedLater=(await query("INSERT INTO branches(code,name,active) VALUES('LATER','Разрешённый второй филиал',true) RETURNING id")).rows[0];
+ const blocked=(await query("INSERT INTO branches(code,name,active) VALUES('BLOCK','Недоступный филиал',true) RETURNING id")).rows[0];
+ const manager=(await query("INSERT INTO users(name,email,password_hash,role,primary_branch_id) VALUES('Snapshot Manager','snapshot-manager@portal.test','x','MANAGER',$1) RETURNING id,role",[kst.id])).rows[0];
+ await query("INSERT INTO user_branches(user_id,branch_id,is_primary) VALUES($1,$2,false) ON CONFLICT(user_id,branch_id) DO NOTHING",[manager.id,allowedLater.id]);
+ const customer=(await query("INSERT INTO customers(name,phone) VALUES('Snapshot Client','+77010000222') RETURNING id")).rows[0];
+ const firstOrder=(await query("INSERT INTO requests(number,customer_id,branch_id,status,complaint) VALUES('SNAP-A',$1,$2,'REPAIR','Первый филиал') RETURNING id",[customer.id,kst.id])).rows[0];
+
+ const app=Fastify({logger:false});await app.register(jwt,{secret:'portal-snapshot-secret'});installCustomerPortal(app,pool);await app.ready();
+ const managerToken=app.jwt.sign({id:manager.id,role:'MANAGER'}),auth={authorization:`Bearer ${managerToken}`};
+
+ let res=await app.inject({method:'POST',url:'/api/v1/customer-portal/links',headers:auth,payload:{source_request_id:firstOrder.id,expires_days:30}});
+ assert.equal(res.statusCode,201,res.body);const link=res.json().data,token=link.url.split('/').at(-1);
+ assert.deepEqual(link.scope_branch_ids,[Number(kst.id),Number(allowedLater.id)].sort((a,b)=>a-b));
+
+ await query("INSERT INTO requests(number,customer_id,branch_id,status,complaint) VALUES('SNAP-B',$1,$2,'NEW','Поздний заказ во втором разрешённом филиале')",[customer.id,allowedLater.id]);
+ const blockedOrder=(await query("INSERT INTO requests(number,customer_id,branch_id,status,complaint) VALUES('SNAP-C',$1,$2,'NEW','Недоступный филиал') RETURNING id",[customer.id,blocked.id])).rows[0];
+
+ res=await app.inject({method:'GET',url:`/public/customer-portal/${token}`});assert.equal(res.statusCode,200,res.body);
+ assert.deepEqual(new Set(res.json().data.orders.map(x=>x.number)),new Set(['SNAP-A','SNAP-B']));
+ res=await app.inject({method:'POST',url:'/api/v1/customer-portal/links',headers:auth,payload:{source_request_id:blockedOrder.id,expires_days:30}});
+ assert.equal(res.statusCode,403,res.body);
+
+ await app.close();await db.close();
+});
