@@ -19,6 +19,32 @@ const baseUrl=()=>String(process.env.PUBLIC_BASE_URL||process.env.CORS_ORIGIN?.s
 async function tableExists(pool,name){return Boolean((await pool.query('SELECT to_regclass($1) name',[`public.${name}`])).rows[0]?.name)}
 async function authenticated(req,reply,pool){if(!await authenticate(req,reply,pool))return false;if(!officeRoles.has(req.user.role)){fail(reply,'FORBIDDEN','Недостаточно прав',403);return false}return true}
 async function accessibleOrder(pool,user,requestId,reply){try{return await requireOrder(pool,user,requestId)}catch(error){fail(reply,error.code||'FORBIDDEN',error.message||'Нет доступа к заказу',error.statusCode||403);return null}}
+async function managerBranches(pool,userId){
+ if(!await tableExists(pool,'user_branches'))return [];
+ return (await pool.query(`SELECT ub.branch_id
+   FROM user_branches ub
+   JOIN branches b ON b.id=ub.branch_id AND b.active=true
+   WHERE ub.user_id=$1 ORDER BY ub.branch_id`,[userId])).rows.map(x=>Number(x.branch_id));
+}
+async function creationScope(pool,user,customerId,sourceBranchId){
+ if(user.role!=='MANAGER')return null;
+ const allowed=await managerBranches(pool,user.id);
+ if(!allowed.includes(Number(sourceBranchId)))return [];
+ const rows=(await pool.query(`SELECT DISTINCT branch_id
+   FROM requests
+   WHERE customer_id=$1 AND deleted_at IS NULL AND branch_id=ANY($2::int[])
+   ORDER BY branch_id`,[customerId,allowed])).rows;
+ const scope=rows.map(x=>Number(x.branch_id)).filter(Number.isSafeInteger);
+ if(!scope.includes(Number(sourceBranchId)))scope.push(Number(sourceBranchId));
+ return [...new Set(scope)].sort((a,b)=>a-b);
+}
+async function canManageScope(pool,user,link){
+ if(user.role!=='MANAGER')return true;
+ const scope=Array.isArray(link.scope_branch_ids)?link.scope_branch_ids.map(Number):[];
+ if(!scope.length)return false;
+ const allowed=new Set(await managerBranches(pool,user.id));
+ return scope.every(branchId=>allowed.has(branchId));
+}
 
 async function queuePortalMessage(pool,{requestId,phone,customerName,url,linkId,createdBy}){
  try{
@@ -53,17 +79,23 @@ export function installCustomerPortal(app,pool){
   const order=await accessibleOrder(pool,req.user,requestId,reply);if(!order)return;
   const customer=(await pool.query('SELECT id,name,phone FROM customers WHERE id=$1 AND deleted_at IS NULL',[order.customer_id])).rows[0];
   if(!customer)return fail(reply,'CUSTOMER_NOT_FOUND','Клиент не найден',404);
+  const scopeBranchIds=await creationScope(pool,req.user,customer.id,order.branch_id);
+  if(req.user.role==='MANAGER'&&!scopeBranchIds?.length)return fail(reply,'PORTAL_SCOPE_FORBIDDEN','Нет доступных филиалов для кабинета клиента',403);
   const days=Math.min(90,Math.max(1,Number(req.body?.expires_days)||30));
   const raw=crypto.randomBytes(32).toString('hex'),tokenHash=hashToken(raw);
   const c=await pool.connect();let link;
   try{
    await c.query('BEGIN');
    await c.query('SELECT id FROM customers WHERE id=$1 FOR UPDATE',[customer.id]);
-   await c.query('UPDATE customer_portal_links SET revoked_at=COALESCE(revoked_at,now()) WHERE customer_id=$1 AND revoked_at IS NULL',[customer.id]);
-   link=(await c.query(`INSERT INTO customer_portal_links(customer_id,source_request_id,token_hash,created_by,expires_at)
-     VALUES($1,$2,$3,$4,now()+($5||' days')::interval) RETURNING id,customer_id,source_request_id,created_at,expires_at`,
-     [customer.id,requestId,tokenHash,req.user.id,String(days)])).rows[0];
-   await c.query(`INSERT INTO request_history(request_id,user_id,action,details) VALUES($1,$2,'CUSTOMER_PORTAL_LINK_CREATED',$3)`,[requestId,req.user.id,{portal_link_id:link.id,expires_at:link.expires_at}]);
+   await c.query(`UPDATE customer_portal_links
+     SET revoked_at=COALESCE(revoked_at,now())
+     WHERE customer_id=$1 AND revoked_at IS NULL
+       AND scope_branch_ids IS NOT DISTINCT FROM $2::int[]`,[customer.id,scopeBranchIds]);
+   link=(await c.query(`INSERT INTO customer_portal_links(customer_id,source_request_id,token_hash,created_by,scope_branch_ids,expires_at)
+     VALUES($1,$2,$3,$4,$5::int[],now()+($6||' days')::interval)
+     RETURNING id,customer_id,source_request_id,scope_branch_ids,created_at,expires_at`,
+     [customer.id,requestId,tokenHash,req.user.id,scopeBranchIds,String(days)])).rows[0];
+   await c.query(`INSERT INTO request_history(request_id,user_id,action,details) VALUES($1,$2,'CUSTOMER_PORTAL_LINK_CREATED',$3)`,[requestId,req.user.id,{portal_link_id:link.id,expires_at:link.expires_at,scope_branch_ids:scopeBranchIds}]);
    await c.query('COMMIT');
   }catch(error){try{await c.query('ROLLBACK')}catch{}throw error}finally{c.release()}
   const url=`${baseUrl()}/client/${raw}`;
@@ -75,8 +107,24 @@ export function installCustomerPortal(app,pool){
   if(!await authenticated(req,reply,pool))return;
   const requestId=id(req.params.id);if(!requestId)return fail(reply,'VALIDATION','Некорректный заказ');
   const order=await accessibleOrder(pool,req.user,requestId,reply);if(!order)return;
-  const row=(await pool.query(`SELECT id,customer_id,source_request_id,created_at,expires_at,revoked_at,last_used_at,
-    (revoked_at IS NULL AND expires_at>now()) active FROM customer_portal_links WHERE customer_id=$1 ORDER BY id DESC LIMIT 1`,[order.customer_id])).rows[0]||null;
+  let row;
+  if(req.user.role==='MANAGER'){
+   const allowed=await managerBranches(pool,req.user.id);
+   row=(await pool.query(`SELECT id,customer_id,source_request_id,scope_branch_ids,created_at,expires_at,revoked_at,last_used_at,
+     (revoked_at IS NULL AND expires_at>now()) active
+     FROM customer_portal_links
+     WHERE customer_id=$1
+       AND scope_branch_ids IS NOT NULL
+       AND $2::int=ANY(scope_branch_ids)
+       AND scope_branch_ids <@ $3::int[]
+     ORDER BY id DESC LIMIT 1`,[order.customer_id,order.branch_id,allowed])).rows[0]||null;
+  }else{
+   row=(await pool.query(`SELECT id,customer_id,source_request_id,scope_branch_ids,created_at,expires_at,revoked_at,last_used_at,
+     (revoked_at IS NULL AND expires_at>now()) active
+     FROM customer_portal_links
+     WHERE customer_id=$1 AND scope_branch_ids IS NULL
+     ORDER BY id DESC LIMIT 1`,[order.customer_id])).rows[0]||null;
+  }
   return{data:row};
  });
 
@@ -84,9 +132,10 @@ export function installCustomerPortal(app,pool){
   if(!await authenticated(req,reply,pool))return;
   const linkId=id(req.params.id);if(!linkId)return fail(reply,'VALIDATION','Некорректная ссылка');
   const link=(await pool.query('SELECT * FROM customer_portal_links WHERE id=$1',[linkId])).rows[0];if(!link)return fail(reply,'NOT_FOUND','Ссылка не найдена',404);
+  if(!await canManageScope(pool,req.user,link))return fail(reply,'PORTAL_SCOPE_FORBIDDEN','Нет доступа к кабинету другого филиала',403);
   const order=await accessibleOrder(pool,req.user,link.source_request_id,reply);if(!order)return;
   const row=(await pool.query('UPDATE customer_portal_links SET revoked_at=COALESCE(revoked_at,now()) WHERE id=$1 RETURNING id,revoked_at',[linkId])).rows[0];
-  await pool.query(`INSERT INTO request_history(request_id,user_id,action,details) VALUES($1,$2,'CUSTOMER_PORTAL_LINK_REVOKED',$3)`,[link.source_request_id,req.user.id,{portal_link_id:linkId}]);
+  await pool.query(`INSERT INTO request_history(request_id,user_id,action,details) VALUES($1,$2,'CUSTOMER_PORTAL_LINK_REVOKED',$3)`,[link.source_request_id,req.user.id,{portal_link_id:linkId,scope_branch_ids:link.scope_branch_ids}]);
   return{data:row};
  });
 
@@ -101,7 +150,10 @@ export function installCustomerPortal(app,pool){
   const rows=(await pool.query(`SELECT r.id,r.number,r.status,r.complaint,r.diagnosis,r.total,r.paid,r.scheduled_at,r.created_at,r.closed_at,r.warranty_until,
     e.category,e.brand,e.model,e.serial_number
     FROM requests r LEFT JOIN equipment e ON e.id=r.equipment_id
-    WHERE r.customer_id=$1 AND r.deleted_at IS NULL ORDER BY r.created_at DESC,r.id DESC`,[link.customer_id])).rows;
+    WHERE r.customer_id=$1
+      AND r.deleted_at IS NULL
+      AND ($2::int[] IS NULL OR r.branch_id=ANY($2::int[]))
+    ORDER BY r.created_at DESC,r.id DESC`,[link.customer_id,link.scope_branch_ids||null])).rows;
   const orders=[];for(const row of rows)orders.push(await publicOrder(pool,row));
   return{data:{customer:{name:link.customer_name},expires_at:link.expires_at,orders}};
  });
