@@ -27,9 +27,9 @@ await runSchemaStatements(pool,[
   `CREATE INDEX IF NOT EXISTS idx_warranty_cards_token ON warranty_cards(token)`,
   `ALTER TABLE warranty_cards ADD COLUMN IF NOT EXISTS snapshot JSONB`,
   `ALTER TABLE warranty_cards ADD COLUMN IF NOT EXISTS content_hash TEXT`,
-  `CREATE OR REPLACE FUNCTION warranty_card_immutable() RETURNS trigger AS $ BEGIN
+  `CREATE OR REPLACE FUNCTION warranty_card_immutable() RETURNS trigger AS $warranty$ BEGIN
     RAISE EXCEPTION 'Выданный гарантийный талон нельзя изменять или удалять' USING ERRCODE='P2401';
-  END $ LANGUAGE plpgsql`,
+  END $warranty$ LANGUAGE plpgsql`,
   `DROP TRIGGER IF EXISTS trg_warranty_card_immutable ON warranty_cards`,
   `CREATE TRIGGER trg_warranty_card_immutable BEFORE UPDATE OR DELETE ON warranty_cards FOR EACH ROW EXECUTE FUNCTION warranty_card_immutable()`,
   `CREATE TABLE IF NOT EXISTS warranty_state(id INT PRIMARY KEY DEFAULT 1,last_history_id BIGINT NOT NULL DEFAULT 0,updated_at TIMESTAMPTZ DEFAULT now())`,
