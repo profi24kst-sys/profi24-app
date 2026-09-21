@@ -5,7 +5,7 @@ import './approval-portal.css';
 const money = value => `${Number(value || 0).toLocaleString('ru-RU')} ₸`;
 
 function App() {
-  const token = location.pathname.match(/^\/approve\/([a-f0-9]+)/)?.[1];
+  const token = location.pathname.match(/^\/approve\/([A-Za-z0-9_-]+)/)?.[1];
   const [approval, setApproval] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
