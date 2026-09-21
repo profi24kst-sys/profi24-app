@@ -6,7 +6,11 @@ async function gotoBase(page){
  for(let attempt=1;attempt<=3;attempt++){
   try{return await page.goto(BASE,{waitUntil:'domcontentloaded',timeout:15000})}
   catch(error){
-   if(!String(error.message||error).includes('ERR_ABORTED')||attempt===3)throw error;
+   const message=String(error.message||error),interrupted=message.includes('ERR_ABORTED')||/interrupted by another navigation/i.test(message);
+   if(!interrupted||attempt===3)throw error;
+   await page.waitForLoadState('domcontentloaded').catch(()=>{});
+   const pathname=new URL(page.url()).pathname;
+   if(pathname==='/'||pathname==='/orders')return null;
    await page.waitForTimeout(300*attempt);
   }
  }
