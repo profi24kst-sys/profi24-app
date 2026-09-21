@@ -158,12 +158,44 @@ test('Сквозные регрессии доступа, заказов, скл
    const reopen=await call('owner-control','POST',`/api/v1/orders/${number}/reopen`,{reason:'Документированная корректировка'});assert.equal(reopen.status,200,JSON.stringify(reopen));
    assert.equal((await query('SELECT status FROM requests WHERE id=$1',[id])).rows[0].status,'PAYMENT_REQUIRED');
   });
-  await t.test('Публичное согласование не возобновляет отменённый заказ',async()=>{
-   const id=await order('CANCELLED');
-   await query("INSERT INTO customer_approvals(request_id,token,total,expires_at,created_by) VALUES($1,'cancelled-test-token',1000,now()+interval '1 day',1)",[id]);
-   const res=await s.services['approvals-portal'].inject({method:'POST',url:'/public/approvals/cancelled-test-token/respond',payload:{decision:'APPROVED'}});
-   assert.equal(res.statusCode,409,res.body);
+  await t.test('Публичное согласование соблюдает lifecycle заказа и клиента',async()=>{
+   const cancelled=await order('CANCELLED');
+   await query("INSERT INTO customer_approvals(request_id,token,total,expires_at,created_by) VALUES($1,'cancelled-test-token',1000,now()+interval '1 day',1)",[cancelled]);
+   let res=await s.services['approvals-portal'].inject({method:'GET',url:'/public/approvals/cancelled-test-token'});
+   assert.equal(res.statusCode,410,res.body);assert.equal(res.json().error.code,'APPROVAL_INACTIVE');
+   res=await s.services['approvals-portal'].inject({method:'POST',url:'/public/approvals/cancelled-test-token/respond',payload:{decision:'APPROVED'}});
+   assert.equal(res.statusCode,410,res.body);assert.equal(res.json().error.code,'APPROVAL_INACTIVE');
    assert.equal((await query("SELECT status FROM customer_approvals WHERE token='cancelled-test-token'")).rows[0].status,'PENDING');
+
+   const deletedOrder=await order();
+   await query("INSERT INTO customer_approvals(request_id,token,total,expires_at,created_by) VALUES($1,'deleted-order-token',1000,now()+interval '1 day',1)",[deletedOrder]);
+   await query('UPDATE requests SET deleted_at=now() WHERE id=$1',[deletedOrder]);
+   res=await s.services['approvals-portal'].inject({method:'GET',url:'/public/approvals/deleted-order-token'});
+   assert.equal(res.statusCode,404,res.body);
+   res=await s.services['approvals-portal'].inject({method:'POST',url:'/public/approvals/deleted-order-token/respond',payload:{decision:'APPROVED'}});
+   assert.equal(res.statusCode,404,res.body);
+
+   const deletedCustomerOrder=await order();
+   const customerId=(await query('SELECT customer_id FROM requests WHERE id=$1',[deletedCustomerOrder])).rows[0].customer_id;
+   await query("INSERT INTO customer_approvals(request_id,token,total,expires_at,created_by) VALUES($1,'deleted-customer-token',1000,now()+interval '1 day',1)",[deletedCustomerOrder]);
+   await query('UPDATE customers SET deleted_at=now() WHERE id=$1',[customerId]);
+   res=await s.services['approvals-portal'].inject({method:'GET',url:'/public/approvals/deleted-customer-token'});
+   assert.equal(res.statusCode,404,res.body);
+   res=await s.services['approvals-portal'].inject({method:'POST',url:'/public/approvals/deleted-customer-token/respond',payload:{decision:'APPROVED'}});
+   assert.equal(res.statusCode,404,res.body);
+   await query('UPDATE customers SET deleted_at=NULL WHERE id=$1',[customerId]);
+
+   const active=await order();
+   await query("INSERT INTO customer_approvals(request_id,token,status,total,expires_at,created_by) VALUES($1,'superseded-token','SUPERSEDED',1000,now()+interval '1 day',1),($1,'expired-token','PENDING',1000,now()-interval '1 hour',1)",[active]);
+   res=await s.services['approvals-portal'].inject({method:'GET',url:'/public/approvals/superseded-token'});
+   assert.equal(res.statusCode,200,res.body);assert.equal(res.json().data.status,'SUPERSEDED');
+   res=await s.services['approvals-portal'].inject({method:'POST',url:'/public/approvals/superseded-token/respond',payload:{decision:'APPROVED'}});
+   assert.equal(res.statusCode,409,res.body);
+   res=await s.services['approvals-portal'].inject({method:'GET',url:'/public/approvals/expired-token'});
+   assert.equal(res.statusCode,200,res.body);assert.equal(res.json().data.status,'EXPIRED');
+   assert.equal((await query("SELECT status FROM customer_approvals WHERE token='expired-token'")).rows[0].status,'EXPIRED');
+   res=await s.services['approvals-portal'].inject({method:'POST',url:'/public/approvals/expired-token/respond',payload:{decision:'APPROVED'}});
+   assert.equal(res.statusCode,409,res.body);
   });
   await t.test('Гарантия создаётся после закрытия, предоплата и отмена её не активируют',async()=>{
    const closed=await order('PAYMENT_REQUIRED'),paid=await order(),cancelled=await order('CANCELLED');
