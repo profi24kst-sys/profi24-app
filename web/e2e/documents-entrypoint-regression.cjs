@@ -12,6 +12,7 @@ async function gotoBase(page){
   }
  }
 }
+let TOKEN='';
 async function login(page){
  await gotoBase(page);
  await page.locator('input[autocomplete="username"]').fill(EMAIL);
@@ -19,8 +20,23 @@ async function login(page){
  await page.getByRole('button',{name:'Войти',exact:true}).click();
  await page.waitForFunction(email=>{try{return JSON.parse(localStorage.getItem('user')||'null')?.email===email}catch{return false}},EMAIL,{timeout:10000});
  await page.locator('aside').waitFor({state:'visible',timeout:10000});
+ for(let attempt=0;attempt<5;attempt++){
+  try{
+   await page.waitForLoadState('domcontentloaded');
+   TOKEN=await page.evaluate(()=>localStorage.getItem('token')||'');
+   if(TOKEN)return;
+  }catch(error){
+   if(!/Execution context was destroyed|Target page, context or browser has been closed/i.test(String(error)))throw error;
+  }
+  await page.waitForTimeout(250*(attempt+1));
+ }
+ throw Error('authenticated token unavailable after navigation settled');
 }
-async function api(page,url,{method='GET',body}={}){for(let attempt=0;attempt<2;attempt++)try{return await page.evaluate(async({url,method,body})=>{const token=localStorage.token||'',response=await fetch(url,{method,headers:{Authorization:`Bearer ${token}`,...(body===undefined?{}:{'Content-Type':'application/json'})},body:body===undefined?undefined:JSON.stringify(body)}),text=await response.text();let json={};try{json=JSON.parse(text)}catch{}return{status:response.status,data:json.data,error:json.error}}, {url,method,body})}catch(error){if(attempt||!/Execution context was destroyed/i.test(String(error)))throw error;await page.waitForLoadState('domcontentloaded')}throw Error('api retry exhausted')}
+async function api(page,url,{method='GET',body}={}){
+ const response=await page.request.fetch(new URL(url,BASE).toString(),{method,headers:{Authorization:`Bearer ${TOKEN}`,...(body===undefined?{}:{'Content-Type':'application/json'})},data:body});
+ const text=await response.text();let json={};try{json=JSON.parse(text)}catch{}
+ return{status:response.status(),data:json.data,error:json.error};
+}
 (async()=>{const browser=await chromium.launch({headless:true}),page=await browser.newPage({viewport:{width:1400,height:900}});try{
  await login(page);
  const suffix=Date.now().toString(36);let r=await api(page,'/api/v1/customers',{method:'POST',body:{name:`E2E Docs ${suffix}`,phone:`+7703${String(Date.now()).slice(-7)}`,address:'Костанай'}});if(r.status!==201)fail(`customer ${r.status}`);const customer=r.data;
