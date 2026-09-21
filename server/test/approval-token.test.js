@@ -12,6 +12,16 @@ test('approval public token is deterministic, signed and rejects tampering',()=>
   assert.equal(approvalIdFromPublicToken(token.replace('v2.42.','v2.43.')),null);
   assert.equal(approvalIdFromPublicToken(token.slice(0,-1)+(token.endsWith('A')?'B':'A')),null);
   assert.equal(approvalIdFromPublicToken('legacy-plaintext-token'),null);
+  const jwt=process.env.JWT_SECRET;
+  process.env.JWT_SECRET='rotated-auth-secret-one';
+  const stable=approvalPublicToken(42);
+  process.env.JWT_SECRET='rotated-auth-secret-two';
+  assert.equal(approvalPublicToken(42),stable);
+  assert.equal(approvalIdFromPublicToken(stable),42);
+  process.env.APPROVAL_TOKEN_SECRET='different-approval-secret-value';
+  assert.equal(approvalIdFromPublicToken(stable),null);
+  process.env.APPROVAL_TOKEN_SECRET='approval-test-secret';
+  if(jwt===undefined)delete process.env.JWT_SECRET;else process.env.JWT_SECRET=jwt;
   assert.throws(()=>approvalPublicToken(0));
  }finally{if(old===undefined)delete process.env.APPROVAL_TOKEN_SECRET;else process.env.APPROVAL_TOKEN_SECRET=old}
 });
