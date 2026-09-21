@@ -2,8 +2,27 @@ const{chromium}=require('playwright');
 const fs=require('fs'),path=require('path');
 const BASE=process.env.BASE_URL||'http://127.0.0.1:5173',EMAIL=process.env.E2E_EMAIL,PASSWORD=process.env.E2E_PASSWORD,artifacts=path.join(__dirname,'artifacts');fs.mkdirSync(artifacts,{recursive:true});
 function fail(message){throw new Error(message)}
-async function login(page){await page.goto(BASE,{waitUntil:'domcontentloaded'});await page.locator('input[autocomplete="username"]').fill(EMAIL);await page.locator('input[autocomplete="current-password"]').fill(PASSWORD);await page.getByRole('button',{name:'Войти'}).click();await page.waitForFunction(email=>{try{return JSON.parse(localStorage.user||'null')?.email===email}catch{return false}},EMAIL,{timeout:10000});await page.locator('aside').waitFor({state:'visible',timeout:10000})}
-async function api(page,url,opt={}){for(let attempt=0;attempt<2;attempt++)try{return await page.evaluate(async({url,method='GET',body})=>{const r=await fetch(url,{method,headers:{Authorization:`Bearer ${localStorage.token||''}`,...(body===undefined?{}:{'Content-Type':'application/json'})},body:body===undefined?undefined:JSON.stringify(body)}),text=await r.text();let j={};try{j=JSON.parse(text)}catch{}return{status:r.status,data:j.data,error:j.error,text}}, {url,...opt})}catch(e){if(attempt||!/Execution context was destroyed/i.test(String(e)))throw e;await page.waitForLoadState('domcontentloaded')}throw Error('api retry exhausted')}
+let TOKEN='';
+async function captureToken(page){
+ for(let attempt=0;attempt<5;attempt++){
+  try{
+   await page.waitForLoadState('domcontentloaded');
+   const token=await page.evaluate(()=>localStorage.getItem('token')||'');
+   if(token)return token;
+  }catch(error){
+   if(!/Execution context was destroyed|Target page, context or browser has been closed/i.test(String(error)))throw error;
+  }
+  await page.waitForTimeout(250*(attempt+1));
+ }
+ throw Error('authenticated token unavailable after navigation settled');
+}
+async function api(page,url,{method='GET',body}={}){
+ const headers={Authorization:`Bearer ${TOKEN}`},options={method,headers};
+ if(body!==undefined){headers['Content-Type']='application/json';options.data=body}
+ const r=await page.request.fetch(new URL(url,BASE).toString(),options),text=await r.text();let j={};try{j=JSON.parse(text)}catch{}
+ return{status:r.status(),data:j.data,error:j.error,text};
+}
+async function login(page){await page.goto(BASE,{waitUntil:'domcontentloaded'});await page.locator('input[autocomplete="username"]').fill(EMAIL);await page.locator('input[autocomplete="current-password"]').fill(PASSWORD);await page.getByRole('button',{name:'Войти'}).click();await page.waitForFunction(email=>{try{return JSON.parse(localStorage.user||'null')?.email===email}catch{return false}},EMAIL,{timeout:10000});await page.locator('aside').waitFor({state:'visible',timeout:10000});TOKEN=await captureToken(page)}
 (async()=>{const browser=await chromium.launch({headless:true}),context=await browser.newContext(),page=await context.newPage();try{
  await login(page);const suffix=Date.now().toString(36).toUpperCase(),phone=`+7709${String(Date.now()).slice(-7)}`;
  let r=await api(page,'/api/v1/customers',{method:'POST',body:{name:`E2E Основной ${suffix}`,phone,email:`main-${suffix}@test.invalid`}});if(r.status!==201)fail(`target ${r.status} ${r.text}`);const target=r.data;
