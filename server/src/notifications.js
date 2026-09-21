@@ -1,4 +1,5 @@
 import {authenticate,installOrderAccess} from './access.js';
+import {runSchemaStatements} from './schema-retry.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
@@ -53,7 +54,7 @@ const schema=[
  read_at TIMESTAMPTZ
 )`
 ];
-for(const s of schema)await q(s);
+await runSchemaStatements(pool,schema,{logger:app.log});
 
 const dt=v=>new Date(v).toLocaleString('ru-RU',{timeZone:'Asia/Almaty',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
 function alert(event_key,severity,type,title,subtitle,detail,{request_id=null,task_id=null,audience='OPS',target_user_id=null,source_at=null}={}){return{event_key,severity,type,title,subtitle,detail,request_id,task_id,audience,target_user_id,source_at}}

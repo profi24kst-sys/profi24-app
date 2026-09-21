@@ -11,6 +11,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
 import {installDocumentVersionSchema,insertDocumentVersion} from './document-version-schema.js';
+import {runSchemaStatements} from './schema-retry.js';
 
 const app=Fastify({logger:true,bodyLimit:12*1024*1024});
 await app.register(cors,{origin:(process.env.CORS_ORIGIN||'http://localhost:5173').split(',').map(x=>x.trim()),credentials:true});
@@ -23,13 +24,13 @@ const fail=(r,c,m,s=422)=>r.code(s).send({data:null,error:{code:c,message:m}});
 const root=path.resolve(process.env.UPLOAD_DIR||'/data/uploads');
 await fs.mkdir(root,{recursive:true});
 
-for(const s of[
+await runSchemaStatements(pool,[
   `CREATE TABLE IF NOT EXISTS request_files(id SERIAL PRIMARY KEY,request_id INT NOT NULL REFERENCES requests(id) ON DELETE CASCADE,kind TEXT NOT NULL DEFAULT 'OTHER',original_name TEXT NOT NULL,stored_name TEXT NOT NULL,mime_type TEXT NOT NULL,size_bytes INT NOT NULL,uploaded_by INT REFERENCES users(id),created_at TIMESTAMPTZ DEFAULT now())`,
   `CREATE INDEX IF NOT EXISTS idx_request_files_request ON request_files(request_id,created_at DESC)`,
   `CREATE TABLE IF NOT EXISTS request_signatures(id SERIAL PRIMARY KEY,request_id INT NOT NULL REFERENCES requests(id) ON DELETE CASCADE,signer_type TEXT NOT NULL CHECK(signer_type IN('CLIENT','ENGINEER')),signer_name TEXT,signature_data TEXT NOT NULL,signed_by INT REFERENCES users(id),created_at TIMESTAMPTZ DEFAULT now())`,
   `CREATE TABLE IF NOT EXISTS generated_documents(id SERIAL PRIMARY KEY,request_id INT NOT NULL REFERENCES requests(id) ON DELETE CASCADE,document_type TEXT NOT NULL,document_number TEXT NOT NULL,created_by INT REFERENCES users(id),created_at TIMESTAMPTZ DEFAULT now())`
-])await q(s);
-await installDocumentVersionSchema(pool);
+],{logger:app.log});
+await installDocumentVersionSchema(pool,{logger:app.log});
 
 const auth=async(req,r)=>{if(!await authenticate(req,r,pool))return false;return true;};
 async function requestAccess(req,r,id){
@@ -61,7 +62,7 @@ function storagePath(storedName){
 }
 function sendSecurityError(reply,error){return fail(reply,error.code||'FILE_REJECTED',error.message,error.statusCode||422);}
 
-await protectOrderTables(pool,['request_files','request_signatures']);
+await protectOrderTables(pool,['request_files','request_signatures'],{logger:app.log});
 installOrderAccess(app,pool,'documents');
 
 app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'profi24-documents'}});
