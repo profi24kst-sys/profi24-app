@@ -34,10 +34,15 @@ function seed(){
   const api=await page.request.get(BASE+'/warranty-api/public/warranty/'+fixture.token);
   if(api.status()!==200)fail('public warranty API '+api.status());
   const body=await api.json(),data=body.data||{};
+  const forbiddenKeys=new Set(['direct_cost','purchase_price','performed_by','content_hash','request_id','snapshot','token','engineer_id','address']);
+  const walk=value=>{
+   if(Array.isArray(value)){for(const item of value)walk(item);return}
+   if(!value||typeof value!=='object')return;
+   for(const [key,item] of Object.entries(value)){if(forbiddenKeys.has(key))fail('public warranty leaked field '+key);walk(item)}
+  };
+  walk(data);
   const serialized=JSON.stringify(data);
-  for(const secret of ['direct_cost','purchase_price','performed_by','content_hash','request_id','snapshot','INTERNAL ADDRESS','INTERNAL-CONTENT-HASH']){
-   if(serialized.includes(secret))fail('public warranty leaked '+secret);
-  }
+  for(const secret of ['INTERNAL ADDRESS','INTERNAL-CONTENT-HASH'])if(serialized.includes(secret))fail('public warranty leaked '+secret);
   if(data.number!==fixture.number)fail('warranty number missing');
   if(data.engineer_name!=='E2E Engineer')fail('engineer name missing');
   if(Number(data.works?.[0]?.unit_price)!==20000)fail('public work sale price missing');
