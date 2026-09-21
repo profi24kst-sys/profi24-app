@@ -5,6 +5,7 @@ import jwt from '@fastify/jwt';
 import {PGlite} from '@electric-sql/pglite';
 import {migrateCore} from '../src/migrate.js';
 import {installCustomerPortal} from '../src/customer-portal.js';
+import {approvalTokenFor,approvalTokenHash} from '../src/approval-token.js';
 
 test('customer portal is customer-scoped, expiring and stores only a token hash',async()=>{
  const db=await PGlite.create();
@@ -22,6 +23,9 @@ test('customer portal is customer-scoped, expiring and stores only a token hash'
  await query("INSERT INTO requests(number,customer_id,status,complaint,total,paid) VALUES('PORTAL-OLD',$1,'CLOSED','Предыдущий ремонт',12000,12000)",[customer.id]);
  await query("INSERT INTO requests(number,customer_id,status,complaint,total,paid) VALUES('OTHER-1',$1,'REPAIR','Чужой заказ',99999,0)",[other.id]);
  await query("INSERT INTO request_history(request_id,action,details) VALUES($1,'REQUEST_CREATED','{}'),($1,'WORKFLOW_START_REPAIR','{}'),($1,'ORDER_COMMENT',$2)",[order.id,{secret:'internal note'}]);
+ await query(`CREATE TABLE customer_approvals(id BIGSERIAL PRIMARY KEY,request_id INT NOT NULL REFERENCES requests(id),token TEXT,token_nonce TEXT,token_hash TEXT,status TEXT NOT NULL,version INT NOT NULL,total NUMERIC(14,2),expires_at TIMESTAMPTZ)`);
+ const approvalNonce='portal-approval-nonce',approvalToken=approvalTokenFor(order.id,1,approvalNonce);
+ await query("INSERT INTO customer_approvals(request_id,token,token_nonce,token_hash,status,version,total,expires_at) VALUES($1,NULL,$2,$3,'PENDING',1,25000,now()+interval '1 day')",[order.id,approvalNonce,approvalTokenHash(approvalToken)]);
 
  const app=Fastify({logger:false});await app.register(jwt,{secret:'portal-test-secret'});installCustomerPortal(app,pool);await app.ready();
  const ownerToken=app.jwt.sign({id:owner.id,role:'OWNER'}),engineerToken=app.jwt.sign({id:engineer.id,role:'ENGINEER'});
@@ -42,6 +46,7 @@ test('customer portal is customer-scoped, expiring and stores only a token hash'
  assert.ok(portal.orders.some(x=>x.number==='PORTAL-1'));assert.ok(portal.orders.some(x=>x.number==='PORTAL-OLD'));assert.ok(!portal.orders.some(x=>x.number==='OTHER-1'));
  const current=portal.orders.find(x=>x.number==='PORTAL-1');assert.equal(Number(current.total),25000);assert.equal(Number(current.paid),10000);assert.equal(current.timeline.length,2);
  assert.deepEqual(current.timeline.map(x=>x.label),['Заявка принята','Ремонт начат']);assert.equal('details' in current.timeline[0],false);assert.equal('direct_cost' in current,false);assert.equal('phone' in portal.customer,false);
+ assert.equal(current.actions.approval_url,`/approve/${approvalToken}`);assert.equal((await query('SELECT token FROM customer_approvals WHERE request_id=$1',[order.id])).rows[0].token,null);
 
  await query("UPDATE requests SET status='CLOSED',closed_at=now() WHERE id=$1",[order.id]);
  res=await app.inject({method:'POST',url:'/api/v1/customer-portal/links',headers:auth(ownerToken),payload:{source_request_id:order.id,expires_days:5}});assert.equal(res.statusCode,201,res.body);const second=res.json().data;
