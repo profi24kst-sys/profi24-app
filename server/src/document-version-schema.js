@@ -1,4 +1,5 @@
 import {createHash} from 'node:crypto';
+import {runSchemaStatements} from './schema-retry.js';
 
 export const documentVersionStatements=[
   `ALTER TABLE generated_documents ADD COLUMN IF NOT EXISTS version INT`,
@@ -13,8 +14,8 @@ export const documentVersionStatements=[
   `CREATE TRIGGER trg_generated_document_immutable BEFORE UPDATE OR DELETE ON generated_documents FOR EACH ROW EXECUTE FUNCTION generated_document_immutable()`
 ];
 
-export async function installDocumentVersionSchema(db){
-  for(const statement of documentVersionStatements)await db.query(statement);
+export async function installDocumentVersionSchema(db,{logger=console}={}){
+  await runSchemaStatements(db,documentVersionStatements,{logger});
 }
 
 export async function insertDocumentVersion(db,{requestId,documentType,snapshot,createdBy}){
