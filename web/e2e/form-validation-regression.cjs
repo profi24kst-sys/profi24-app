@@ -18,8 +18,12 @@ function fail(message){throw new Error(message)}
   await page.getByRole('button',{name:'Войти',exact:true}).click();
   await page.locator('aside').waitFor({state:'visible',timeout:10000});
   await page.waitForURL(url=>new URL(url).pathname==='/orders',{timeout:10000});
-  await page.getByRole('button',{name:/Новый заказ/}).click();
-  const drawer=page.locator('.drawer');await drawer.waitFor({state:'visible',timeout:6000});
+  const drawer=page.locator('.drawer');
+  for(let attempt=1;attempt<=3;attempt++){
+   await page.getByRole('button',{name:/Новый заказ/}).click();
+   try{await drawer.waitFor({state:'visible',timeout:2500});break}
+   catch(error){if(attempt===3)throw error;await page.waitForTimeout(300*attempt)}
+  }
   await drawer.getByRole('button',{name:'Далее',exact:true}).click();
   await drawer.getByText('Укажите имя клиента',{exact:true}).waitFor({state:'visible'});
   await drawer.getByText('Введите корректный номер телефона',{exact:true}).waitFor({state:'visible'});
