@@ -4,6 +4,7 @@ import helmet from '@fastify/helmet';
 import pg from 'pg';
 import crypto from 'crypto';
 import {installDocumentVersionSchema} from './document-version-schema.js';
+import {publicWarrantyPayload} from './warranty-public.js';
 import {runSchemaStatements} from './schema-retry.js';
 
 const app = Fastify({ logger: true });
@@ -49,7 +50,7 @@ async function warrantyDays(requestId) {
 }
 
 async function issue(requestId) {
-  const r = (await q(`SELECT r.*,c.name customer_name,c.phone,c.address,e.category,e.brand,e.model,e.serial_number
+  const r = (await q(`SELECT r.*,c.name customer_name,c.phone,c.address,e.category,e.brand,e.model,e.serial_number,eng.name engineer_name
     FROM requests r JOIN customers c ON c.id=r.customer_id
     LEFT JOIN equipment e ON e.id=r.equipment_id LEFT JOIN users eng ON eng.id=r.engineer_id
     WHERE r.id=$1 AND r.deleted_at IS NULL`, [requestId])).rows[0];
@@ -109,9 +110,9 @@ app.get('/public/warranty/:token', async (req, reply) => {
     LEFT JOIN equipment e ON e.id=r.equipment_id LEFT JOIN users eng ON eng.id=r.engineer_id
     WHERE r.id=$1 AND r.deleted_at IS NULL AND r.status='CLOSED' AND r.closed_at IS NOT NULL AND r.paid+0.01>=r.total`, [card.request_id])).rows[0];
   if (!r) return reply.code(404).send({ data: null, error: { code: 'WARRANTY_INACTIVE', message: 'Гарантийный талон недействителен' } });
-  if(card.snapshot?.request)return {data:{...card,...card.snapshot.request,works:card.snapshot.works||[],parts:card.snapshot.parts||[]}};
+  if(card.snapshot?.request)return {data:publicWarrantyPayload(card,r)};
   const [works, parts] = await Promise.all([q('SELECT name,qty,unit_price FROM request_works WHERE request_id=$1 ORDER BY id', [card.request_id]),q("SELECT name,qty,sale_price FROM parts WHERE request_id=$1 AND status<>'CANCELLED' ORDER BY id", [card.request_id])]);
-  return { data: { ...card, ...r, works: works.rows, parts: parts.rows } };
+  return { data: publicWarrantyPayload(card,r,{works:works.rows,parts:parts.rows}) };
 });
 
 let busy = false;
