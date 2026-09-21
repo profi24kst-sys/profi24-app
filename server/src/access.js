@@ -1,5 +1,6 @@
 import {canAccessAllOrders,canMutateOrder,isAssignedOnly,isKnownRole} from './rbac.js';
 import {registerComplaintRoutes} from './complaints-routes.js';
+import {runSchemaTransaction} from './schema-retry.js';
 
 // Shared authentication and order authorization for every API service.
 const authenticated = Symbol('active-user');
@@ -210,14 +211,14 @@ export function installOrderAccess(app, db, service) {
 }
 
 // Modules create some tables after core migrations. Attach the same database guard then.
-export async function protectOrderTables(db, tables) {
-  await transaction(db,async c=>{
+export async function protectOrderTables(db, tables,{logger=console}={}) {
+  await runSchemaTransaction(db,async c=>{
     for (const table of tables) {
       if (!/^[a-z_]+$/.test(table)) throw new Error('Invalid internal table name');
       await c.query(`DROP TRIGGER IF EXISTS guard_order_mutation ON ${table}`);
       await c.query(`CREATE TRIGGER guard_order_mutation BEFORE INSERT OR UPDATE OR DELETE ON ${table} FOR EACH ROW EXECUTE FUNCTION guard_order_child_mutation()`);
     }
-  });
+  },{logger});
 }
 
 export async function transaction(db, fn) {
