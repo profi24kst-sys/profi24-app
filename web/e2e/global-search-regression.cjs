@@ -2,11 +2,13 @@ const{chromium}=require('playwright');
 const fs=require('fs'),path=require('path');
 const BASE=process.env.BASE_URL||'http://127.0.0.1:5173',EMAIL=process.env.E2E_EMAIL||'browser-owner@test.invalid',PASSWORD=process.env.E2E_PASSWORD||'BrowserOwner2026Kst9',artifacts=path.join(__dirname,'artifacts');fs.mkdirSync(artifacts,{recursive:true});
 function fail(message){throw new Error(message)}
-async function api(page,url,opt={}){return page.evaluate(async({url,method='GET',body})=>{const r=await fetch(url,{method,headers:{Authorization:`Bearer ${localStorage.token||''}`,...(body===undefined?{}:{'Content-Type':'application/json'})},body:body===undefined?undefined:JSON.stringify(body)}),text=await r.text();let j={};try{j=JSON.parse(text)}catch{}return{status:r.status,data:j.data,text}}, {url,...opt})}
+let TOKEN='';
+async function captureToken(page){for(let attempt=0;attempt<5;attempt++){try{await page.waitForLoadState('domcontentloaded');const token=await page.evaluate(()=>localStorage.getItem('token')||'');if(token)return token}catch(error){if(!/Execution context was destroyed|Target page, context or browser has been closed/i.test(String(error)))throw error}await page.waitForTimeout(250*(attempt+1))}throw Error('authenticated token unavailable after navigation settled')}
+async function api(page,url,{method='GET',body}={}){const headers={Authorization:`Bearer ${TOKEN}`},options={method,headers};if(body!==undefined){headers['Content-Type']='application/json';options.data=body}const r=await page.request.fetch(new URL(url,BASE).toString(),options),text=await r.text();let j={};try{j=JSON.parse(text)}catch{}return{status:r.status(),data:j.data,text}}
 (async()=>{
  const browser=await chromium.launch({headless:true}),page=await browser.newPage({viewport:{width:1500,height:950}});
  try{
-  await page.goto(BASE,{waitUntil:'domcontentloaded',timeout:30000});await page.getByPlaceholder('Email').fill(EMAIL);await page.getByPlaceholder('Пароль').fill(PASSWORD);await page.getByRole('button',{name:'Войти',exact:true}).click();await page.locator('aside').waitFor({state:'visible',timeout:10000});
+  await page.goto(BASE,{waitUntil:'domcontentloaded',timeout:30000});await page.getByPlaceholder('Email').fill(EMAIL);await page.getByPlaceholder('Пароль').fill(PASSWORD);await page.getByRole('button',{name:'Войти',exact:true}).click();await page.locator('aside').waitFor({state:'visible',timeout:10000});TOKEN=await captureToken(page);
   const suffix=Date.now().toString(36).toUpperCase(),phone='+7707'+String(Date.now()).slice(-7),serial='SEARCH-'+suffix;
   let r=await api(page,'/api/v1/customers',{method:'POST',body:{name:'E2E Поиск '+suffix,phone}});if(r.status!==201)fail('customer '+r.status+' '+r.text);const customer=r.data;
   r=await api(page,'/api/v1/equipment',{method:'POST',body:{customer_id:customer.id,category:'Холодильник',brand:'SearchBrand',model:suffix,serial_number:serial}});if(r.status!==201)fail('equipment '+r.status+' '+r.text);const equipment=r.data;
