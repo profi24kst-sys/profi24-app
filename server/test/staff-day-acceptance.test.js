@@ -129,7 +129,12 @@ test('A32: полный рабочий день проходит всеми ше
 
     // Client approval is recorded through the public approval API, not by rewriting the order.
     r=await call('approvals','POST',`/api/v1/approvals/request/${order.id}`,{expires_days:1},ids.engineer);assert.equal(r.status,200,JSON.stringify(r));const approval=r.data;
-    r=await call('approvals','POST',`/public/approvals/${approval.token}/respond`,{decision:'APPROVED',comment:'Согласовано'},null);assert.equal(r.status,200,JSON.stringify(r));
+    assert.equal('token' in approval,false);assert.ok(approval.url?.startsWith('/approve/'));const approvalToken=approval.url.split('/').at(-1);assert.match(approvalToken,/^[A-Za-z0-9_-]{32,128}$/);
+    const storedApproval=(await query('SELECT token,token_nonce,token_hash FROM customer_approvals WHERE request_id=$1 ORDER BY version DESC LIMIT 1',[order.id])).rows[0];
+    assert.equal(storedApproval.token,null);assert.ok(storedApproval.token_nonce);assert.match(storedApproval.token_hash,/^[a-f0-9]{64}$/);assert.notEqual(storedApproval.token_hash,approvalToken);
+    r=await call('approvals','GET',`/api/v1/approvals/request/${order.id}`,undefined,ids.engineer);assert.equal(r.status,200,JSON.stringify(r));assert.equal('token' in r.data[0],false);assert.equal('token_hash' in r.data[0],false);assert.equal('token_nonce' in r.data[0],false);
+    r=await call('approvals','GET',`/public/approvals/${approvalToken}`,undefined,null);assert.equal(r.status,200,JSON.stringify(r));assert.equal('id' in r.data,false);assert.equal('id' in r.data.snapshot,false);assert.equal('phone' in r.data.snapshot,false);
+    r=await call('approvals','POST',`/public/approvals/${approvalToken}/respond`,{decision:'APPROVED',comment:'Согласовано'},null);assert.equal(r.status,200,JSON.stringify(r));
     r=await call('workflow','POST',`/api/v1/requests/${order.id}/workflow`,{event:'START_REPAIR'},ids.engineer);assert.equal(r.status,200,JSON.stringify(r));
 
     // ENGINEER: completes repair, the reserved consumable is posted atomically, photo and test are recorded.
