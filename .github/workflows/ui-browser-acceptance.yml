@@ -114,6 +114,7 @@ jobs:
             current-order360-regression.cjs
             documents-entrypoint-regression.cjs
             customer-portal-regression.cjs
+            warranty-public-regression.cjs
             engineer-capacity-regression.cjs
             engineer-route-regression.cjs
             engineer-route-execution-regression.cjs
