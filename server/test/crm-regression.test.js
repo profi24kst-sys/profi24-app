@@ -183,6 +183,18 @@ test('Сквозные регрессии доступа, заказов, скл
    assert.equal(res.statusCode,404,res.body);
    res=await s.services['approvals-portal'].inject({method:'POST',url:'/public/approvals/deleted-customer-token/respond',payload:{decision:'APPROVED'}});
    assert.equal(res.statusCode,404,res.body);
+
+   const active=await order();
+   await query("INSERT INTO customer_approvals(request_id,token,status,total,expires_at,created_by) VALUES($1,'superseded-token','SUPERSEDED',1000,now()+interval '1 day',1),($1,'expired-token','PENDING',1000,now()-interval '1 hour',1)",[active]);
+   res=await s.services['approvals-portal'].inject({method:'GET',url:'/public/approvals/superseded-token'});
+   assert.equal(res.statusCode,200,res.body);assert.equal(res.json().data.status,'SUPERSEDED');
+   res=await s.services['approvals-portal'].inject({method:'POST',url:'/public/approvals/superseded-token/respond',payload:{decision:'APPROVED'}});
+   assert.equal(res.statusCode,409,res.body);
+   res=await s.services['approvals-portal'].inject({method:'GET',url:'/public/approvals/expired-token'});
+   assert.equal(res.statusCode,200,res.body);assert.equal(res.json().data.status,'EXPIRED');
+   assert.equal((await query("SELECT status FROM customer_approvals WHERE token='expired-token'")).rows[0].status,'EXPIRED');
+   res=await s.services['approvals-portal'].inject({method:'POST',url:'/public/approvals/expired-token/respond',payload:{decision:'APPROVED'}});
+   assert.equal(res.statusCode,409,res.body);
   });
   await t.test('Гарантия создаётся после закрытия, предоплата и отмена её не активируют',async()=>{
    const closed=await order('PAYMENT_REQUIRED'),paid=await order(),cancelled=await order('CANCELLED');
