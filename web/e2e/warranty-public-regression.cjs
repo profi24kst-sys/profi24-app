@@ -12,15 +12,21 @@ function seed(){
   parts:[{id:222,name:'Компрессор',qty:1,sale_price:25000,purchase_price:12000,status:'INSTALLED'}],
   warranty_days:90
  }).replace(/'/g,"''");
- const sql=`WITH u AS (
-   INSERT INTO users(name,email,password_hash,role) VALUES('E2E Engineer','e2e-warranty-${suffix}@test.invalid','x','ENGINEER') RETURNING id
+ const sql=`WITH b AS (
+   SELECT id FROM branches WHERE code='KST' AND active=true LIMIT 1
+ ), u AS (
+   INSERT INTO users(name,email,password_hash,role,primary_branch_id)
+   SELECT 'E2E Engineer','e2e-warranty-${suffix}@test.invalid','x','ENGINEER',b.id FROM b RETURNING id,primary_branch_id
+ ), ub AS (
+   INSERT INTO user_branches(user_id,branch_id,is_primary)
+   SELECT u.id,u.primary_branch_id,true FROM u RETURNING branch_id
  ), c AS (
    INSERT INTO customers(name,phone,address) VALUES('E2E Warranty Client','+77025550999','INTERNAL ADDRESS') RETURNING id
  ), e AS (
    INSERT INTO equipment(customer_id,category,brand,model,serial_number) SELECT c.id,'Холодильник','LG','E2E-W','W-${suffix}' FROM c RETURNING id,customer_id
  ), r AS (
-   INSERT INTO requests(number,customer_id,equipment_id,engineer_id,status,complaint,total,paid,closed_at,warranty_until)
-   SELECT '${number}',e.customer_id,e.id,u.id,'CLOSED','Browser warranty acceptance',45000,45000,now(),CURRENT_DATE+90 FROM e,u RETURNING id
+   INSERT INTO requests(number,customer_id,equipment_id,engineer_id,branch_id,status,complaint,total,paid,closed_at,warranty_until)
+   SELECT '${number}',e.customer_id,e.id,u.id,ub.branch_id,'CLOSED','Browser warranty acceptance',45000,45000,now(),CURRENT_DATE+90 FROM e,u,ub RETURNING id
  )
  INSERT INTO warranty_cards(request_id,token,warranty_days,warranty_until,snapshot,content_hash)
  SELECT r.id,'${token}',90,CURRENT_DATE+90,'${snapshot}'::jsonb,'INTERNAL-CONTENT-HASH' FROM r RETURNING request_id;`;
@@ -34,7 +40,7 @@ function seed(){
   const api=await page.request.get(BASE+'/warranty-api/public/warranty/'+fixture.token);
   if(api.status()!==200)fail('public warranty API '+api.status());
   const body=await api.json(),data=body.data||{};
-  const forbiddenKeys=new Set(['direct_cost','purchase_price','performed_by','content_hash','request_id','snapshot','token','engineer_id','address']);
+  const forbiddenKeys=new Set(['id','direct_cost','purchase_price','performed_by','content_hash','request_id','snapshot','token','engineer_id','address']);
   const walk=value=>{
    if(Array.isArray(value)){for(const item of value)walk(item);return}
    if(!value||typeof value!=='object')return;
@@ -55,7 +61,8 @@ function seed(){
   await page.getByText('E2E Engineer',{exact:true}).waitFor({state:'visible'});
   await page.getByText('Замена компрессора × 1',{exact:true}).waitFor({state:'visible'});
   await page.getByText('Компрессор × 1',{exact:true}).waitFor({state:'visible'});
-  if(await page.getByText(/INTERNAL ADDRESS|12000|7000/).isVisible().catch(()=>false))fail('sensitive warranty value rendered in UI');
+  const uiText=(await page.locator('body').innerText()).replace(/\s+/g,'');
+  for(const secret of ['INTERNALADDRESS','7000₸','12000₸'])if(uiText.includes(secret))fail('sensitive warranty value rendered in UI: '+secret);
   console.log('warranty_public_regression=ok order='+fixture.number);
  }catch(e){
   try{await page.screenshot({path:path.join(artifacts,'warranty-public-failure.png'),fullPage:true})}catch{}
