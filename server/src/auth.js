@@ -6,6 +6,7 @@ import jwt from '@fastify/jwt';
 import bcrypt from 'bcryptjs';
 import pg from 'pg';
 import {isKnownRole} from './rbac.js';
+import {runSchemaStatements} from './schema-retry.js';
 
 const app=Fastify({logger:true,bodyLimit:64*1024,trustProxy:true});
 await app.register(cors,{origin:(process.env.CORS_ORIGIN||'http://localhost:5173').split(',').map(x=>x.trim()),credentials:true});
@@ -21,7 +22,8 @@ const FAILURE_WINDOW_MINUTES=Math.max(1,Math.min(60,Number(process.env.AUTH_FAIL
 const LOCK_MINUTES=Math.max(1,Math.min(120,Number(process.env.AUTH_LOCK_MINUTES||15)));
 const dummyHash=await bcrypt.hash('invalid-password-placeholder-2026',10);
 
-await q(`CREATE TABLE IF NOT EXISTS auth_login_events(
+await runSchemaStatements(pool,[
+`CREATE TABLE IF NOT EXISTS auth_login_events(
   id BIGSERIAL PRIMARY KEY,
   user_id INT REFERENCES users(id) ON DELETE SET NULL,
   email TEXT NOT NULL,
@@ -29,17 +31,18 @@ await q(`CREATE TABLE IF NOT EXISTS auth_login_events(
   ip TEXT,
   user_agent TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-)`);
-await q('CREATE INDEX IF NOT EXISTS idx_auth_login_events_created ON auth_login_events(created_at DESC)');
-await q('CREATE INDEX IF NOT EXISTS idx_auth_login_events_email ON auth_login_events(lower(email),created_at DESC)');
-await q(`CREATE TABLE IF NOT EXISTS auth_login_state(
+)`,
+'CREATE INDEX IF NOT EXISTS idx_auth_login_events_created ON auth_login_events(created_at DESC)',
+'CREATE INDEX IF NOT EXISTS idx_auth_login_events_email ON auth_login_events(lower(email),created_at DESC)',
+`CREATE TABLE IF NOT EXISTS auth_login_state(
   email TEXT PRIMARY KEY,
   failed_count INT NOT NULL DEFAULT 0,
   window_started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   blocked_until TIMESTAMPTZ,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-)`);
-await q('CREATE INDEX IF NOT EXISTS idx_auth_login_state_blocked ON auth_login_state(blocked_until)');
+)`,
+'CREATE INDEX IF NOT EXISTS idx_auth_login_state_blocked ON auth_login_state(blocked_until)'
+],{logger:app.log});
 await q("DELETE FROM auth_login_events WHERE created_at < now()-interval '180 days'");
 await q("DELETE FROM auth_login_state WHERE updated_at < now()-interval '30 days' AND (blocked_until IS NULL OR blocked_until<now())");
 
