@@ -4,6 +4,7 @@ import helmet from '@fastify/helmet';
 import pg from 'pg';
 import crypto from 'crypto';
 import {installDocumentVersionSchema} from './document-version-schema.js';
+import {runSchemaStatements} from './schema-retry.js';
 
 const app = Fastify({ logger: true });
 await app.register(cors, { origin: true });
@@ -13,7 +14,7 @@ const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const q = (s, p = []) => pool.query(s, p);
 const baseUrl = () => (process.env.PUBLIC_BASE_URL || process.env.CORS_ORIGIN?.split(',')[0] || 'http://localhost:5173').replace(/\/$/, '');
 
-for (const s of [
+await runSchemaStatements(pool,[
   `CREATE TABLE IF NOT EXISTS warranty_cards(
     id BIGSERIAL PRIMARY KEY,
     request_id INT UNIQUE NOT NULL REFERENCES requests(id) ON DELETE CASCADE,
@@ -26,15 +27,15 @@ for (const s of [
   `CREATE INDEX IF NOT EXISTS idx_warranty_cards_token ON warranty_cards(token)`,
   `ALTER TABLE warranty_cards ADD COLUMN IF NOT EXISTS snapshot JSONB`,
   `ALTER TABLE warranty_cards ADD COLUMN IF NOT EXISTS content_hash TEXT`,
-  `CREATE OR REPLACE FUNCTION warranty_card_immutable() RETURNS trigger AS $$ BEGIN
+  `CREATE OR REPLACE FUNCTION warranty_card_immutable() RETURNS trigger AS $ BEGIN
     RAISE EXCEPTION 'Выданный гарантийный талон нельзя изменять или удалять' USING ERRCODE='P2401';
-  END $$ LANGUAGE plpgsql`,
+  END $ LANGUAGE plpgsql`,
   `DROP TRIGGER IF EXISTS trg_warranty_card_immutable ON warranty_cards`,
   `CREATE TRIGGER trg_warranty_card_immutable BEFORE UPDATE OR DELETE ON warranty_cards FOR EACH ROW EXECUTE FUNCTION warranty_card_immutable()`,
   `CREATE TABLE IF NOT EXISTS warranty_state(id INT PRIMARY KEY DEFAULT 1,last_history_id BIGINT NOT NULL DEFAULT 0,updated_at TIMESTAMPTZ DEFAULT now())`,
   `INSERT INTO warranty_state(id,last_history_id) VALUES(1,0) ON CONFLICT(id) DO NOTHING`
-]) await q(s);
-await installDocumentVersionSchema(pool);
+],{logger:app.log});
+await installDocumentVersionSchema(pool,{logger:app.log});
 
 async function warrantyDays(requestId) {
   try {
