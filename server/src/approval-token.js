@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 
-const tokenSecret=()=>String(process.env.APPROVAL_TOKEN_SECRET||process.env.JWT_SECRET||'dev-approval-secret-change-me');
+const tokenSecret=()=>String(process.env.APPROVAL_TOKEN_SECRET||'dev-approval-secret-change-me');
 const signature=id=>crypto.createHmac('sha256',tokenSecret()).update(`approval:${id}`).digest('base64url');
 
 export function approvalPublicToken(value){
