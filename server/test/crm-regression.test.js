@@ -183,6 +183,7 @@ test('Сквозные регрессии доступа, заказов, скл
    assert.equal(res.statusCode,404,res.body);
    res=await s.services['approvals-portal'].inject({method:'POST',url:'/public/approvals/deleted-customer-token/respond',payload:{decision:'APPROVED'}});
    assert.equal(res.statusCode,404,res.body);
+   await query('UPDATE customers SET deleted_at=NULL WHERE id=$1',[customerId]);
 
    const active=await order();
    await query("INSERT INTO customer_approvals(request_id,token,status,total,expires_at,created_by) VALUES($1,'superseded-token','SUPERSEDED',1000,now()+interval '1 day',1),($1,'expired-token','PENDING',1000,now()-interval '1 hour',1)",[active]);
