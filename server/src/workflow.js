@@ -1,5 +1,6 @@
 import {authenticate,installOrderAccess} from './access.js';
 import {can,PERMISSIONS} from './rbac.js';
+import {runSchemaStatements} from './schema-retry.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
@@ -14,10 +15,10 @@ const pool=new pg.Pool({connectionString:process.env.DATABASE_URL});
 const q=(sql,params=[])=>pool.query(sql,params);
 const fail=(reply,code,message,status=422)=>reply.code(status).send({data:null,error:{code,message}});
 const auth=async(req,reply)=>{if(!await authenticate(req,reply,pool))return;};
-for(const sql of [
+await runSchemaStatements(pool,[
   `CREATE TABLE IF NOT EXISTS request_stage_events(id BIGSERIAL PRIMARY KEY,request_id INT NOT NULL REFERENCES requests(id) ON DELETE CASCADE,stage TEXT NOT NULL,event TEXT NOT NULL,user_id INT REFERENCES users(id),note TEXT,created_at TIMESTAMPTZ DEFAULT now())`,
   `CREATE INDEX IF NOT EXISTS idx_stage_events_request ON request_stage_events(request_id,created_at DESC)`
-])await q(sql);
+],{logger:app.log});
 
 const P=PERMISSIONS;
 const flow={
