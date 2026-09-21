@@ -12,6 +12,7 @@ require POSTGRES_DB
 require POSTGRES_USER
 require POSTGRES_PASSWORD
 require JWT_SECRET
+require APPROVAL_TOKEN_SECRET
 require CORS_ORIGIN
 require PUBLIC_BASE_URL
 
@@ -20,6 +21,11 @@ placeholder "$POSTGRES_PASSWORD" && fail "POSTGRES_PASSWORD содержит т�
 [ ${#JWT_SECRET} -ge 32 ] || fail "JWT_SECRET должен быть не короче 32 символов"
 placeholder "$JWT_SECRET" && fail "JWT_SECRET содержит тестовый placeholder"
 [ "$JWT_SECRET" != "$POSTGRES_PASSWORD" ] || fail "JWT_SECRET и POSTGRES_PASSWORD должны отличаться"
+[ ${#APPROVAL_TOKEN_SECRET} -ge 32 ] || fail "APPROVAL_TOKEN_SECRET должен быть не короче 32 символов"
+placeholder "$APPROVAL_TOKEN_SECRET" && fail "APPROVAL_TOKEN_SECRET содержит тестовый placeholder"
+[ "$APPROVAL_TOKEN_SECRET" != "$JWT_SECRET" ] || fail "APPROVAL_TOKEN_SECRET и JWT_SECRET должны отличаться"
+[ "$APPROVAL_TOKEN_SECRET" != "$POSTGRES_PASSWORD" ] || fail "APPROVAL_TOKEN_SECRET и POSTGRES_PASSWORD должны отличаться"
+case "$APPROVAL_TOKEN_SECRET" in *profi24*|*password*|*qwerty*) fail "APPROVAL_TOKEN_SECRET выглядит предсказуемым";; esac
 
 if [ -n "${WEBSITE_INTAKE_SECRET:-}" ]; then
   [ ${#WEBSITE_INTAKE_SECRET} -ge 32 ] || fail "WEBSITE_INTAKE_SECRET должен быть не короче 32 символов"
