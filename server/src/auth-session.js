@@ -59,6 +59,7 @@ export function secureCookieForRequest(req,env=process.env){
   const explicit=String(env.AUTH_COOKIE_SECURE||'').trim().toLowerCase();
   if(explicit==='true'||explicit==='1'||explicit==='yes')return true;
   if(explicit==='false'||explicit==='0'||explicit==='no')return false;
+  if(String(env.NODE_ENV||'').trim().toLowerCase()==='production')return true;
   const forwarded=String(req?.headers?.['x-forwarded-proto']||'').split(',')[0].trim().toLowerCase();
   return forwarded==='https'||String(req?.protocol||'').toLowerCase()==='https';
 }
