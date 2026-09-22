@@ -57,5 +57,6 @@ test('cookie parsing is defensive and cookie security follows proxy protocol',()
   assert.deepEqual(parseCookieHeader('a=1; encoded=hello%20world'),{a:'1',encoded:'hello world'});
   assert.equal(refreshCookieName({AUTH_REFRESH_COOKIE_NAME:'bad name'}),'profi24_refresh');
   assert.equal(secureCookieForRequest({protocol:'http',headers:{'x-forwarded-proto':'https'}},{}),true);
-  assert.equal(secureCookieForRequest({protocol:'https',headers:{}},{AUTH_COOKIE_SECURE:'false'}),false);
+  assert.equal(secureCookieForRequest({protocol:'http',headers:{}},{NODE_ENV:'production'}),true);
+  assert.equal(secureCookieForRequest({protocol:'https',headers:{}},{NODE_ENV:'production',AUTH_COOKIE_SECURE:'false'}),false);
 });
