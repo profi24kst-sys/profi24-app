@@ -29,6 +29,8 @@ jobs:
           AUTH_RATE_LIMIT_PER_MINUTE=30
           AUTH_ACCESS_TTL_SECONDS=900
           AUTH_REFRESH_TTL_DAYS=7
+          # CI reaches nginx over plain HTTP; production defaults Secure=true.
+          AUTH_COOKIE_SECURE=false
           AUTH_FAILURE_LIMIT=10
           AUTH_FAILURE_WINDOW_MINUTES=10
           AUTH_LOCK_MINUTES=15
