@@ -1,6 +1,15 @@
 import crypto from 'node:crypto';
 
-const tokenSecret=()=>String(process.env.APPROVAL_TOKEN_SECRET||'dev-approval-secret-change-me');
+const placeholder=/change-me|change-this|replace-with|example|changeme|qwerty|password/i;
+const tokenSecret=()=>{
+ const configured=String(process.env.APPROVAL_TOKEN_SECRET||'').trim();
+ if(configured){
+  if(process.env.NODE_ENV==='production'&&placeholder.test(configured))throw new Error('APPROVAL_TOKEN_SECRET must be a non-placeholder production secret');
+  return configured;
+ }
+ if(process.env.NODE_ENV==='production')throw new Error('APPROVAL_TOKEN_SECRET is required in production');
+ return 'dev-approval-secret-change-me';
+};
 const signature=id=>crypto.createHmac('sha256',tokenSecret()).update(`approval:${id}`).digest('base64url');
 
 export function approvalPublicToken(value){
