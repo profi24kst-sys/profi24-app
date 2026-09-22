@@ -25,3 +25,21 @@ test('approval public token is deterministic, signed and rejects tampering',()=>
   assert.throws(()=>approvalPublicToken(0));
  }finally{if(old===undefined)delete process.env.APPROVAL_TOKEN_SECRET;else process.env.APPROVAL_TOKEN_SECRET=old}
 });
+
+
+test('approval token refuses missing or placeholder secret in production',()=>{
+ const oldSecret=process.env.APPROVAL_TOKEN_SECRET,oldNodeEnv=process.env.NODE_ENV;
+ try{
+  process.env.NODE_ENV='production';
+  delete process.env.APPROVAL_TOKEN_SECRET;
+  assert.throws(()=>approvalPublicToken(1),/APPROVAL_TOKEN_SECRET is required/);
+  process.env.APPROVAL_TOKEN_SECRET='change-me-approval-token-secret';
+  assert.throws(()=>approvalPublicToken(1),/non-placeholder production secret/);
+  process.env.APPROVAL_TOKEN_SECRET='0123456789abcdef0123456789abcdef';
+  const token=approvalPublicToken(1);
+  assert.equal(approvalIdFromPublicToken(token),1);
+ }finally{
+  if(oldSecret===undefined)delete process.env.APPROVAL_TOKEN_SECRET;else process.env.APPROVAL_TOKEN_SECRET=oldSecret;
+  if(oldNodeEnv===undefined)delete process.env.NODE_ENV;else process.env.NODE_ENV=oldNodeEnv;
+ }
+});
