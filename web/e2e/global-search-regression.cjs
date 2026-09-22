@@ -14,6 +14,7 @@ async function api(page,url,{method='GET',body}={}){const headers={Authorization
   r=await api(page,'/api/v1/equipment',{method:'POST',body:{customer_id:customer.id,category:'Холодильник',brand:'SearchBrand',model:suffix,serial_number:serial}});if(r.status!==201)fail('equipment '+r.status+' '+r.text);const equipment=r.data;
   r=await api(page,'/api/v1/requests',{method:'POST',body:{customer_id:customer.id,equipment_id:equipment.id,complaint:'Проверка глобального поиска',source:'OTHER'}});if(r.status!==201)fail('request '+r.status+' '+r.text);const order=r.data;
   await Promise.all([page.waitForResponse(resp=>resp.url().includes('/api/v1/customers')&&resp.ok()),page.getByRole('button',{name:'Обновить данные'}).click()]);
+  await page.goto(BASE+'/orders',{waitUntil:'domcontentloaded',timeout:30000});await page.locator('aside').waitFor({state:'visible',timeout:10000});
   const search=page.getByRole('combobox',{name:'Глобальный поиск'});
   await search.fill(serial);let option=page.getByRole('option').filter({hasText:'Техника'}).filter({hasText:serial});await option.waitFor({state:'visible',timeout:6000});await option.click();
   await page.getByRole('heading',{name:'Техника'}).waitFor({state:'visible'});const equipmentRow=page.locator(`[data-search-record="equipment-${equipment.id}"]`);await equipmentRow.waitFor({state:'visible'});await page.waitForFunction(id=>document.querySelector(`[data-search-record="equipment-${id}"]`)?.classList.contains('searchHit'),String(equipment.id),{timeout:3000});

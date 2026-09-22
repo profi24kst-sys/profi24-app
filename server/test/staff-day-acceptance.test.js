@@ -129,6 +129,8 @@ test('A32: полный рабочий день проходит всеми ше
 
     // Client approval is recorded through the public approval API, not by rewriting the order.
     r=await call('approvals','POST',`/api/v1/approvals/request/${order.id}`,{expires_days:1},ids.engineer);assert.equal(r.status,200,JSON.stringify(r));const approval=r.data;
+    assert.match(approval.token,/^v2\./);
+    assert.equal((await query('SELECT token FROM customer_approvals WHERE id=$1',[approval.id])).rows[0].token,null);
     r=await call('approvals','POST',`/public/approvals/${approval.token}/respond`,{decision:'APPROVED',comment:'Согласовано'},null);assert.equal(r.status,200,JSON.stringify(r));
     r=await call('workflow','POST',`/api/v1/requests/${order.id}/workflow`,{event:'START_REPAIR'},ids.engineer);assert.equal(r.status,200,JSON.stringify(r));
 

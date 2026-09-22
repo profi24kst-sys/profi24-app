@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import {authenticate,requireOrder} from './access.js';
+import {approvalPublicToken} from './approval-token.js';
 
 const officeRoles=new Set(['OWNER','SUPERVISOR','MANAGER']);
 const publicEvents=new Map([
@@ -56,8 +57,8 @@ async function publicOrder(pool,row){
    .map(x=>({label:publicEvents.get(x.action),created_at:x.created_at}));
  const actions={};
  if(await tableExists(pool,'customer_approvals')){
-  const approval=(await pool.query(`SELECT token,status,expires_at FROM customer_approvals WHERE request_id=$1 ORDER BY version DESC LIMIT 1`,[row.id])).rows[0];
-  if(approval?.status==='PENDING'&&new Date(approval.expires_at)>new Date())actions.approval_url=`/approve/${approval.token}`;
+  const approval=(await pool.query(`SELECT id,token,status,expires_at FROM customer_approvals WHERE request_id=$1 ORDER BY version DESC LIMIT 1`,[row.id])).rows[0];
+  if(approval?.status==='PENDING'&&new Date(approval.expires_at)>new Date())actions.approval_url=`/approve/${approval.token||approvalPublicToken(approval.id)}`;
  }
  if(await tableExists(pool,'warranty_cards')){
   const warranty=(await pool.query(`SELECT token,warranty_until FROM warranty_cards WHERE request_id=$1 LIMIT 1`,[row.id])).rows[0];

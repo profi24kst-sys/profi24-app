@@ -17,11 +17,13 @@ jobs:
         run: |
           DB_PASSWORD=$(openssl rand -hex 16)
           JWT_SECRET_VALUE=$(openssl rand -hex 32)
+          APPROVAL_TOKEN_SECRET_VALUE=$(openssl rand -hex 32)
           cat > .env <<EOF
           POSTGRES_DB=profi24
           POSTGRES_USER=profi24
           POSTGRES_PASSWORD=$DB_PASSWORD
           JWT_SECRET=$JWT_SECRET_VALUE
+          APPROVAL_TOKEN_SECRET=$APPROVAL_TOKEN_SECRET_VALUE
           NODE_ENV=production
           CORS_ORIGIN=http://127.0.0.1:5173
           PUBLIC_BASE_URL=http://127.0.0.1:5173

@@ -37,8 +37,12 @@ test('customer portal is customer-scoped, expiring and stores only a token hash'
  assert.notEqual(stored.token_hash,token);assert.equal(stored.revoked_at,null);
  assert.equal(Number((await query('SELECT count(*) n FROM customer_portal_links WHERE token_hash=$1',[token])).rows[0].n),0);
 
+ await query("CREATE TABLE IF NOT EXISTS customer_approvals(id BIGSERIAL PRIMARY KEY,request_id INT NOT NULL REFERENCES requests(id) ON DELETE CASCADE,token TEXT UNIQUE,status TEXT NOT NULL DEFAULT 'PENDING',version INT NOT NULL DEFAULT 1,total NUMERIC(14,2) NOT NULL DEFAULT 0,snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,created_by INT REFERENCES users(id),created_at TIMESTAMPTZ DEFAULT now(),expires_at TIMESTAMPTZ)");
+ const approval=(await query("INSERT INTO customer_approvals(request_id,token,status,total,expires_at,created_by) VALUES($1,NULL,'PENDING',25000,now()+interval '1 day',$2) RETURNING id",[order.id,owner.id])).rows[0];
  res=await app.inject({method:'GET',url:`/public/customer-portal/${token}`});assert.equal(res.statusCode,200,res.body);
- const portal=res.json().data;assert.equal(portal.customer.name,'Portal Client');assert.equal(portal.orders.length,2);
+ const portal=res.json().data;
+ const approvalAction=portal.orders.find(x=>x.number==='PORTAL-1')?.actions?.approval_url;
+ assert.match(String(approvalAction||''),new RegExp('^/approve/v2\\.'+approval.id+'\\.'));assert.equal(portal.customer.name,'Portal Client');assert.equal(portal.orders.length,2);
  assert.ok(portal.orders.some(x=>x.number==='PORTAL-1'));assert.ok(portal.orders.some(x=>x.number==='PORTAL-OLD'));assert.ok(!portal.orders.some(x=>x.number==='OTHER-1'));
  const current=portal.orders.find(x=>x.number==='PORTAL-1');assert.equal(Number(current.total),25000);assert.equal(Number(current.paid),10000);assert.equal(current.timeline.length,2);
  assert.deepEqual(current.timeline.map(x=>x.label),['Заявка принята','Ремонт начат']);assert.equal('details' in current.timeline[0],false);assert.equal('direct_cost' in current,false);assert.equal('phone' in portal.customer,false);
