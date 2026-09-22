@@ -92,4 +92,4 @@ fi
 
 case "$JWT_SECRET" in *profi24*|*password*|*qwerty*) fail "JWT_SECRET выглядит предсказуемым";; esac
 
-echo "preflight_ok node_env=$NODE_ENV public_base_url=$PUBLIC_BASE_URL backup_retention_days=$BACKUP_RETENTION_DAYS auth_token_ttl=$AUTH_TOKEN_TTL auth_failure_limit=$AUTH_FAILURE_LIMIT website_intake_configured=$([ -n "${WEBSITE_INTAKE_SECRET:-}" ] && echo yes || echo no)"
+echo "preflight_ok node_env=$NODE_ENV public_base_url=$PUBLIC_BASE_URL backup_retention_days=$BACKUP_RETENTION_DAYS auth_access_ttl_seconds=$AUTH_ACCESS_TTL_SECONDS auth_refresh_ttl_days=$AUTH_REFRESH_TTL_DAYS auth_failure_limit=$AUTH_FAILURE_LIMIT website_intake_configured=$([ -n "${WEBSITE_INTAKE_SECRET:-}" ] && echo yes || echo no)"
