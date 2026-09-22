@@ -38,6 +38,17 @@ export function hashRefreshToken(token){
   return crypto.createHash('sha256').update(String(token||''),'utf8').digest('hex');
 }
 
+export async function revokeUserRefreshSessions(db,userId){
+  if(!db||!userId)return 0;
+  const exists=(await db.query("SELECT to_regclass('public.auth_refresh_sessions') AS rel")).rows?.[0]?.rel;
+  if(!exists)return 0;
+  const result=await db.query(
+    'UPDATE auth_refresh_sessions SET revoked_at=COALESCE(revoked_at,now()) WHERE user_id=$1 AND revoked_at IS NULL',
+    [userId]
+  );
+  return Number(result.rowCount||0);
+}
+
 export function parseCookieHeader(header=''){
   const out={};
   for(const part of String(header||'').split(';')){
