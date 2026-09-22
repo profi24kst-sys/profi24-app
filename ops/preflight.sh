@@ -74,6 +74,15 @@ AUTH_REFRESH_TTL_DAYS=${AUTH_REFRESH_TTL_DAYS:-7}
 positive_int AUTH_REFRESH_TTL_DAYS "$AUTH_REFRESH_TTL_DAYS"
 [ "$AUTH_REFRESH_TTL_DAYS" -ge 1 ] && [ "$AUTH_REFRESH_TTL_DAYS" -le 30 ] || fail "AUTH_REFRESH_TTL_DAYS должен быть в диапазоне 1..30 дней"
 
+AUTH_COOKIE_SECURE_NORMALIZED=$(printf '%s' "${AUTH_COOKIE_SECURE:-}" | tr '[:upper:]' '[:lower:]')
+case "$AUTH_COOKIE_SECURE_NORMALIZED" in
+  ''|true|1|yes) ;;
+  false|0|no)
+    case "$PUBLIC_BASE_URL" in https://*) fail "AUTH_COOKIE_SECURE нельзя отключать для HTTPS production";; esac
+    ;;
+  *) fail "AUTH_COOKIE_SECURE должен быть true/false либо пустым" ;;
+esac
+
 AUTH_FAILURE_LIMIT=${AUTH_FAILURE_LIMIT:-10}
 positive_int AUTH_FAILURE_LIMIT "$AUTH_FAILURE_LIMIT"
 [ "$AUTH_FAILURE_LIMIT" -ge 3 ] && [ "$AUTH_FAILURE_LIMIT" -le 20 ] || fail "AUTH_FAILURE_LIMIT должен быть в диапазоне 3..20"
