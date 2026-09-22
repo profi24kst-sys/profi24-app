@@ -154,19 +154,19 @@ app.post('/api/v1/auth/refresh',{config:{rateLimit:{max:60,timeWindow:'1 minute'
   let row;
   try{
     await c.query('BEGIN');
-    row=(await c.query(`SELECT s.id,s.user_id,s.expires_at,s.revoked_at,u.name,u.email,u.role,u.active
+    row=(await c.query(`SELECT s.id AS session_id,s.user_id AS id,s.expires_at,s.revoked_at,u.name,u.email,u.role,u.active
       FROM auth_refresh_sessions s JOIN users u ON u.id=s.user_id
       WHERE s.token_hash=$1 FOR UPDATE OF s`,[tokenHash])).rows[0];
     const expired=!row||row.revoked_at||new Date(row.expires_at).getTime()<=Date.now();
     const invalidUser=!row?.active||!isKnownRole(row?.role);
     if(expired||invalidUser){
-      if(row&&!row.revoked_at)await c.query('UPDATE auth_refresh_sessions SET revoked_at=now() WHERE id=$1',[row.id]);
+      if(row&&!row.revoked_at)await c.query('UPDATE auth_refresh_sessions SET revoked_at=now() WHERE id=$1',[row.session_id]);
       await c.query('COMMIT');
       clearSessionCookie(req,reply);
       return fail(reply,'SESSION_EXPIRED','Сессия истекла. Войдите снова.',401);
     }
     await c.query('UPDATE auth_refresh_sessions SET last_used_at=now(),ip=$1,user_agent=$2 WHERE id=$3',[
-      requestIp(req),String(req.headers['user-agent']||'').slice(0,255),row.id
+      requestIp(req),String(req.headers['user-agent']||'').slice(0,255),row.session_id
     ]);
     await c.query('COMMIT');
   }catch(error){
