@@ -25,11 +25,13 @@ jobs:
           fi
           DB_PASSWORD=$(openssl rand -hex 16)
           JWT_SECRET_VALUE=$(openssl rand -hex 32)
+          APPROVAL_TOKEN_SECRET_VALUE=$(openssl rand -hex 32)
           NODE_ENV=production \
           POSTGRES_DB=profi24 \
           POSTGRES_USER=profi24 \
           POSTGRES_PASSWORD="$DB_PASSWORD" \
           JWT_SECRET="$JWT_SECRET_VALUE" \
+          APPROVAL_TOKEN_SECRET="$APPROVAL_TOKEN_SECRET_VALUE" \
           CORS_ORIGIN='https://crm.profi24.kz' \
           PUBLIC_BASE_URL='https://crm.profi24.kz' \
           DB_POOL_MAX=10 WEB_PORT=443 BACKUP_RETENTION_DAYS=14 \
