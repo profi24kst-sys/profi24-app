@@ -110,7 +110,7 @@ Normal browser login goes through the dedicated auth gateway. Production configu
 - `AUTH_RATE_LIMIT_PER_MINUTE`;
 - `AUTH_ACCESS_TTL_SECONDS` (60–900, default 900 seconds);
 - `AUTH_REFRESH_TTL_DAYS` (1–30, default 7 days);
-- `AUTH_COOKIE_SECURE` (normally leave empty so the Secure flag follows HTTPS);
+- `AUTH_COOKIE_SECURE` (leave empty in production: `Secure=true` is the default; set `false` only for an explicitly isolated HTTP environment);
 - `AUTH_FAILURE_LIMIT`;
 - `AUTH_FAILURE_WINDOW_MINUTES`;
 - `AUTH_LOCK_MINUTES`.
