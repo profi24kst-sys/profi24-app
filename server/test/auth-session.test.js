@@ -10,6 +10,7 @@ import {
   parseCookieHeader,
   readRefreshToken,
   refreshCookieName,
+  revokeUserRefreshSessions,
   secureCookieForRequest
 } from '../src/auth-session.js';
 
@@ -59,4 +60,22 @@ test('cookie parsing is defensive and cookie security follows proxy protocol',()
   assert.equal(secureCookieForRequest({protocol:'http',headers:{'x-forwarded-proto':'https'}},{}),true);
   assert.equal(secureCookieForRequest({protocol:'http',headers:{}},{NODE_ENV:'production'}),true);
   assert.equal(secureCookieForRequest({protocol:'https',headers:{}},{NODE_ENV:'production',AUTH_COOKIE_SECURE:'false'}),false);
+});
+
+test('password-change revocation is safe before the auth table exists and revokes active sessions when present',async()=>{
+  let calls=0;
+  const missing={query:async sql=>{calls++;assert.match(sql,/to_regclass/);return{rows:[{rel:null}]}}};
+  assert.equal(await revokeUserRefreshSessions(missing,42),0);
+  assert.equal(calls,1);
+
+  const seen=[];
+  const present={query:async(sql,params)=>{
+    seen.push({sql,params});
+    if(sql.includes('to_regclass'))return{rows:[{rel:'auth_refresh_sessions'}]};
+    return{rowCount:3,rows:[]};
+  }};
+  assert.equal(await revokeUserRefreshSessions(present,42),3);
+  assert.equal(seen.length,2);
+  assert.deepEqual(seen[1].params,[42]);
+  assert.match(seen[1].sql,/revoked_at=COALESCE/);
 });
