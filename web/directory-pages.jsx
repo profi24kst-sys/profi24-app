@@ -105,6 +105,9 @@ export function OrdersDirectory({open,user,refreshKey=0}){
   const [status,setStatus]=useState('ACTIVE'),[page,setPage]=useState(1),[limit,setLimit]=useState(25);
   useEffect(()=>setPage(1),[search,status,limit]);
   const filter={search,status,page,limit},state=useDirectory('orders',filter,refreshKey+updates);
+  useEffect(()=>{
+    if(!state.loading&&page>Math.max(1,Number(state.meta.pages)||0))setPage(Math.max(1,Number(state.meta.pages)||0));
+  },[state.loading,state.meta.pages,page]);
   const counts=state.meta.counts||{},exportable=EXPORT_ROLES.has(user?.role);
   return <>
     <div className="toolbar dir-toolbar"><SearchBox value={draft} onChange={setDraft} placeholder="Номер, клиент, телефон, техника, мастер…"/>
@@ -138,9 +141,12 @@ export function CustomersDirectory({user,refreshKey=0,focusCustomer=null}){
   const {draft,setDraft,search}=useSearch();
   const [page,setPage]=useState(1),[limit,setLimit]=useState(25);
   const [focus,setFocus]=useState(focusCustomer);
-  useEffect(()=>{setFocus(focusCustomer);if(focusCustomer)setPage(1)},[focusCustomer?.id]);
+  useEffect(()=>{setFocus(focusCustomer);if(focusCustomer)setPage(1)},[focusCustomer]);
   useEffect(()=>setPage(1),[search,limit]);
   const filter={search:focus?'':search,focus_id:focus?.id,page,limit},state=useDirectory('customers',filter,refreshKey+updates),exportable=EXPORT_ROLES.has(user?.role);
+  useEffect(()=>{
+    if(!state.loading&&page>Math.max(1,Number(state.meta.pages)||0))setPage(Math.max(1,Number(state.meta.pages)||0));
+  },[state.loading,state.meta.pages,page]);
   useEffect(()=>{
     if(!focus||state.loading||!state.rows.some(x=>String(x.id)===String(focus.id)))return;
     const row=document.querySelector('[data-search-record="customers-'+focus.id+'"]');
