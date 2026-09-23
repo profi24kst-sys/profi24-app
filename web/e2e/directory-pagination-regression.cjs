@@ -1,0 +1,65 @@
+const {chromium}=require('playwright');
+const fs=require('fs'),path=require('path');
+const BASE=(process.env.BASE_URL||'http://127.0.0.1:5173').replace(/\/$/,'');
+const EMAIL=process.env.E2E_EMAIL||'browser-owner@test.invalid';
+const PASSWORD=process.env.E2E_PASSWORD||'BrowserOwner2026Kst9';
+const artifacts=path.join(__dirname,'artifacts');
+fs.mkdirSync(artifacts,{recursive:true});
+function assert(condition,message){if(!condition)throw new Error(message)}
+(async()=>{
+  const browser=await chromium.launch({headless:true});
+  const page=await browser.newPage({viewport:{width:1600,height:1000},acceptDownloads:true});
+  try{
+    await page.goto(BASE+'/orders',{waitUntil:'domcontentloaded',timeout:30000});
+    await page.locator('input[autocomplete="username"]').fill(EMAIL);
+    await page.locator('input[autocomplete="current-password"]').fill(PASSWORD);
+    await page.getByRole('button',{name:'Войти',exact:true}).click();
+    await page.locator('aside').waitFor({state:'visible',timeout:15000});
+    await page.waitForFunction(()=>Boolean(localStorage.getItem('token')),{timeout:15000});
+    const token=await page.evaluate(()=>localStorage.getItem('token'));
+    async function api(url,{method='GET',body}={}){
+      const response=await page.request.fetch(BASE+url,{method,
+        headers:{Authorization:'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},
+        ...(body?{data:body}:{})});
+      let result;
+      try{result=await response.json()}catch{result={}};
+      assert(response.ok(),method+' '+url+': '+response.status()+' '+JSON.stringify(result.error||{}));
+      return result.data;
+    }
+    const suffix=Date.now().toString(36).toUpperCase();
+    const name='E2E Пагинация '+suffix;
+    const customer=await api('/api/v1/customers',{method:'POST',body:{name,phone:'+7704'+String(Date.now()).slice(-7),address:'Костанай'}});
+    for(let index=1;index<=27;index++){
+      await api('/api/v1/requests',{method:'POST',body:{customer_id:customer.id,complaint:'Проверка каталога '+suffix+' №'+index,source:'OTHER'}});
+    }
+    await page.goto(BASE+'/orders',{waitUntil:'domcontentloaded'});
+    await page.locator('.dir-toolbar .search input').fill(name);
+    await page.waitForFunction(()=>document.querySelectorAll('.trow').length===25,{timeout:15000});
+    assert((await page.locator('.dir-toolbar').innerText()).includes('27'),'Expected 27 filtered orders');
+    await page.getByRole('button',{name:'Следующая страница'}).click();
+    await page.waitForFunction(()=>document.querySelectorAll('.trow').length===2,{timeout:15000});
+    const pagination=await page.locator('.dir-pagination').innerText();
+    assert(pagination.includes('26–27 из 27'),'Wrong pagination total: '+pagination);
+    const [xlsx]=await Promise.all([
+      page.waitForEvent('download',{timeout:15000}),
+      page.locator('.dir-toolbar .dir-export-btn').click()
+    ]);
+    assert(xlsx.suggestedFilename().endsWith('.xlsx'),'Excel file name was not .xlsx');
+    const customerNav=page.locator('aside nav').getByRole('button',{name:/Клиенты/}).first();
+    await customerNav.click();
+    await page.locator('.dir-toolbar .search input').fill(name);
+    await page.locator('[data-search-record="customers-'+customer.id+'"]').waitFor({state:'visible',timeout:15000});
+    const global=page.getByRole('combobox',{name:'Глобальный поиск'});
+    await global.fill(name);
+    const globalClient=page.locator('.globalSearchResults button').filter({hasText:name}).filter({hasText:'Клиент'}).first();
+    await globalClient.waitFor({state:'visible',timeout:8000});
+    await globalClient.click();
+    await page.locator('.dir-focus').filter({hasText:name}).waitFor({state:'visible',timeout:8000});
+    await page.locator('[data-search-record="customers-'+customer.id+'"].searchHit').waitFor({state:'visible',timeout:8000});
+    console.log('directory_browser_acceptance=ok pages=2 orders=27 customer_focus='+customer.id);
+  }catch(error){
+    try{await page.screenshot({path:path.join(artifacts,'directory-pagination-failure.png'),fullPage:true})}catch{}
+    fs.writeFileSync(path.join(artifacts,'directory-pagination-error.txt'),String(error.stack||error));
+    console.error(error);process.exitCode=1;
+  }finally{await browser.close()}
+})();
