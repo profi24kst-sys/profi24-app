@@ -34,8 +34,13 @@ function assert(condition,message){if(!condition)throw new Error(message)}
     }
     await page.goto(BASE+'/orders',{waitUntil:'domcontentloaded'});
     await page.locator('.dir-toolbar .search input').fill(name);
-    await page.waitForFunction(()=>document.querySelectorAll('.trow').length===25,{timeout:15000});
-    assert((await page.locator('.dir-toolbar').innerText()).includes('27'),'Expected 27 filtered orders');
+    // A previously rendered unfiltered first page also has 25 rows. Wait for the
+    // debounced server search and the exact filtered count before asserting.
+    await page.waitForFunction(expected=>{
+      const header=document.querySelector('.dir-toolbar')?.textContent||'';
+      const rows=[...document.querySelectorAll('.trow')];
+      return /Найдено:\s*27/.test(header)&&rows.length===25&&rows.every(row=>row.textContent.includes(expected));
+    },name,{timeout:20000});
     await page.getByRole('button',{name:'Следующая страница'}).click();
     await page.waitForFunction(()=>document.querySelectorAll('.trow').length===2,{timeout:15000});
     const pagination=await page.locator('.dir-pagination').innerText();
