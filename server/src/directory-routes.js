@@ -20,9 +20,11 @@ export function parseDirectoryQuery(query={},kind='orders'){
   if(search.length>120)return{error:'Поисковая строка: максимум 120 символов'};
   const status=String(query.status||'ACTIVE').toUpperCase();
   if(kind==='orders'&&!ORDER_TABS.has(status))return{error:'Неизвестный фильтр заказов'};
+  const focusId=query.focus_id==null?null:Number(query.focus_id);
+  if(focusId!=null&&(!Number.isSafeInteger(focusId)||focusId<1))return{error:'Некорректный номер клиента'};
   const month=query.month==null?'':String(query.month);
   if(month&&!/^20\d\d-(0[1-9]|1[0-2])$/.test(month))return{error:'Месяц укажите в формате ГГГГ-ММ'};
-  return{value:{page,limit,search,status,month,offset:(page-1)*limit}};
+  return{value:{page,limit,search,status,month,focusId,offset:(page-1)*limit}};
 }
 
 function escapeLike(value){
@@ -34,9 +36,12 @@ function parameter(params,value){
 function monthPredicate(params,alias,month){
   if(!month)return'';
   const p=parameter(params,month);
-  // Compare local year-month directly: a UTC timestamp at month-end may already be next month in Kostanay.
-  // The same expression is used for listing and XLSX exports, including customer totals.
-  return ' AND to_char('+alias+".created_at AT TIME ZONE 'Asia/Qostanay', 'YYYY-MM')="+p;
+  // Construct TIMESTAMP WITHOUT TIME ZONE local midnight before AT TIME ZONE.
+  // A DATE operand invokes the wrong overload; direct timestamp bounds retain index-friendly predicates.
+  const localStart="(("+p+"::text || '-01')::timestamp)";
+  const first='('+localStart+" AT TIME ZONE 'Asia/Qostanay')";
+  const next='(('+localStart+" + INTERVAL '1 month') AT TIME ZONE 'Asia/Qostanay')";
+  return ' AND '+alias+'.created_at >= '+first+' AND '+alias+'.created_at < '+next;
 }
 
 function visibleRequest(params,role,userId,alias){
@@ -91,6 +96,7 @@ function customersQuery(role,userId,filters){
   if(role==='MANAGER'||role==='ENGINEER'||role==='TRAINEE'||filters.month){
     where.push('EXISTS (SELECT 1 FROM requests r WHERE r.customer_id=c.id AND '+joinFilter+')');
   }
+  if(filters.focusId)where.push('c.id='+parameter(params,filters.focusId));
   if(filters.search){
     const p=parameter(params,escapeLike(filters.search));
     where.push('(c.name ILIKE '+p+" ESCAPE '\\' OR c.phone ILIKE "+p+" ESCAPE '\\' OR "+
