@@ -149,7 +149,7 @@ export function TaskCenter({user,reload}){
   function canComplete(task){
     return ['OWNER','SUPERVISOR'].includes(user.role)||
       Number(task.assigned_to)===Number(user.id)||
-      (user.role==='MANAGER'&&Number(task.created_by)===Number(user.id));
+      (user.role==='MANAGER'&&(task.request_id!=null||Number(task.created_by)===Number(user.id)));
   }
 
   return <div className="tcPage">
