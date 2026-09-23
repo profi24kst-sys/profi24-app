@@ -136,6 +136,7 @@ jobs:
             knowledge-base-regression.cjs
             fault-model-analytics-regression.cjs
             seasonal-load-forecast-regression.cjs
+            directory-pagination-regression.cjs
           )
           for script in "${scripts[@]}"; do
             echo "===== browser acceptance: $script ====="
