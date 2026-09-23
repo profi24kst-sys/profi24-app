@@ -30,13 +30,13 @@ async function setup(){
   const apps=[];
   async function load(name){
     let src=await readFile(path.join(root,name+'.js'),'utf8');
-    src=src.replace(/import pg from\\s*['"]pg['"];?/g,'const pg={Pool:class {constructor(){return globalThis.__staffTaskPool}}};');
-    src=src.replace(/\\bfrom\\s*(['"])([^'"]+)\\1/g,(m,quote,spec)=>{
+    src=src.replace(/import pg from\s*['"]pg['"];?/g,'const pg={Pool:class {constructor(){return globalThis.__staffTaskPool}}};');
+    src=src.replace(/\bfrom\s*(['"])([^'"]+)\1/g,(m,quote,spec)=>{
       if(spec.startsWith('node:')||builtinModules.includes(spec))return m;
       return 'from '+JSON.stringify(pathToFileURL(spec.startsWith('.')?path.resolve(root,spec):require.resolve(spec)).href);
     });
-    src=src.replace(/logger:\\s*true/g,'logger:false').replaceAll('app.listen(','testListen(').replaceAll('process.on(','testOn(');
-    src='const testListen=async()=>{};const testOn=()=>{};\\n'+src+'\\nexport {app};';
+    src=src.replace(/logger:\s*true/g,'logger:false').replaceAll('app.listen(','testListen(').replaceAll('process.on(','testOn(');
+    src='const testListen=async()=>{};const testOn=()=>{};\n'+src+'\nexport {app};';
     const {app}=await import('data:text/javascript;base64,'+Buffer.from(src).toString('base64'));
     await app.ready();apps.push(app);return app;
   }
