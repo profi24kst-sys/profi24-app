@@ -142,7 +142,7 @@ export function TaskCenter({user,reload}){
       setCompleting(null);setResult('');
       await refresh();
       reload?.();
-    }catch(e){setFormError(e.message)}
+    }catch(e){setFormError(e.message);setError(e.message)}
     finally{setWorkingId(null)}
   }
 
