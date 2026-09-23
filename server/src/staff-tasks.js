@@ -2,7 +2,6 @@ import {authenticate} from './access.js';
 
 const CREATORS=new Set(['OWNER','SUPERVISOR','MANAGER']);
 const PRIORITIES=new Set(['LOW','NORMAL','HIGH','URGENT']);
-const TERMINAL=new Set(['DONE','CANCELLED']);
 const MAX_ITEMS=500;
 
 function fail(reply,code,message,status=422){
@@ -42,7 +41,7 @@ export function staffTaskVisibility(role,userId){
 export function registerStaffTaskRoutes(app,pool){
   const q=(sql,params=[])=>pool.query(sql,params);
   const auth=async(req,reply)=>{await authenticate(req,reply,pool);};
-  const creator=(req,reply)=>CREATORS.has(req.user.role)||fail(reply,'FORBIDDEN','Назначать задачи может собственник, управляющий или менеджер',403);
+  const creator=(req,reply)=>{if(CREATORS.has(req.user.role))return true;fail(reply,'FORBIDDEN','Назначать задачи может собственник, управляющий или менеджер',403);return false;};
 
   async function isEligibleAssignee(actor,userId){
     const user=(await q('SELECT id,name,role,active FROM users WHERE id=$1',[userId])).rows[0];
