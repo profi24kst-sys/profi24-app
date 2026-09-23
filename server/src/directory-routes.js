@@ -34,8 +34,9 @@ function parameter(params,value){
 function monthPredicate(params,alias,month){
   if(!month)return'';
   const p=parameter(params,month);
-  return ' AND '+alias+'.created_at >= (('+p+"::text || '-01')::date AT TIME ZONE 'Asia/Qostanay')"+
-    ' AND '+alias+'.created_at < ((('+p+"::text || '-01')::date + INTERVAL '1 month') AT TIME ZONE 'Asia/Qostanay')";
+  // Compare local year-month directly: a UTC timestamp at month-end may already be next month in Kostanay.
+  // The same expression is used for listing and XLSX exports, including customer totals.
+  return ' AND to_char('+alias+".created_at AT TIME ZONE 'Asia/Qostanay', 'YYYY-MM')="+p;
 }
 
 function visibleRequest(params,role,userId,alias){
