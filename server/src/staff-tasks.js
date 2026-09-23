@@ -88,6 +88,15 @@ export function registerStaffTaskRoutes(app,pool){
     const assigned=req.query?.assigned_to?positiveId(req.query.assigned_to):null;
     if(req.query?.assigned_to&&!assigned)return fail(reply,'VALIDATION','Некорректный ответственный');
     if(assigned)where.push(`t.assigned_to=${bind(assigned)}`);
+    const search=String(req.query?.search||'').trim().slice(0,100);
+    if(search){
+      const needle='%'+search.replace(/[\\%_]/g,value=>'\\'+value)+'%';
+      const p=bind(needle);
+      where.push(`(t.title ILIKE ${p} ESCAPE '\\' OR
+        COALESCE(t.description,'') ILIKE ${p} ESCAPE '\\' OR
+        assignee.name ILIKE ${p} ESCAPE '\\' OR
+        COALESCE(r.number,'') ILIKE ${p} ESCAPE '\\')`);
+    }
     const priority=String(req.query?.priority||'').toUpperCase();
     if(priority){
       if(!PRIORITIES.has(priority))return fail(reply,'VALIDATION','Некорректный фильтр приоритета');
