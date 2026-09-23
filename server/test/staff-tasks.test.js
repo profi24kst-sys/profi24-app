@@ -146,7 +146,14 @@ test('staff task center: create, branch permissions, personal visibility, search
     await t.test('order-linked task creation respects manager branch membership',async()=>{
       assert.equal((await call(3,'POST','/api/v1/request/'+s.foreignOrder,{title:'Foreign',assigned_to:6})).status,403);
       assert.equal((await call(3,'POST','/api/v1/request/'+s.ownOrder,{title:'Check delivery',assigned_to:5})).status,201);
+      assert.equal((await call(1,'POST','/api/v1/request/'+s.ownOrder,{title:'Wrong branch assignee',assigned_to:6})).status,422);
       assert.equal((await call(2,'POST','/api/v1/request/'+s.foreignOrder,{title:'Cross-branch supervisor',assigned_to:6})).status,201);
+      const managerKst=await call(3,'GET','/api/v1/tasks?status=all');
+      assert.ok(managerKst.data.some(task=>task.title==='Check delivery'));
+      assert.ok(!managerKst.data.some(task=>task.title==='Cross-branch supervisor'));
+      const managerOther=await call(4,'GET','/api/v1/tasks?status=all');
+      assert.ok(managerOther.data.some(task=>task.title==='Cross-branch supervisor'));
+      assert.ok(!managerOther.data.some(task=>task.title==='Check delivery'));
     });
   }finally{await s.close()}
 });
