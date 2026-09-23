@@ -50,6 +50,26 @@ function assert(condition,message){if(!condition)throw new Error(message)}
       page.locator('.dir-toolbar .dir-export-btn').click()
     ]);
     assert(xlsx.suggestedFilename().endsWith('.xlsx'),'Excel file name was not .xlsx');
+    // Simulate a page-2 result disappearing after refresh. The list must recover to page 1.
+    let shrunkResponse=false;
+    const intercept=async route=>{
+      const url=new URL(route.request().url);
+      if(!shrunkResponse&&url.searchParams.get('search')===name&&url.searchParams.get('page')==='2'){
+        shrunkResponse=true;
+        return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({
+          data:[],meta:{page:2,limit:25,total:25,pages:1,counts:{active:25}}
+        })});
+      }
+      return route.continue();
+    };
+    await page.route('**/api/v1/directory/orders?*',intercept);
+    await page.getByRole('button',{name:'Обновить данные'}).click();
+    await page.waitForFunction(()=>{
+      const footer=document.querySelector('.dir-pagination')?.textContent||'';
+      return footer.includes('Стр. 1 / 2')&&document.querySelectorAll('.trow').length===25;
+    },null,{timeout:20000});
+    assert(shrunkResponse,'Refresh did not refetch page 2');
+    await page.unroute('**/api/v1/directory/orders?*',intercept);
     const customerNav=page.locator('aside nav').getByRole('button',{name:/Клиенты/}).first();
     await customerNav.click();
     await page.locator('.dir-toolbar .search input').fill(name);
@@ -61,7 +81,14 @@ function assert(condition,message){if(!condition)throw new Error(message)}
     await globalClient.click();
     await page.locator('.dir-focus').filter({hasText:name}).waitFor({state:'visible',timeout:8000});
     await page.locator('[data-search-record="customers-'+customer.id+'"].searchHit').waitFor({state:'visible',timeout:8000});
-    console.log('directory_browser_acceptance=ok pages=2 orders=27 customer_focus='+customer.id);
+    await page.locator('.dir-focus button').click();
+    await page.locator('.dir-focus').waitFor({state:'detached',timeout:8000});
+    await global.fill(name);
+    await globalClient.waitFor({state:'visible',timeout:8000});
+    await globalClient.click();
+    await page.locator('.dir-focus').filter({hasText:name}).waitFor({state:'visible',timeout:8000});
+    await page.locator('[data-search-record="customers-'+customer.id+'"].searchHit').waitFor({state:'visible',timeout:8000});
+    console.log('directory_browser_acceptance=ok pages=2 orders=27 customer_refocus='+customer.id);
   }catch(error){
     try{await page.screenshot({path:path.join(artifacts,'directory-pagination-failure.png'),fullPage:true})}catch{}
     fs.writeFileSync(path.join(artifacts,'directory-pagination-error.txt'),String(error.stack||error));
