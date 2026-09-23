@@ -19,6 +19,74 @@ app.get('/api/v1/request/:id',{preHandler:auth},async(req,r)=>{const id=n(req.pa
 app.get('/api/v1/my',{preHandler:auth},async req=>{const openOnly=req.query?.all!=='true';return{data:(await q(`SELECT t.*,r.number request_number,c.name customer_name,CASE WHEN t.status NOT IN ('DONE','CANCELLED') AND t.due_at IS NOT NULL AND t.due_at<now() THEN true ELSE false END overdue FROM tasks t LEFT JOIN requests r ON r.id=t.request_id LEFT JOIN customers c ON c.id=r.customer_id WHERE t.assigned_to=$1 AND ($2::boolean=false OR t.status NOT IN ('DONE','CANCELLED')) AND (t.request_id IS NULL OR r.deleted_at IS NULL) ORDER BY overdue DESC,t.due_at NULLS LAST,t.created_at DESC`,[req.user.id,openOnly])).rows}});
 app.post('/api/v1/request/:id/comment',{preHandler:auth},async(req,r)=>{const id=n(req.params.id),text=String(req.body?.text||'').trim();if(!await canSee(req,id))return fail(r,'FORBIDDEN','Нет доступа к заказу',403);if(text.length<1)return fail(r,'VALIDATION','Введите комментарий');if(text.length>2000)return fail(r,'VALIDATION','Комментарий слишком длинный');await hist(id,req.user.id,'ORDER_COMMENT',{text});return r.code(201).send({data:{ok:true,text}})});
 app.post('/api/v1/request/:id',{preHandler:auth},async(req,r)=>{const id=n(req.params.id),b=req.body||{};if(!await canSee(req,id))return fail(r,'FORBIDDEN','Нет доступа к заказу',403);if(!b.title?.trim()||!n(b.assigned_to))return fail(r,'VALIDATION','Укажите задачу и ответственного');const u=(await q('SELECT id,name,active FROM users WHERE id=$1',[n(b.assigned_to)])).rows[0];if(!u?.active)return fail(r,'VALIDATION','Ответственный сотрудник не найден');if(req.user.role==='ENGINEER'&&Number(b.assigned_to)!==Number(req.user.id))return fail(r,'FORBIDDEN','Инженер может поставить задачу только себе',403);const member=(await q('SELECT 1 FROM requests r JOIN user_branches ub ON ub.branch_id=r.branch_id AND ub.user_id=$2 WHERE r.id=$1 AND r.deleted_at IS NULL LIMIT 1',[id,n(b.assigned_to)])).rows[0];if(!member)return fail(r,'INVALID_ASSIGNEE','Сотрудник не относится к филиалу заказа',422);const x=(await q(`INSERT INTO tasks(title,description,request_id,assigned_to,priority,status,due_at,created_by,updated_at) VALUES($1,$2,$3,$4,$5,'OPEN',$6,$7,now()) RETURNING *`,[b.title.trim(),b.description?.trim()||null,id,n(b.assigned_to),['LOW','NORMAL','HIGH','URGENT'].includes(b.priority)?b.priority:'NORMAL',b.due_at||null,req.user.id])).rows[0];await hist(id,req.user.id,'ORDER_TASK_CREATED',{task_id:x.id,title:x.title,assigned_to:x.assigned_to,due_at:x.due_at,priority:x.priority});return r.code(201).send({data:x})});
-app.patch('/api/v1/tasks/:id',{preHandler:auth},async(req,r)=>{const t=(await q('SELECT * FROM tasks WHERE id=$1',[req.params.id])).rows[0];if(!t)return fail(r,'NOT_FOUND','Задача не найдена',404);const managerOwn=req.user.role==='MANAGER'&&(Number(t.created_by)===Number(req.user.id)||(t.request_id&&await canSee(req,t.request_id)));const admin=['OWNER','SUPERVISOR'].includes(req.user.role)||managerOwn,mine=Number(t.assigned_to)===Number(req.user.id);if(!admin&&!mine)return fail(r,'FORBIDDEN','Нет доступа к задаче',403);const b=req.body||{},status=b.status||t.status;if(!['OPEN','IN_PROGRESS','DONE','CANCELLED'].includes(status))return fail(r,'VALIDATION','Некорректный статус');if(status==='CANCELLED'&&!admin)return fail(r,'FORBIDDEN','Отменять поручения может только руководитель',403);if(status==='DONE'&&!String(b.result??t.result??'').trim())return fail(r,'RESULT_REQUIRED','При завершении укажите результат выполнения');const completed=status==='DONE'?new Date():null,started=status==='IN_PROGRESS'&&!t.started_at?new Date():t.started_at;const x=(await q(`UPDATE tasks SET title=$1,description=$2,assigned_to=$3,priority=$4,status=$5,due_at=$6,result=$7,started_at=$8,completed_at=$9,completed_by=$10,updated_at=now() WHERE id=$11 RETURNING *`,[admin?(b.title?.trim()||t.title):t.title,admin?(b.description??t.description):t.description,admin&&b.assigned_to?n(b.assigned_to):t.assigned_to,admin&&b.priority?b.priority:t.priority,status,admin&&Object.hasOwn(b,'due_at')?(b.due_at||null):t.due_at,b.result??t.result,started,completed,status==='DONE'?req.user.id:null,t.id])).rows[0];if(t.request_id)await hist(t.request_id,req.user.id,status==='DONE'?'ORDER_TASK_COMPLETED':'ORDER_TASK_UPDATED',{task_id:t.id,title:x.title,status:x.status,result:x.result,due_at:x.due_at,on_time:status==='DONE'&&(!x.due_at||new Date(x.completed_at)<=new Date(x.due_at))});return{data:x}});
+app.patch('/api/v1/tasks/:id',{preHandler:auth},async(req,reply)=>{
+  const t=(await q('SELECT * FROM tasks WHERE id=$1',[req.params.id])).rows[0];
+  if(!t)return fail(reply,'NOT_FOUND','Задача не найдена',404);
+  const isManager=req.user.role==='MANAGER';
+  const managerOwn=isManager&&(t.request_id
+    ?await canSee(req,t.request_id)
+    :Number(t.created_by)===Number(req.user.id));
+  const admin=['OWNER','SUPERVISOR'].includes(req.user.role)||managerOwn;
+  const mine=Number(t.assigned_to)===Number(req.user.id);
+  if(!admin&&!mine)return fail(reply,'FORBIDDEN','Нет доступа к задаче',403);
+
+  const b=req.body||{},status=b.status??t.status;
+  if(!['OPEN','IN_PROGRESS','DONE','CANCELLED'].includes(status))
+    return fail(reply,'VALIDATION','Некорректный статус');
+  if(status==='CANCELLED'&&!admin)
+    return fail(reply,'FORBIDDEN','Отменять поручения может только руководитель',403);
+  if(status==='DONE'&&!String(b.result??t.result??'').trim())
+    return fail(reply,'RESULT_REQUIRED','При завершении укажите результат выполнения');
+
+  const metadataChange=['title','description','priority','due_at','assigned_to']
+    .some(key=>Object.hasOwn(b,key));
+  if(metadataChange&&!admin)
+    return fail(reply,'FORBIDDEN','Изменять поручение и ответственного может только руководитель',403);
+
+  const title=Object.hasOwn(b,'title')?String(b.title??'').trim():t.title;
+  const description=Object.hasOwn(b,'description')?String(b.description??'').trim()||null:t.description;
+  const priority=Object.hasOwn(b,'priority')?String(b.priority??'').toUpperCase():t.priority;
+  if(!title||title.length>200)return fail(reply,'VALIDATION','Название задачи: от 1 до 200 символов');
+  if(description?.length>4000)return fail(reply,'VALIDATION','Описание задачи слишком длинное');
+  if(!['LOW','NORMAL','HIGH','URGENT'].includes(priority))return fail(reply,'VALIDATION','Некорректный приоритет');
+
+  let dueAt=t.due_at;
+  if(Object.hasOwn(b,'due_at')){
+    if(b.due_at==null||b.due_at==='')dueAt=null;
+    else{
+      const date=new Date(b.due_at);
+      if(!Number.isFinite(date.getTime()))return fail(reply,'VALIDATION','Некорректный срок выполнения');
+      dueAt=date.toISOString();
+    }
+  }
+
+  let assignedTo=t.assigned_to;
+  if(Object.hasOwn(b,'assigned_to')){
+    assignedTo=n(b.assigned_to);
+    if(!Number.isSafeInteger(assignedTo)||assignedTo<1)
+      return fail(reply,'VALIDATION','Укажите действующего ответственного');
+    const user=(await q('SELECT id FROM users WHERE id=$1 AND active=true',[assignedTo])).rows[0];
+    if(!user)return fail(reply,'INVALID_ASSIGNEE','Сотрудник не найден или неактивен',422);
+    if(t.request_id){
+      const member=(await q('SELECT 1 FROM requests r JOIN user_branches ub ON ub.branch_id=r.branch_id AND ub.user_id=$2 WHERE r.id=$1 AND r.deleted_at IS NULL LIMIT 1',[t.request_id,assignedTo])).rows[0];
+      if(!member)return fail(reply,'INVALID_ASSIGNEE','Сотрудник не относится к филиалу заказа',422);
+    }else if(isManager){
+      const shared=(await q('SELECT 1 FROM user_branches mb JOIN user_branches ub ON ub.branch_id=mb.branch_id WHERE mb.user_id=$1 AND ub.user_id=$2 LIMIT 1',[req.user.id,assignedTo])).rows[0];
+      if(!shared)return fail(reply,'FORBIDDEN','Менеджер может переназначать задачи только в своих филиалах',403);
+    }
+  }
+
+  const completed=status==='DONE'?new Date():null;
+  const started=status==='IN_PROGRESS'&&!t.started_at?new Date():t.started_at;
+  const x=(await q('UPDATE tasks SET title=$1,description=$2,assigned_to=$3,priority=$4,status=$5,due_at=$6,result=$7,started_at=$8,completed_at=$9,completed_by=$10,updated_at=now() WHERE id=$11 RETURNING *',[
+    title,description,assignedTo,priority,status,dueAt,b.result??t.result,
+    started,completed,status==='DONE'?req.user.id:null,t.id
+  ])).rows[0];
+  if(t.request_id)await hist(t.request_id,req.user.id,status==='DONE'?'ORDER_TASK_COMPLETED':'ORDER_TASK_UPDATED',{
+    task_id:t.id,title:x.title,status:x.status,result:x.result,due_at:x.due_at,
+    on_time:status==='DONE'&&(!x.due_at||new Date(x.completed_at)<=new Date(x.due_at))
+  });
+  return{data:x};
+});
 app.delete('/api/v1/tasks/:id',{preHandler:auth},async(req,r)=>{if(req.user.role!=='OWNER')return fail(r,'FORBIDDEN','Удалять задачи может только владелец',403);const t=(await q('DELETE FROM tasks WHERE id=$1 RETURNING *',[req.params.id])).rows[0];if(!t)return fail(r,'NOT_FOUND','Задача не найдена',404);if(t.request_id)await hist(t.request_id,req.user.id,'ORDER_TASK_DELETED',{task_id:t.id,title:t.title});return{data:{ok:true}}});
 app.listen({port:Number(process.env.PORT||8105),host:'0.0.0.0'});
