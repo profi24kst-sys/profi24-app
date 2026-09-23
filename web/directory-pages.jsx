@@ -2,7 +2,7 @@ import React,{useEffect,useState} from 'react';
 import {ChevronLeft,ChevronRight,Download,Search} from 'lucide-react';
 import './directory-pages.css';
 
-const BASE='/api/v1/directory';
+const BASE=(import.meta.env.VITE_API_URL||'/api/v1').replace(/\/$/,'')+'/directory';
 const EXPORT_ROLES=new Set(['OWNER','SUPERVISOR','ACCOUNTANT','MANAGER']);
 const TABS=[
   ['ACTIVE','Активные','active'],['NEW','Новые','new'],['PART','Ждут деталь','part'],
@@ -59,7 +59,7 @@ function useDirectory(kind,filter,refreshKey=0){
       if(mounted&&error.name!=='AbortError')setState(previous=>({...previous,loading:false,error:error.message}));
     });
     return()=>{mounted=false;controller.abort()};
-  },[kind,filter.search,filter.status,filter.page,filter.limit,filter.month,refreshKey]);
+  },[kind,filter.search,filter.status,filter.page,filter.limit,filter.month,filter.focus_id,refreshKey]);
   return state;
 }
 function Pagination({meta,limit,onPage,onLimit,loading}){
@@ -132,17 +132,29 @@ export function OrdersDirectory({open,user,refreshKey=0}){
     <Pagination meta={state.meta} limit={limit} onPage={setPage} onLimit={value=>{setLimit(value);setPage(1)}} loading={state.loading}/>
   </>;
 }
-export function CustomersDirectory({user,refreshKey=0}){
+export function CustomersDirectory({user,refreshKey=0,focusCustomer=null}){
   const [updates,setUpdates]=useState(0);
   useEffect(()=>{const refresh=()=>setUpdates(x=>x+1);window.addEventListener('profi24:request-updated',refresh);return()=>window.removeEventListener('profi24:request-updated',refresh)},[]);
   const {draft,setDraft,search}=useSearch();
   const [page,setPage]=useState(1),[limit,setLimit]=useState(25);
+  const [focus,setFocus]=useState(focusCustomer);
+  useEffect(()=>{setFocus(focusCustomer);if(focusCustomer)setPage(1)},[focusCustomer?.id]);
   useEffect(()=>setPage(1),[search,limit]);
-  const filter={search,page,limit},state=useDirectory('customers',filter,refreshKey+updates),exportable=EXPORT_ROLES.has(user?.role);
+  const filter={search:focus?'':search,focus_id:focus?.id,page,limit},state=useDirectory('customers',filter,refreshKey+updates),exportable=EXPORT_ROLES.has(user?.role);
+  useEffect(()=>{
+    if(!focus||state.loading||!state.rows.some(x=>String(x.id)===String(focus.id)))return;
+    const row=document.querySelector('[data-search-record="customers-'+focus.id+'"]');
+    if(!row)return;
+    row.scrollIntoView({behavior:'smooth',block:'center'});
+    row.classList.add('searchHit');row.focus({preventScroll:true});
+    const timeout=setTimeout(()=>row.classList.remove('searchHit'),2200);
+    return()=>clearTimeout(timeout);
+  },[focus?.id,state.loading,state.rows]);
   return <>
-    <div className="toolbar dir-toolbar"><SearchBox value={draft} onChange={setDraft} placeholder="Имя, телефон или электронная почта"/>
-      <div className="dir-tools"><span>Клиентов: <b>{state.meta.total||0}</b></span>{exportable&&<ExportButton kind="customers" filter={{search}}/>}</div>
+    <div className="toolbar dir-toolbar"><SearchBox value={draft} onChange={value=>{setFocus(null);setDraft(value);setPage(1)}} placeholder="Имя, телефон или электронная почта"/>
+      <div className="dir-tools"><span>Клиентов: <b>{state.meta.total||0}</b></span>{exportable&&<ExportButton kind="customers" filter={focus?{focus_id:focus.id}:{search}}/>}</div>
     </div>
+    {focus&&<div className="dir-focus">Выбранный клиент: <b>{focus.title||focus.name||'#'+focus.id}</b><button type="button" onClick={()=>{setFocus(null);setDraft('');setPage(1)}}>Показать всех</button></div>}
     {state.error&&<div className="errorbox" role="alert">{state.error}</div>}
     <section className="table" aria-busy={state.loading}>
       {state.rows.length?state.rows.map(customer=><div className="simple dir-customer" key={customer.id}
