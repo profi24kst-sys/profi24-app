@@ -154,6 +154,12 @@ test('directory: pagination, filter/search, role and branch visibility, Excel ex
       const main=owner.body.data.find(row=>row.id===1);
       assert.equal(Number(main.lifetime_paid),1200);
       assert.equal(main.request_count,33);
+      const focused=await s.call(3,'/api/v1/directory/customers?focus_id=1');
+      assert.deepEqual(focused.body.data.map(row=>row.id),[1]);
+      assert.equal(focused.body.meta.total,1);
+      const foreignFocus=await s.call(3,'/api/v1/directory/customers?focus_id=2');
+      assert.equal(foreignFocus.body.meta.total,0);
+      assert.equal((await s.call(3,'/api/v1/directory/customers?focus_id=oops')).status,422);
       const engineer=await s.call(5,'/api/v1/directory/customers');
       assert.equal(engineer.body.data.length,1);
       assert.ok(!('lifetime_paid' in engineer.body.data[0]));
