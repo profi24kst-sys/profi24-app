@@ -53,6 +53,7 @@ async function setup(){
     ('Accountant','staff-accountant@test.invalid','unused','ACCOUNTANT'),
     ('Trainee','staff-trainee@test.invalid','unused','TRAINEE')`);
   await query('UPDATE users SET primary_branch_id=$1 WHERE id IN (4,6)',[other]);
+  await query('DELETE FROM user_branches WHERE user_id IN (4,6) AND branch_id=$1',[kst]);
   await query("INSERT INTO customers(name,phone) VALUES('Task Client','77001112233')");
   const ownOrder=(await query("INSERT INTO requests(number,customer_id,engineer_id,manager_id,branch_id,status,complaint,total) VALUES('TASK-KST',1,5,3,$1,'REPAIR','Task acceptance',1000) RETURNING id",[kst])).rows[0].id;
   const foreignOrder=(await query("INSERT INTO requests(number,customer_id,engineer_id,manager_id,branch_id,status,complaint,total) VALUES('TASK-ALT',1,6,4,$1,'REPAIR','Task acceptance',1000) RETURNING id",[other])).rows[0].id;
