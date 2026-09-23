@@ -108,6 +108,8 @@ test('staff task center: create, branch permissions, personal visibility, search
       assert.equal(created.status,201,JSON.stringify(created));
       assert.equal(created.data.request_id,null);
       managerTask=created.data;
+      assert.equal((await call(3,'PATCH','/api/v1/tasks/'+managerTask.id,{assigned_to:6})).status,403);
+      assert.equal((await call(3,'PATCH','/api/v1/tasks/'+managerTask.id,{assigned_to:999999})).status,422);
       assert.equal((await call(1,'POST','/api/v1/tasks',{title:'Owner audit',assigned_to:7,priority:'URGENT'})).status,201);
       assert.equal((await call(2,'POST','/api/v1/tasks',{title:'Supervisor visit',assigned_to:6})).status,201);
     });
@@ -147,7 +149,13 @@ test('staff task center: create, branch permissions, personal visibility, search
       assert.equal((await call(3,'POST','/api/v1/request/'+s.foreignOrder,{title:'Foreign',assigned_to:6})).status,403);
       assert.equal((await call(3,'POST','/api/v1/request/'+s.ownOrder,{title:'Check delivery',assigned_to:5})).status,201);
       assert.equal((await call(1,'POST','/api/v1/request/'+s.ownOrder,{title:'Wrong branch assignee',assigned_to:6})).status,422);
-      assert.equal((await call(2,'POST','/api/v1/request/'+s.foreignOrder,{title:'Cross-branch supervisor',assigned_to:6})).status,201);
+      const supervisorLinked=await call(2,'POST','/api/v1/request/'+s.foreignOrder,{title:'Cross-branch supervisor',assigned_to:6});
+      assert.equal(supervisorLinked.status,201);
+      const ownerLinked=await call(1,'POST','/api/v1/request/'+s.ownOrder,{title:'Owner linked follow-up',assigned_to:5});
+      assert.equal(ownerLinked.status,201);
+      assert.equal((await call(3,'PATCH','/api/v1/tasks/'+ownerLinked.data.id,{status:'IN_PROGRESS'})).status,200);
+      assert.equal((await call(3,'PATCH','/api/v1/tasks/'+ownerLinked.data.id,{assigned_to:6})).status,422);
+      assert.equal((await call(4,'PATCH','/api/v1/tasks/'+supervisorLinked.data.id,{status:'IN_PROGRESS'})).status,200);
       const managerKst=await call(3,'GET','/api/v1/tasks?status=all');
       assert.ok(managerKst.data.some(task=>task.title==='Check delivery'));
       assert.ok(!managerKst.data.some(task=>task.title==='Cross-branch supervisor'));
