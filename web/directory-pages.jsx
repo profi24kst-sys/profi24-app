@@ -47,7 +47,7 @@ async function download(kind,filter){
   document.body.appendChild(link);link.click();link.remove();
   setTimeout(()=>URL.revokeObjectURL(href),30000);
 }
-function useDirectory(kind,filter){
+function useDirectory(kind,filter,refreshKey=0){
   const [state,setState]=useState({rows:[],meta:{page:1,total:0,pages:0,counts:{}},loading:true,error:''});
   useEffect(()=>{
     let mounted=true;
@@ -59,7 +59,7 @@ function useDirectory(kind,filter){
       if(mounted&&error.name!=='AbortError')setState(previous=>({...previous,loading:false,error:error.message}));
     });
     return()=>{mounted=false;controller.abort()};
-  },[kind,filter.search,filter.status,filter.page,filter.limit,filter.month]);
+  },[kind,filter.search,filter.status,filter.page,filter.limit,filter.month,refreshKey]);
   return state;
 }
 function Pagination({meta,limit,onPage,onLimit,loading}){
@@ -98,11 +98,13 @@ function useSearch(){
   },[draft]);
   return{draft,setDraft,search};
 }
-export function OrdersDirectory({open,user}){
+export function OrdersDirectory({open,user,refreshKey=0}){
+  const [updates,setUpdates]=useState(0);
+  useEffect(()=>{const refresh=()=>setUpdates(x=>x+1);window.addEventListener('profi24:request-updated',refresh);return()=>window.removeEventListener('profi24:request-updated',refresh)},[]);
   const {draft,setDraft,search}=useSearch();
   const [status,setStatus]=useState('ACTIVE'),[page,setPage]=useState(1),[limit,setLimit]=useState(25);
   useEffect(()=>setPage(1),[search,status,limit]);
-  const filter={search,status,page,limit},state=useDirectory('orders',filter);
+  const filter={search,status,page,limit},state=useDirectory('orders',filter,refreshKey+updates);
   const counts=state.meta.counts||{},exportable=EXPORT_ROLES.has(user?.role);
   return <>
     <div className="toolbar dir-toolbar"><SearchBox value={draft} onChange={setDraft} placeholder="Номер, клиент, телефон, техника, мастер…"/>
@@ -130,11 +132,13 @@ export function OrdersDirectory({open,user}){
     <Pagination meta={state.meta} limit={limit} onPage={setPage} onLimit={value=>{setLimit(value);setPage(1)}} loading={state.loading}/>
   </>;
 }
-export function CustomersDirectory({user}){
+export function CustomersDirectory({user,refreshKey=0}){
+  const [updates,setUpdates]=useState(0);
+  useEffect(()=>{const refresh=()=>setUpdates(x=>x+1);window.addEventListener('profi24:request-updated',refresh);return()=>window.removeEventListener('profi24:request-updated',refresh)},[]);
   const {draft,setDraft,search}=useSearch();
   const [page,setPage]=useState(1),[limit,setLimit]=useState(25);
   useEffect(()=>setPage(1),[search,limit]);
-  const filter={search,page,limit},state=useDirectory('customers',filter),exportable=EXPORT_ROLES.has(user?.role);
+  const filter={search,page,limit},state=useDirectory('customers',filter,refreshKey+updates),exportable=EXPORT_ROLES.has(user?.role);
   return <>
     <div className="toolbar dir-toolbar"><SearchBox value={draft} onChange={setDraft} placeholder="Имя, телефон или электронная почта"/>
       <div className="dir-tools"><span>Клиентов: <b>{state.meta.total||0}</b></span>{exportable&&<ExportButton kind="customers" filter={{search}}/>}</div>
