@@ -34,7 +34,7 @@ export function parseStaffTaskInput(body={}){
 
 export function staffTaskVisibility(role,userId){
   if(role==='OWNER'||role==='SUPERVISOR')return{clause:null,params:[]};
-  if(role==='MANAGER')return{clause:`(t.assigned_to=$1 OR t.created_by=$1 OR (t.request_id IS NOT NULL AND EXISTS(SELECT 1 FROM user_branches ub WHERE ub.user_id=$1 AND ub.branch_id=r.branch_id)))`,params:[userId]};
+  if(role==='MANAGER')return{clause:`(t.assigned_to=$1 OR (t.request_id IS NULL AND t.created_by=$1) OR (t.request_id IS NOT NULL AND EXISTS(SELECT 1 FROM user_branches ub WHERE ub.user_id=$1 AND ub.branch_id=r.branch_id)))`,params:[userId]};
   return{clause:'t.assigned_to=$1',params:[userId]};
 }
 
