@@ -108,12 +108,16 @@ The independent `Production Acceptance` CI workflow also verifies that backend c
 ## 6. Authentication and brute-force protection
 Normal browser login goes through the dedicated auth gateway. Production configuration controls:
 - `AUTH_RATE_LIMIT_PER_MINUTE`;
-- `AUTH_TOKEN_TTL`;
+- `AUTH_ACCESS_TTL_SECONDS` (60–900, default 900 seconds);
+- `AUTH_REFRESH_TTL_DAYS` (1–30, default 7 days);
+- `AUTH_COOKIE_SECURE` (leave empty in production: `Secure=true` is the default; set `false` only for an explicitly isolated HTTP environment);
 - `AUTH_FAILURE_LIMIT`;
 - `AUTH_FAILURE_WINDOW_MINUTES`;
 - `AUTH_LOCK_MINUTES`.
 
 The default account protection locks repeated failures by normalized email in PostgreSQL, so protection does not depend only on source IP. Successful login clears the failure state. OWNER can review recent login security events through the protected auth API.
+
+Browser sessions use a short-lived access JWT (never more than 15 minutes) plus an opaque refresh token in an `HttpOnly; SameSite=Lax` cookie. PostgreSQL stores only the SHA-256 refresh-token hash. Logout revokes the current refresh session. Never move the refresh token into JavaScript-readable storage.
 
 Do not expose the internal API container directly to the public network. External traffic must enter through the supported HTTPS edge/nginx path so proxy metadata and login controls remain effective.
 

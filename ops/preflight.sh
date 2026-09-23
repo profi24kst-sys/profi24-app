@@ -66,13 +66,22 @@ AUTH_RATE_LIMIT_PER_MINUTE=${AUTH_RATE_LIMIT_PER_MINUTE:-30}
 positive_int AUTH_RATE_LIMIT_PER_MINUTE "$AUTH_RATE_LIMIT_PER_MINUTE"
 [ "$AUTH_RATE_LIMIT_PER_MINUTE" -ge 10 ] && [ "$AUTH_RATE_LIMIT_PER_MINUTE" -le 120 ] || fail "AUTH_RATE_LIMIT_PER_MINUTE должен быть в диапазоне 10..120"
 
-AUTH_TOKEN_TTL=${AUTH_TOKEN_TTL:-12h}
-case "$AUTH_TOKEN_TTL" in
-  *h) AUTH_TOKEN_HOURS=${AUTH_TOKEN_TTL%h} ;;
-  *) fail "AUTH_TOKEN_TTL задаётся в часах, например 8h или 12h" ;;
+AUTH_ACCESS_TTL_SECONDS=${AUTH_ACCESS_TTL_SECONDS:-900}
+positive_int AUTH_ACCESS_TTL_SECONDS "$AUTH_ACCESS_TTL_SECONDS"
+[ "$AUTH_ACCESS_TTL_SECONDS" -ge 60 ] && [ "$AUTH_ACCESS_TTL_SECONDS" -le 900 ] || fail "AUTH_ACCESS_TTL_SECONDS должен быть в диапазоне 60..900 секунд"
+
+AUTH_REFRESH_TTL_DAYS=${AUTH_REFRESH_TTL_DAYS:-7}
+positive_int AUTH_REFRESH_TTL_DAYS "$AUTH_REFRESH_TTL_DAYS"
+[ "$AUTH_REFRESH_TTL_DAYS" -ge 1 ] && [ "$AUTH_REFRESH_TTL_DAYS" -le 30 ] || fail "AUTH_REFRESH_TTL_DAYS должен быть в диапазоне 1..30 дней"
+
+AUTH_COOKIE_SECURE_NORMALIZED=$(printf '%s' "${AUTH_COOKIE_SECURE:-}" | tr '[:upper:]' '[:lower:]')
+case "$AUTH_COOKIE_SECURE_NORMALIZED" in
+  ''|true|1|yes) ;;
+  false|0|no)
+    case "$PUBLIC_BASE_URL" in https://*) fail "AUTH_COOKIE_SECURE нельзя отключать для HTTPS production";; esac
+    ;;
+  *) fail "AUTH_COOKIE_SECURE должен быть true/false либо пустым" ;;
 esac
-positive_int AUTH_TOKEN_TTL "$AUTH_TOKEN_HOURS"
-[ "$AUTH_TOKEN_HOURS" -ge 1 ] && [ "$AUTH_TOKEN_HOURS" -le 24 ] || fail "AUTH_TOKEN_TTL должен быть от 1h до 24h"
 
 AUTH_FAILURE_LIMIT=${AUTH_FAILURE_LIMIT:-10}
 positive_int AUTH_FAILURE_LIMIT "$AUTH_FAILURE_LIMIT"
@@ -92,4 +101,4 @@ fi
 
 case "$JWT_SECRET" in *profi24*|*password*|*qwerty*) fail "JWT_SECRET выглядит предсказуемым";; esac
 
-echo "preflight_ok node_env=$NODE_ENV public_base_url=$PUBLIC_BASE_URL backup_retention_days=$BACKUP_RETENTION_DAYS auth_token_ttl=$AUTH_TOKEN_TTL auth_failure_limit=$AUTH_FAILURE_LIMIT website_intake_configured=$([ -n "${WEBSITE_INTAKE_SECRET:-}" ] && echo yes || echo no)"
+echo "preflight_ok node_env=$NODE_ENV public_base_url=$PUBLIC_BASE_URL backup_retention_days=$BACKUP_RETENTION_DAYS auth_access_ttl_seconds=$AUTH_ACCESS_TTL_SECONDS auth_refresh_ttl_days=$AUTH_REFRESH_TTL_DAYS auth_failure_limit=$AUTH_FAILURE_LIMIT website_intake_configured=$([ -n "${WEBSITE_INTAKE_SECRET:-}" ] && echo yes || echo no)"

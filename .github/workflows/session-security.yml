@@ -1,0 +1,149 @@
+name: Session Security
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  session_security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare isolated session environment
+        shell: bash
+        run: |
+          DB_PASS="$(openssl rand -hex 24)"
+          JWT="$(openssl rand -hex 32)"
+          cat > .env <<EOF
+          POSTGRES_DB=profi24
+          POSTGRES_USER=profi24
+          POSTGRES_PASSWORD=$DB_PASS
+          JWT_SECRET=$JWT
+          NODE_ENV=production
+          CORS_ORIGIN=http://localhost:5173
+          PUBLIC_BASE_URL=http://localhost:5173
+          DB_POOL_MAX=10
+          WEB_PORT=5173
+          BACKUP_RETENTION_DAYS=14
+          AUTH_RATE_LIMIT_PER_MINUTE=30
+          AUTH_ACCESS_TTL_SECONDS=900
+          AUTH_REFRESH_TTL_DAYS=7
+          # CI reaches nginx over plain HTTP; production defaults Secure=true.
+          AUTH_COOKIE_SECURE=false
+          AUTH_FAILURE_LIMIT=10
+          AUTH_FAILURE_WINDOW_MINUTES=10
+          AUTH_LOCK_MINUTES=15
+          EOF
+
+      - name: Start auth path through nginx
+        run: docker compose up -d --build db api auth web
+
+      - name: Wait for services
+        shell: bash
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:5173/health >/dev/null && curl -fsS http://localhost:5173/auth-health >/dev/null; then
+              exit 0
+            fi
+            sleep 3
+          done
+          docker compose ps
+          docker compose logs --tail=200 api auth web
+          exit 1
+
+      - name: Create acceptance owner
+        shell: bash
+        run: |
+          OWNER_PASS="SessionOwner${GITHUB_RUN_ID}Kst9"
+          docker compose exec -T api node src/bootstrap-owner.js session-owner@test.invalid "$OWNER_PASS" "Session Owner"
+
+      - name: Verify short access, identity and refresh revocation lifecycle
+        shell: bash
+        run: |
+          set -euo pipefail
+          OWNER_PASS="SessionOwner${GITHUB_RUN_ID}Kst9"
+          RESET_PASS="SessionReset${GITHUB_RUN_ID}Kst8"
+
+          # Create a prior session first so the tested refresh-session id cannot
+          # accidentally equal the OWNER user id.
+          curl -fsS -o /dev/null \
+            -X POST http://localhost:5173/api/v1/auth/login \
+            -H 'Content-Type: application/json' \
+            -d "{\"email\":\"session-owner@test.invalid\",\"password\":\"$OWNER_PASS\"}"
+
+          curl -fsS \
+            -c /tmp/session.cookies \
+            -D /tmp/session.headers \
+            -o /tmp/session-login.json \
+            -X POST http://localhost:5173/api/v1/auth/login \
+            -H 'Content-Type: application/json' \
+            -d "{\"email\":\"session-owner@test.invalid\",\"password\":\"$OWNER_PASS\"}"
+
+          grep -Eqi '^set-cookie: *profi24_refresh=' /tmp/session.headers
+          grep -Eqi '^set-cookie: .*HttpOnly' /tmp/session.headers
+          grep -Eqi '^set-cookie: .*SameSite=Lax' /tmp/session.headers
+
+          ACCESS_TOKEN="$(node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync('/tmp/session-login.json','utf8'));const t=j.data?.access_token;if(!t)process.exit(2);process.stdout.write(t)")"
+          LOGIN_USER_ID="$(node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync('/tmp/session-login.json','utf8'));process.stdout.write(String(j.data?.user?.id||''))")"
+          test -n "$LOGIN_USER_ID"
+          ACCESS_TOKEN="$ACCESS_TOKEN" node -e "const p=JSON.parse(Buffer.from(process.env.ACCESS_TOKEN.split('.')[1],'base64url'));const ttl=p.exp-p.iat;if(!(ttl>0&&ttl<=900)){console.error('unexpected access ttl',ttl);process.exit(1)}"
+
+          RAW_REFRESH="$(awk '$6=="profi24_refresh"{print $7}' /tmp/session.cookies | tail -1)"
+          test -n "$RAW_REFRESH"
+          REFRESH_HASH="$(printf '%s' "$RAW_REFRESH" | sha256sum | cut -d' ' -f1)"
+          test "$(docker compose exec -T db psql -U profi24 -d profi24 -Atqc "SELECT count(*) FROM auth_refresh_sessions WHERE token_hash='$REFRESH_HASH' AND revoked_at IS NULL")" = "1"
+          test "$(docker compose exec -T db psql -U profi24 -d profi24 -Atqc "SELECT count(*) FROM auth_refresh_sessions WHERE token_hash='$RAW_REFRESH'")" = "0"
+
+          curl -fsS \
+            -b /tmp/session.cookies \
+            -c /tmp/session.cookies \
+            -o /tmp/session-refresh.json \
+            -X POST http://localhost:5173/auth-api/v1/auth/refresh
+
+          REFRESHED_TOKEN="$(node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync('/tmp/session-refresh.json','utf8'));const t=j.data?.access_token;if(!t)process.exit(2);process.stdout.write(t)")"
+          REFRESHED_TOKEN="$REFRESHED_TOKEN" LOGIN_USER_ID="$LOGIN_USER_ID" node -e "const p=JSON.parse(Buffer.from(process.env.REFRESHED_TOKEN.split('.')[1],'base64url'));if(String(p.id)!==String(process.env.LOGIN_USER_ID)){console.error('refresh changed user identity',p.id,process.env.LOGIN_USER_ID);process.exit(1)}"
+          curl -fsS http://localhost:5173/api/v1/me -H "Authorization: Bearer $REFRESHED_TOKEN" | grep -q 'session-owner@test.invalid'
+
+          # Password reset must revoke every existing refresh session for the user.
+          curl -fsS \
+            -X POST "http://localhost:5173/api/v1/users/$LOGIN_USER_ID/password" \
+            -H "Authorization: Bearer $REFRESHED_TOKEN" \
+            -H 'Content-Type: application/json' \
+            -d "{\"password\":\"$RESET_PASS\"}" >/tmp/session-password-reset.json
+
+          test "$(docker compose exec -T db psql -U profi24 -d profi24 -Atqc "SELECT count(*) FROM auth_refresh_sessions WHERE user_id=$LOGIN_USER_ID AND revoked_at IS NULL")" = "0"
+          CODE="$(curl -sS -b /tmp/session.cookies -o /tmp/session-password-expired.json -w '%{http_code}' -X POST http://localhost:5173/auth-api/v1/auth/refresh)"
+          test "$CODE" = "401"
+
+          # A fresh login after the password change works, and explicit logout
+          # revokes that new refresh session as well.
+          curl -fsS \
+            -c /tmp/session.cookies \
+            -o /tmp/session-relogin.json \
+            -X POST http://localhost:5173/api/v1/auth/login \
+            -H 'Content-Type: application/json' \
+            -d "{\"email\":\"session-owner@test.invalid\",\"password\":\"$RESET_PASS\"}"
+
+          RAW_REFRESH_2="$(awk '$6=="profi24_refresh"{print $7}' /tmp/session.cookies | tail -1)"
+          test -n "$RAW_REFRESH_2"
+          REFRESH_HASH_2="$(printf '%s' "$RAW_REFRESH_2" | sha256sum | cut -d' ' -f1)"
+
+          curl -fsS \
+            -b /tmp/session.cookies \
+            -c /tmp/session.cookies \
+            -X POST http://localhost:5173/auth-api/v1/auth/logout >/tmp/session-logout.json
+
+          test "$(docker compose exec -T db psql -U profi24 -d profi24 -Atqc "SELECT count(*) FROM auth_refresh_sessions WHERE token_hash='$REFRESH_HASH_2' AND revoked_at IS NOT NULL")" = "1"
+          CODE="$(curl -sS -b /tmp/session.cookies -o /tmp/session-expired.json -w '%{http_code}' -X POST http://localhost:5173/auth-api/v1/auth/refresh)"
+          test "$CODE" = "401"
+
+      - name: Show failure logs
+        if: failure()
+        run: |
+          docker compose ps
+          docker compose logs --tail=250 api auth web
+
+      - name: Stop stack
+        if: always()
+        run: docker compose down -v

@@ -7,6 +7,7 @@ import bcrypt from 'bcryptjs';
 import pg from 'pg';
 import {isKnownRole} from './rbac.js';
 import {runSchemaStatements} from './schema-retry.js';
+import {accessTtlSeconds,buildRefreshCookie,createRefreshToken,hashRefreshToken,readRefreshToken,refreshTtlDays,secureCookieForRequest} from './auth-session.js';
 
 const app=Fastify({logger:true,bodyLimit:64*1024,trustProxy:true});
 await app.register(cors,{origin:(process.env.CORS_ORIGIN||'http://localhost:5173').split(',').map(x=>x.trim()),credentials:true});
@@ -21,6 +22,8 @@ const FAILURE_LIMIT=Math.max(3,Math.min(20,Number(process.env.AUTH_FAILURE_LIMIT
 const FAILURE_WINDOW_MINUTES=Math.max(1,Math.min(60,Number(process.env.AUTH_FAILURE_WINDOW_MINUTES||10)));
 const LOCK_MINUTES=Math.max(1,Math.min(120,Number(process.env.AUTH_LOCK_MINUTES||15)));
 const dummyHash=await bcrypt.hash('invalid-password-placeholder-2026',10);
+const ACCESS_TTL_SECONDS=accessTtlSeconds();
+const REFRESH_TTL_DAYS=refreshTtlDays();
 
 await runSchemaStatements(pool,[
 `CREATE TABLE IF NOT EXISTS auth_login_events(
@@ -41,10 +44,24 @@ await runSchemaStatements(pool,[
   blocked_until TIMESTAMPTZ,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 )`,
-'CREATE INDEX IF NOT EXISTS idx_auth_login_state_blocked ON auth_login_state(blocked_until)'
+'CREATE INDEX IF NOT EXISTS idx_auth_login_state_blocked ON auth_login_state(blocked_until)',
+`CREATE TABLE IF NOT EXISTS auth_refresh_sessions(
+  id BIGSERIAL PRIMARY KEY,
+  user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash CHAR(64) NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_used_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  revoked_at TIMESTAMPTZ,
+  ip TEXT,
+  user_agent TEXT
+)`,
+'CREATE INDEX IF NOT EXISTS idx_auth_refresh_sessions_user ON auth_refresh_sessions(user_id,expires_at DESC)',
+'CREATE INDEX IF NOT EXISTS idx_auth_refresh_sessions_expiry ON auth_refresh_sessions(expires_at)'
 ],{logger:app.log});
 await q("DELETE FROM auth_login_events WHERE created_at < now()-interval '180 days'");
 await q("DELETE FROM auth_login_state WHERE updated_at < now()-interval '30 days' AND (blocked_until IS NULL OR blocked_until<now())");
+await q("DELETE FROM auth_refresh_sessions WHERE expires_at < now()-interval '30 days' OR revoked_at < now()-interval '30 days'");
 
 function normalizedEmail(value){return String(value||'').trim().toLowerCase().slice(0,254);}
 function requestIp(req){return String(req.ip||req.headers['x-real-ip']||'').slice(0,80);}
@@ -79,6 +96,22 @@ async function recordFailure(email){
   }catch(error){await c.query('ROLLBACK');throw error;}finally{c.release();}
 }
 async function clearFailures(email){await q('DELETE FROM auth_login_state WHERE email=$1',[email]);}
+function publicUser(user){return{id:user.id,name:user.name,email:user.email,role:user.role};}
+function issueAccessToken(user){return app.jwt.sign(publicUser(user),{expiresIn:ACCESS_TTL_SECONDS});}
+function setSessionCookie(req,reply,token,maxAgeSeconds){
+  reply.header('Set-Cookie',buildRefreshCookie(token,{secure:secureCookieForRequest(req),maxAgeSeconds}));
+}
+function clearSessionCookie(req,reply){
+  reply.header('Set-Cookie',buildRefreshCookie('',{secure:secureCookieForRequest(req),clear:true}));
+}
+async function createRefreshSession(req,reply,user){
+  const token=createRefreshToken();
+  await q(`INSERT INTO auth_refresh_sessions(user_id,token_hash,expires_at,ip,user_agent)
+    VALUES($1,$2,now()+($3::int*interval '1 day'),$4,$5)`,[
+    user.id,hashRefreshToken(token),REFRESH_TTL_DAYS,requestIp(req),String(req.headers['user-agent']||'').slice(0,255)
+  ]);
+  setSessionCookie(req,reply,token,REFRESH_TTL_DAYS*86400);
+}
 
 app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'profi24-auth'}});
 
@@ -104,8 +137,54 @@ app.post('/api/v1/auth/login',async(req,reply)=>{
     return fail(reply,'INVALID_CREDENTIALS','Неверный логин или пароль',401);
   }
   await clearFailures(email);
-  const accessToken=app.jwt.sign({id:user.id,role:user.role,name:user.name,email:user.email},{expiresIn:process.env.AUTH_TOKEN_TTL||'12h'});
-  return{data:{access_token:accessToken,user:{id:user.id,name:user.name,email:user.email,role:user.role}}};
+  const accessToken=issueAccessToken(user);
+  await createRefreshSession(req,reply,user);
+  reply.header('Cache-Control','no-store');
+  return{data:{access_token:accessToken,user:publicUser(user)}};
+});
+
+app.post('/api/v1/auth/refresh',{config:{rateLimit:{max:60,timeWindow:'1 minute'}}},async(req,reply)=>{
+  const token=readRefreshToken(req.headers.cookie);
+  if(!token){
+    clearSessionCookie(req,reply);
+    return fail(reply,'SESSION_EXPIRED','Сессия истекла. Войдите снова.',401);
+  }
+  const tokenHash=hashRefreshToken(token);
+  const c=await pool.connect();
+  let row;
+  try{
+    await c.query('BEGIN');
+    row=(await c.query(`SELECT s.id AS session_id,s.user_id AS id,s.expires_at,s.revoked_at,u.name,u.email,u.role,u.active
+      FROM auth_refresh_sessions s JOIN users u ON u.id=s.user_id
+      WHERE s.token_hash=$1 FOR UPDATE OF s`,[tokenHash])).rows[0];
+    const expired=!row||row.revoked_at||new Date(row.expires_at).getTime()<=Date.now();
+    const invalidUser=!row?.active||!isKnownRole(row?.role);
+    if(expired||invalidUser){
+      if(row&&!row.revoked_at)await c.query('UPDATE auth_refresh_sessions SET revoked_at=now() WHERE id=$1',[row.session_id]);
+      await c.query('COMMIT');
+      clearSessionCookie(req,reply);
+      return fail(reply,'SESSION_EXPIRED','Сессия истекла. Войдите снова.',401);
+    }
+    await c.query('UPDATE auth_refresh_sessions SET last_used_at=now(),ip=$1,user_agent=$2 WHERE id=$3',[
+      requestIp(req),String(req.headers['user-agent']||'').slice(0,255),row.session_id
+    ]);
+    await c.query('COMMIT');
+  }catch(error){
+    try{await c.query('ROLLBACK')}catch{}
+    throw error;
+  }finally{c.release();}
+  const remaining=Math.max(1,Math.floor((new Date(row.expires_at).getTime()-Date.now())/1000));
+  setSessionCookie(req,reply,token,remaining);
+  reply.header('Cache-Control','no-store');
+  return{data:{access_token:issueAccessToken(row),user:publicUser(row)}};
+});
+
+app.post('/api/v1/auth/logout',async(req,reply)=>{
+  const token=readRefreshToken(req.headers.cookie);
+  if(token)await q('UPDATE auth_refresh_sessions SET revoked_at=COALESCE(revoked_at,now()) WHERE token_hash=$1',[hashRefreshToken(token)]);
+  clearSessionCookie(req,reply);
+  reply.header('Cache-Control','no-store');
+  return{data:{logged_out:true}};
 });
 
 app.get('/api/v1/auth/security-events',async(req,reply)=>{
