@@ -8,7 +8,10 @@ fs.mkdirSync(artifacts,{recursive:true});
 function assert(condition,message){if(!condition)throw new Error(message)}
 (async()=>{
   const browser=await chromium.launch({headless:true});
-  const page=await browser.newPage({viewport:{width:1600,height:1000},acceptDownloads:true});
+  // Playwright cannot route requests intercepted by the installed CRM PWA service worker.
+  // Block it only in this network-interception scenario; the PWA build is tested separately.
+  const context=await browser.newContext({viewport:{width:1600,height:1000},acceptDownloads:true,serviceWorkers:'block'});
+  const page=await context.newPage();
   let shrunkResponse=false;
   const interceptedUrls=[];
   try{
