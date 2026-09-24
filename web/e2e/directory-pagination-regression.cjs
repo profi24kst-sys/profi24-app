@@ -9,6 +9,7 @@ function assert(condition,message){if(!condition)throw new Error(message)}
 (async()=>{
   const browser=await chromium.launch({headless:true});
   const page=await browser.newPage({viewport:{width:1600,height:1000},acceptDownloads:true});
+  let shrunkResponse=false;
   try{
     await page.goto(BASE+'/orders',{waitUntil:'domcontentloaded',timeout:30000});
     await page.locator('input[autocomplete="username"]').fill(EMAIL);
@@ -51,7 +52,7 @@ function assert(condition,message){if(!condition)throw new Error(message)}
     ]);
     assert(xlsx.suggestedFilename().endsWith('.xlsx'),'Excel file name was not .xlsx');
     // Simulate a page-2 result disappearing after refresh. The list must recover to page 1.
-    let shrunkResponse=false;
+    shrunkResponse=false;
     const intercept=async route=>{
       const url=new URL(route.request().url);
       // Keep shrinking page 2 until React consumes the response: global refresh can
