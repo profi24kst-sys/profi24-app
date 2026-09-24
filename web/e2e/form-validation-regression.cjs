@@ -18,6 +18,10 @@ function fail(message){throw new Error(message)}
   await page.getByRole('button',{name:'Войти',exact:true}).click();
   await page.locator('aside').waitFor({state:'visible',timeout:10000});
   await page.waitForURL(url=>new URL(url).pathname==='/orders',{timeout:10000});
+  // The sidebar renders before the async CRM bootstrap is complete. Opening the
+  // drawer during its first data refresh may be interrupted by another overlay.
+  await page.locator('section.table[aria-busy="false"]').waitFor({state:'visible',timeout:20000});
+  await page.waitForTimeout(450);
   await page.getByRole('button',{name:/Новый заказ/}).click();
   const drawer=page.locator('.drawer');await drawer.waitFor({state:'visible',timeout:6000});
   await drawer.getByRole('button',{name:'Далее',exact:true}).click();
