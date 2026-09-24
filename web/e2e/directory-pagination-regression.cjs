@@ -10,6 +10,7 @@ function assert(condition,message){if(!condition)throw new Error(message)}
   const browser=await chromium.launch({headless:true});
   const page=await browser.newPage({viewport:{width:1600,height:1000},acceptDownloads:true});
   let shrunkResponse=false;
+  const interceptedUrls=[];
   try{
     await page.goto(BASE+'/orders',{waitUntil:'domcontentloaded',timeout:30000});
     await page.locator('input[autocomplete="username"]').fill(EMAIL);
@@ -55,6 +56,7 @@ function assert(condition,message){if(!condition)throw new Error(message)}
     shrunkResponse=false;
     const intercept=async route=>{
       const url=new URL(route.request().url);
+      interceptedUrls.push(url.toString());
       // Keep shrinking page 2 until React consumes the response: global refresh can
       // also trigger a second directory reload and abort the first fetch.
       if(url.searchParams.get('search')===name&&url.searchParams.get('page')==='2'){
@@ -65,14 +67,14 @@ function assert(condition,message){if(!condition)throw new Error(message)}
       }
       return route.continue();
     };
-    await page.route('**/api/v1/directory/orders?*',intercept);
+    await page.route(/\/api\/v1\/directory\/orders(?:\?|$)/,intercept);
     await page.getByRole('button',{name:'Обновить данные'}).click();
     await page.waitForFunction(()=>{
       const footer=document.querySelector('.dir-pagination')?.textContent||'';
       return footer.includes('Стр. 1 / 2')&&document.querySelectorAll('.trow').length===25;
     },null,{timeout:20000});
     assert(shrunkResponse,'Refresh did not refetch page 2');
-    await page.unroute('**/api/v1/directory/orders?*',intercept);
+    await page.unroute(/\/api\/v1\/directory\/orders(?:\?|$)/,intercept);
     const customerNav=page.locator('aside nav').getByRole('button',{name:/Клиенты/}).first();
     await customerNav.click();
     await page.locator('.dir-toolbar .search input').fill(name);
@@ -95,7 +97,7 @@ function assert(condition,message){if(!condition)throw new Error(message)}
   }catch(error){
     try{await page.screenshot({path:path.join(artifacts,'directory-pagination-failure.png'),fullPage:true})}catch{}
     fs.writeFileSync(path.join(artifacts,'directory-pagination-error.txt'),String(error.stack||error));
-    try{const state=await page.evaluate(()=>({footer:document.querySelector('.dir-pagination')?.textContent,toolbar:document.querySelector('.dir-toolbar')?.textContent,rows:document.querySelectorAll('.trow').length,alert:document.querySelector('.errorbox')?.textContent}));console.error('directory-browser-state',JSON.stringify(state),'shrink_intercepted',shrunkResponse)}catch{};
+    try{const state=await page.evaluate(()=>({footer:document.querySelector('.dir-pagination')?.textContent,toolbar:document.querySelector('.dir-toolbar')?.textContent,rows:document.querySelectorAll('.trow').length,alert:document.querySelector('.errorbox')?.textContent}));console.error('directory-browser-state',JSON.stringify(state),'shrink_intercepted',shrunkResponse,'intercepted_urls',JSON.stringify(interceptedUrls))}catch{};
     console.error(error);process.exitCode=1;
   }finally{await browser.close()}
 })();
