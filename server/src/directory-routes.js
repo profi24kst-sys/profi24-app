@@ -44,7 +44,7 @@ function monthPredicate(params,alias,month){
   return ' AND '+alias+'.created_at >= '+first+' AND '+alias+'.created_at < '+next;
 }
 
-function visibleRequest(params,role,userId,alias){
+export function visibleRequest(params,role,userId,alias){
   if(['OWNER','SUPERVISOR','ACCOUNTANT'].includes(role))return 'TRUE';
   const user=parameter(params,userId);
   if(role==='MANAGER'){
