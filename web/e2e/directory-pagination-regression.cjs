@@ -58,7 +58,7 @@ function assert(condition,message){if(!condition)throw new Error(message)}
     // Simulate a page-2 result disappearing after refresh. The list must recover to page 1.
     shrunkResponse=false;
     const intercept=async route=>{
-      const url=new URL(route.request().url);
+      const url=new URL(route.request().url());
       interceptedUrls.push(url.toString());
       // Keep shrinking page 2 until React consumes the response: global refresh can
       // also trigger a second directory reload and abort the first fetch.
