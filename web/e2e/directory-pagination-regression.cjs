@@ -54,7 +54,9 @@ function assert(condition,message){if(!condition)throw new Error(message)}
     let shrunkResponse=false;
     const intercept=async route=>{
       const url=new URL(route.request().url);
-      if(!shrunkResponse&&url.searchParams.get('search')===name&&url.searchParams.get('page')==='2'){
+      // Keep shrinking page 2 until React consumes the response: global refresh can
+      // also trigger a second directory reload and abort the first fetch.
+      if(url.searchParams.get('search')===name&&url.searchParams.get('page')==='2'){
         shrunkResponse=true;
         return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({
           data:[],meta:{page:2,limit:25,total:25,pages:1,counts:{active:25}}
@@ -92,6 +94,7 @@ function assert(condition,message){if(!condition)throw new Error(message)}
   }catch(error){
     try{await page.screenshot({path:path.join(artifacts,'directory-pagination-failure.png'),fullPage:true})}catch{}
     fs.writeFileSync(path.join(artifacts,'directory-pagination-error.txt'),String(error.stack||error));
+    try{const state=await page.evaluate(()=>({footer:document.querySelector('.dir-pagination')?.textContent,toolbar:document.querySelector('.dir-toolbar')?.textContent,rows:document.querySelectorAll('.trow').length,alert:document.querySelector('.errorbox')?.textContent}));console.error('directory-browser-state',JSON.stringify(state),'shrink_intercepted',shrunkResponse)}catch{};
     console.error(error);process.exitCode=1;
   }finally{await browser.close()}
 })();
