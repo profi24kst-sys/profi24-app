@@ -22,6 +22,8 @@ async function api(page,url,{method='GET',body}={}){const headers={Authorization
   await page.getByRole('heading',{name:'Клиенты'}).waitFor({state:'visible'});await page.locator(`[data-search-record="customers-${customer.id}"]`).waitFor({state:'visible'});
   await search.fill(order.number);option=page.getByRole('option').filter({hasText:'Заказ'}).filter({hasText:order.number});await option.waitFor({state:'visible'});await option.click();
   await page.waitForFunction(id=>location.pathname===`/orders/${id}`,String(order.id));await page.getByText(order.number,{exact:true}).first().waitFor({state:'visible',timeout:8000});
+  await page.goto(BASE+'/orders',{waitUntil:'domcontentloaded',timeout:30000});
+  await page.locator('aside').waitFor({state:'visible',timeout:10000});
   await page.getByRole('button',{name:/Новый заказ/}).click();
   const drawer=page.locator('.drawer');
   await drawer.waitFor({state:'visible',timeout:8000});
