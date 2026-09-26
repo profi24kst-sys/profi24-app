@@ -188,6 +188,9 @@ test('directory: pagination, filter/search, role and branch visibility, Excel ex
       assert.deepEqual(managerOrders.body.data.map(row=>row.id),[archiveOrder]);
       const managerCustomers=await s.call(3,'/api/v1/directory/customers?search='+encodeURIComponent('Архивный клиент 1001')+'&limit=5');
       assert.deepEqual(managerCustomers.body.data.map(row=>row.id),[archive]);
+      const formattedPhone=encodeURIComponent('+7 (700) 999 1001');
+      assert.deepEqual((await s.call(3,'/api/v1/directory/customers?search='+formattedPhone)).body.data.map(row=>row.id),[archive]);
+      assert.deepEqual((await s.call(3,'/api/v1/directory/orders?status=ALL&search='+formattedPhone)).body.data.map(row=>row.id),[archiveOrder]);
       const managerEquipment=await s.call(3,'/api/v1/directory/equipment?search=ARCHIVE-SERIAL-1001&limit=5');
       assert.equal(managerEquipment.status,200,JSON.stringify(managerEquipment.body));
       assert.deepEqual(managerEquipment.body.data.map(row=>row.id),[unused]);
