@@ -208,9 +208,9 @@ export function registerDirectoryRoutes(app,pool){
     }
     if(filters.search){
       const p=parameter(params,escapeLike(filters.search));
-      where.push('(e.category ILIKE '+p+" ESCAPE '\\\\' OR COALESCE(e.brand,'') ILIKE "+p+" ESCAPE '\\\\' OR "+
-        "COALESCE(e.model,'') ILIKE "+p+" ESCAPE '\\\\' OR COALESCE(e.serial_number,'') ILIKE "+p+" ESCAPE '\\\\' OR "+
-        "c.name ILIKE "+p+" ESCAPE '\\\\')");
+      where.push('(e.category ILIKE '+p+" ESCAPE '\\' OR COALESCE(e.brand,'') ILIKE "+p+" ESCAPE '\\' OR "+
+        "COALESCE(e.model,'') ILIKE "+p+" ESCAPE '\\' OR COALESCE(e.serial_number,'') ILIKE "+p+" ESCAPE '\\' OR "+
+        "c.name ILIKE "+p+" ESCAPE '\\')");
     }
     const from=' FROM equipment e JOIN customers c ON c.id=e.customer_id',condition=where.join(' AND ');
     const total=(await q('SELECT count(*)::int total'+from+' WHERE '+condition,params)).rows[0].total;
