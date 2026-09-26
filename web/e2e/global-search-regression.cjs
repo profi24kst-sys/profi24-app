@@ -18,6 +18,20 @@ async function api(page,url,{method='GET',body}={}){const headers={Authorization
   const search=page.getByRole('combobox',{name:'Глобальный поиск'});
   await search.fill(serial);let option=page.getByRole('option').filter({hasText:'Техника'}).filter({hasText:serial});await option.waitFor({state:'visible',timeout:6000});await option.click();
   await page.getByRole('heading',{name:'Техника'}).waitFor({state:'visible'});const equipmentRow=page.locator(`[data-search-record="equipment-${equipment.id}"]`);await equipmentRow.waitFor({state:'visible'});await page.waitForFunction(id=>document.querySelector(`[data-search-record="equipment-${id}"]`)?.classList.contains('searchHit'),String(equipment.id),{timeout:3000});
+  await page.locator('.dir-focus').filter({hasText:'SearchBrand'}).waitFor({state:'visible',timeout:8000});
+  await page.locator('.dir-focus button').click();
+  await page.locator('.dir-focus').waitFor({state:'detached',timeout:8000});
+  const equipmentSearch=page.locator('.dir-toolbar .search input');
+  await equipmentSearch.fill(serial);
+  await page.waitForFunction(expected=>{
+    const rows=[...document.querySelectorAll('[data-search-record^="equipment-"]')];
+    return rows.length===1&&rows[0].textContent.includes(expected)&&
+      document.querySelector('.dir-pagination')?.textContent.includes('1–1 из 1');
+  },serial,{timeout:15000});
+  await equipmentSearch.fill('NONEXISTENT-'+suffix);
+  await page.getByText('Техника по запросу не найдена').waitFor({state:'visible',timeout:15000});
+  await equipmentSearch.fill(serial);
+  await equipmentRow.waitFor({state:'visible',timeout:15000});
   await search.fill(phone);option=page.getByRole('option').filter({hasText:'Клиент'}).filter({hasText:phone});await option.waitFor({state:'visible'});await option.click();
   await page.getByRole('heading',{name:'Клиенты'}).waitFor({state:'visible'});await page.locator(`[data-search-record="customers-${customer.id}"]`).waitFor({state:'visible'});
   await search.fill(order.number);option=page.getByRole('option').filter({hasText:'Заказ'}).filter({hasText:order.number});await option.waitFor({state:'visible'});await option.click();

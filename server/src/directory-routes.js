@@ -211,6 +211,7 @@ export function registerDirectoryRoutes(app,pool){
     if(!['OWNER','SUPERVISOR','ACCOUNTANT'].includes(req.user.role)){
       where.push('EXISTS (SELECT 1 FROM requests r WHERE r.equipment_id=e.id AND r.deleted_at IS NULL AND '+visibleRequest(params,req.user.role,req.user.id,'r')+')');
     }
+    if(filters.focusId)where.push('e.id='+parameter(params,filters.focusId));
     if(req.query.customer_id!=null){
       const customerId=Number(req.query.customer_id);
       if(!Number.isSafeInteger(customerId)||customerId<1)return fail(reply,'VALIDATION','Некорректный номер клиента');
@@ -225,7 +226,7 @@ export function registerDirectoryRoutes(app,pool){
     const from=' FROM equipment e JOIN customers c ON c.id=e.customer_id',condition=where.join(' AND ');
     const total=(await q('SELECT count(*)::int total'+from+' WHERE '+condition,params)).rows[0].total;
     const p=[...params],limit=parameter(p,filters.limit),offset=parameter(p,filters.offset);
-    const rows=(await q('SELECT e.id,e.customer_id,e.category,e.brand,e.model,e.serial_number,c.name customer_name'+
+    const rows=(await q('SELECT e.id,e.customer_id,e.category,e.brand,e.model,e.serial_number,e.created_at,c.name customer_name'+
       from+' WHERE '+condition+' ORDER BY e.created_at DESC,e.id DESC LIMIT '+limit+' OFFSET '+offset,p)).rows;
     return{data:rows,meta:{page:filters.page,limit:filters.limit,total,pages:Math.ceil(total/filters.limit)}};
   });
