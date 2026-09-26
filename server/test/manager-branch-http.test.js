@@ -27,10 +27,15 @@ test('MANAGER не видит чужой филиал в списках и dashb
       ('Engineer KST','mb-eng1@test.invalid','unused','ENGINEER'),
       ('Engineer Other','mb-eng2@test.invalid','unused','ENGINEER')`);
     await query('UPDATE users SET primary_branch_id=$1 WHERE id=4',[other]);
-    await query("INSERT INTO customers(name,phone) VALUES('Shared client','701')");
+    await query("INSERT INTO customers(name,phone) VALUES('Shared client','701'),('Foreign-only client','702')");
+    const ownEquipment=(await query("INSERT INTO equipment(customer_id,category,brand,serial_number) VALUES(1,'Холодильник','OwnBrand','OWN-DEVICE') RETURNING id")).rows[0].id;
+    const foreignEquipment=(await query("INSERT INTO equipment(customer_id,category,brand,serial_number) VALUES(2,'Холодильник','ForeignBrand','FOREIGN-DEVICE') RETURNING id")).rows[0].id;
     const own=(await query("INSERT INTO requests(number,customer_id,manager_id,engineer_id,branch_id,status,complaint,total,paid,direct_cost) VALUES('MB-KST',1,2,3,$1,'REPAIR','Own',1000,200,100) RETURNING id",[kst])).rows[0].id;
     const foreign=(await query("INSERT INTO requests(number,customer_id,engineer_id,branch_id,status,complaint,total,paid,direct_cost) VALUES('MB-OTHER',1,4,$1,'REPAIR','Foreign',9000,8000,4000) RETURNING id",[other])).rows[0].id;
-    await query("INSERT INTO complaints(number,request_id,customer_id,text,status) VALUES('MB-C1',$1,1,'Own complaint','OPEN'),('MB-C2',$2,1,'Foreign complaint','OPEN')",[own,foreign]);
+    await query('UPDATE requests SET equipment_id=$1 WHERE id=$2',[ownEquipment,own]);
+    await query('UPDATE requests SET customer_id=2,equipment_id=$1 WHERE id=$2',[foreignEquipment,foreign]);
+    await query("INSERT INTO requests(number,customer_id,engineer_id,branch_id,status,complaint,created_at) SELECT 'MB-BULK-'||g,2,4,$1,'REPAIR','Foreign bulk',now()+INTERVAL '1 second' FROM generate_series(1,1001) g",[other]);
+    await query("INSERT INTO complaints(number,request_id,customer_id,text,status) VALUES('MB-C1',$1,1,'Own complaint','OPEN'),('MB-C2',$2,2,'Foreign complaint','OPEN')",[own,foreign]);
 
     let src=await readFile(path.join(root,'index2.js'),'utf8');
     src=src.replace(/import pg from\s*['"]pg['"];?/g,'const pg={Pool:class {constructor(){return globalThis.__managerBranchPool}}};');
@@ -58,6 +63,13 @@ test('MANAGER не видит чужой филиал в списках и dashb
     assert.equal(finance.status,200);assert.equal(Number(finance.data.totals.revenue),1000);assert.equal(Number(finance.data.totals.paid),200);
     const customers=await call('/api/v1/customers');
     assert.equal(customers.status,200);const client=customers.data.find(x=>x.id===1);assert.equal(client.request_count,1);assert.equal(Number(client.lifetime_paid),200);
+    assert.ok(!customers.data.some(x=>x.id===2),'foreign-only customer must not reach manager');
+    const equipment=await call('/api/v1/equipment');
+    assert.equal(equipment.status,200);assert.ok(equipment.data.some(x=>x.id===ownEquipment));
+    assert.ok(!equipment.data.some(x=>x.id===foreignEquipment),'foreign equipment must not reach manager');
+    const ownerToken=app.jwt.sign({id:1,role:'OWNER'});
+    const ownerCustomers=await app.inject({method:'GET',url:'/api/v1/customers',headers:{authorization:'Bearer '+ownerToken}});
+    assert.equal(ownerCustomers.statusCode,200);assert.ok(ownerCustomers.json().data.some(x=>x.id===2));
   }finally{
     if(app)await app.close();await db.close();delete globalThis.__managerBranchPool;
   }
