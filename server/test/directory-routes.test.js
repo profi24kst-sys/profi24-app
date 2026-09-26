@@ -171,6 +171,35 @@ test('directory: pagination, filter/search, role and branch visibility, Excel ex
       assert.doesNotMatch(xml,/Чужой филиал/);
     });
 
+    await t.test('server search finds records beyond the legacy 1000 rows and isolates equipment by role',async()=>{
+      await s.query("INSERT INTO customers(name,phone,phone_norm,created_at) "+
+        "SELECT 'Архивный клиент '+g,'7700999'||lpad(g::text,4,'0'),'7700999'||lpad(g::text,4,'0'),"+
+        "'2020-01-01T00:00:00Z'::timestamptz FROM generate_series(1,1001) g");
+      const archive=(await s.query("SELECT id FROM customers WHERE name='Архивный клиент 1001'")).rows[0].id;
+      const unused=(await s.query("INSERT INTO equipment(customer_id,category,brand,model,serial_number) "+
+        "VALUES($1,'Холодильник','ArchiveBrand','Old','ARCHIVE-SERIAL-1001') RETURNING id",[archive])).rows[0].id;
+      const owner=await s.call(1,'/api/v1/directory/customers?search='+encodeURIComponent('Архивный клиент 1001')+'&limit=5');
+      assert.equal(owner.status,200);
+      assert.deepEqual(owner.body.data.map(row=>row.id),[archive]);
+      assert.equal((await s.call(3,'/api/v1/directory/customers?search='+encodeURIComponent('Архивный клиент 1001'))).body.meta.total,0);
+      const archiveOrder=(await s.query("INSERT INTO requests(number,customer_id,equipment_id,manager_id,branch_id,status,complaint,created_at) "+
+        "VALUES('ARCHIVE-ORDER-1001',$1,$2,3,$3,'CLOSED','Давний заказ','2020-01-01T00:00:00Z') RETURNING id",[archive,unused,s.kst])).rows[0].id;
+      const managerOrders=await s.call(3,'/api/v1/directory/orders?status=ALL&search=ARCHIVE-ORDER-1001&limit=5');
+      assert.deepEqual(managerOrders.body.data.map(row=>row.id),[archiveOrder]);
+      const managerCustomers=await s.call(3,'/api/v1/directory/customers?search='+encodeURIComponent('Архивный клиент 1001')+'&limit=5');
+      assert.deepEqual(managerCustomers.body.data.map(row=>row.id),[archive]);
+      const managerEquipment=await s.call(3,'/api/v1/directory/equipment?search=ARCHIVE-SERIAL-1001&limit=5');
+      assert.equal(managerEquipment.status,200,JSON.stringify(managerEquipment.body));
+      assert.deepEqual(managerEquipment.body.data.map(row=>row.id),[unused]);
+      assert.equal((await s.call(4,'/api/v1/directory/equipment?search=ARCHIVE-SERIAL-1001')).body.meta.total,0);
+      assert.equal((await s.call(6,'/api/v1/directory/equipment?search=ARCHIVE-SERIAL-1001')).body.meta.total,0);
+      assert.deepEqual((await s.call(5,'/api/v1/directory/equipment?customer_id='+archive)).body.data.map(row=>row.id),[]);
+      assert.deepEqual((await s.call(1,'/api/v1/directory/equipment?customer_id='+archive)).body.data.map(row=>row.id),[unused]);
+      assert.equal((await s.call(1,'/api/v1/directory/equipment?customer_id=bad')).status,422);
+      assert.equal((await s.call(1,'/api/v1/directory/equipment?search='+encodeURIComponent('A'.repeat(121)))).status,422);
+      assert.equal((await s.call(1,'/api/v1/directory/equipment?search='+encodeURIComponent('%_\\'))).status,200);
+    });
+
     await t.test('month limits exports and lists in the service centre time zone',async()=>{
       await s.query("INSERT INTO requests(number,customer_id,manager_id,branch_id,status,complaint,created_at) "+
         "VALUES('MONTH-BOUNDARY',1,3,$1,'CLOSED','UTC August, Kostanay September','2026-08-31T20:30:00Z')",[s.kst]);
