@@ -173,7 +173,7 @@ test('directory: pagination, filter/search, role and branch visibility, Excel ex
 
     await t.test('server search finds records beyond the legacy 1000 rows and isolates equipment by role',async()=>{
       await s.query("INSERT INTO customers(name,phone,phone_norm,created_at) "+
-        "SELECT 'Архивный клиент '+g,'7700999'||lpad(g::text,4,'0'),'7700999'||lpad(g::text,4,'0'),"+
+        "SELECT 'Архивный клиент '||g,'7700999'||lpad(g::text,4,'0'),'7700999'||lpad(g::text,4,'0'),"+
         "'2020-01-01T00:00:00Z'::timestamptz FROM generate_series(1,1001) g");
       const archive=(await s.query("SELECT id FROM customers WHERE name='Архивный клиент 1001'")).rows[0].id;
       const unused=(await s.query("INSERT INTO equipment(customer_id,category,brand,model,serial_number) "+
