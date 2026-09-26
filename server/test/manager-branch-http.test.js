@@ -35,7 +35,7 @@ test('MANAGER не видит чужой филиал в списках и dashb
     await query('UPDATE requests SET equipment_id=$1 WHERE id=$2',[ownEquipment,own]);
     await query('UPDATE requests SET customer_id=2,equipment_id=$1 WHERE id=$2',[foreignEquipment,foreign]);
     await query("INSERT INTO requests(number,customer_id,engineer_id,branch_id,status,complaint,created_at) SELECT 'MB-BULK-'||g,2,4,$1,'CLOSED','Foreign bulk',now()+INTERVAL '1 second' FROM generate_series(1,1001) g",[other]);
-    await query("INSERT INTO complaints(number,request_id,customer_id,text,status) VALUES('MB-C1',$1,1,'Own complaint','OPEN'),('MB-C2',$2,1,'Foreign complaint','OPEN')",[own,foreign]);
+    await query("INSERT INTO complaints(number,request_id,customer_id,text,status) VALUES('MB-C1',$1,1,'Own complaint','OPEN'),('MB-C2',$2,2,'Foreign complaint','OPEN')",[own,foreign]);
 
     let src=await readFile(path.join(root,'index2.js'),'utf8');
     src=src.replace(/import pg from\s*['"]pg['"];?/g,'const pg={Pool:class {constructor(){return globalThis.__managerBranchPool}}};');
