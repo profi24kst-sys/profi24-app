@@ -137,6 +137,11 @@ test('A32: полный рабочий день проходит всеми ше
     // ENGINEER: completes repair, the reserved consumable is posted atomically, photo and test are recorded.
     r=await call('completion','POST',`/api/v1/requests/${order.id}/repair-done`,{repair_result:'Сливной тракт очищен, расходник установлен'},ids.engineer);assert.equal(r.status,200,JSON.stringify(r));
     assert.equal(r.data.parts_installed,1);
+    // A field engineer cannot skip photo evidence or take payment before testing.
+    r=await call('completion','POST',`/api/v1/requests/${order.id}/test`,{test_result:'No after-photo yet'},ids.engineer);
+    assert.equal(r.status,409);assert.equal(r.error?.code,'PHOTO_REQUIRED');
+    r=await call('completion','POST',`/api/v1/requests/${order.id}/payment`,{amount:'15000',account_id:cash.id},ids.accountant);
+    assert.equal(r.status,409,'payment requires successful functional testing');
     r=await call('documents','POST',`/api/v1/requests/${order.id}/files`,{name:'a32-after.png',kind:'PHOTO_AFTER',data:png},ids.engineer);assert.equal(r.status,201,JSON.stringify(r));
     r=await call('completion','POST',`/api/v1/requests/${order.id}/test`,{test_result:'Три цикла слива пройдены'},ids.engineer);assert.equal(r.status,200,JSON.stringify(r));
 
