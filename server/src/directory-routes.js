@@ -33,6 +33,10 @@ function escapeLike(value){
 function parameter(params,value){
   params.push(value);return '$'+params.length;
 }
+function phoneSearchParam(params,search){
+  const digits=search.replace(/\D/g,'');
+  return digits.length>=3&&/^[+\d\s()\-]+$/.test(search)?parameter(params,escapeLike(digits)):null;
+}
 function monthPredicate(params,alias,month){
   if(!month)return'';
   const p=parameter(params,month);
@@ -66,10 +70,14 @@ function visibleRequest(params,role,userId,alias){
 function ordersQuery(role,userId,filters,{withStatus=true}={}){
   const params=[],where=['r.deleted_at IS NULL',visibleRequest(params,role,userId,'r')];
   if(filters.search){
-    const p=parameter(params,escapeLike(filters.search));
-    where.push('(r.number ILIKE '+p+" ESCAPE '\\' OR c.name ILIKE "+p+" ESCAPE '\\' OR c.phone ILIKE "+p+" ESCAPE '\\' OR "+
-      "COALESCE(e.brand,'') ILIKE "+p+" ESCAPE '\\' OR COALESCE(e.model,'') ILIKE "+p+" ESCAPE '\\' OR "+
-      "COALESCE(r.complaint,'') ILIKE "+p+" ESCAPE '\\' OR COALESCE(eng.name,'') ILIKE "+p+" ESCAPE '\\')");
+    const p=parameter(params,escapeLike(filters.search)),phone=phoneSearchParam(params,filters.search);
+    const conditions=[
+      'r.number ILIKE '+p,"c.name ILIKE "+p,"c.phone ILIKE "+p,
+      "COALESCE(e.brand,'') ILIKE "+p,"COALESCE(e.model,'') ILIKE "+p,
+      "COALESCE(r.complaint,'') ILIKE "+p,"COALESCE(eng.name,'') ILIKE "+p
+    ];
+    if(phone)conditions.push("COALESCE(c.phone_norm,'') ILIKE "+phone);
+    where.push('('+conditions.map(sql=>sql+" ESCAPE '\\\\'").join(' OR ')+')');
   }
   const month=monthPredicate(params,'r',filters.month);
   if(month)where.push(month.slice(5));
@@ -98,9 +106,11 @@ function customersQuery(role,userId,filters){
   }
   if(filters.focusId)where.push('c.id='+parameter(params,filters.focusId));
   if(filters.search){
-    const p=parameter(params,escapeLike(filters.search));
-    where.push('(c.name ILIKE '+p+" ESCAPE '\\' OR c.phone ILIKE "+p+" ESCAPE '\\' OR "+
-      "COALESCE(c.phone_norm,'') ILIKE "+p+" ESCAPE '\\' OR COALESCE(c.email,'') ILIKE "+p+" ESCAPE '\\')");
+    const p=parameter(params,escapeLike(filters.search)),phone=phoneSearchParam(params,filters.search);
+    const conditions=["c.name ILIKE "+p,"c.phone ILIKE "+p,
+      "COALESCE(c.phone_norm,'') ILIKE "+p,"COALESCE(c.email,'') ILIKE "+p];
+    if(phone)conditions.push("COALESCE(c.phone_norm,'') ILIKE "+phone);
+    where.push('('+conditions.map(sql=>sql+" ESCAPE '\\\\'").join(' OR ')+')');
   }
   return{params,joinFilter,where:where.join(' AND ')};
 }
