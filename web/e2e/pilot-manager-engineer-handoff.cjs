@@ -71,7 +71,7 @@ function expectStatus(result,status,step){
   await drawer.locator('#new-equipment-serial').fill('PILOT-SN-'+suffix);
   await drawer.getByRole('button',{name:'Далее',exact:true}).click();
   await drawer.locator('#new-order-complaint').fill('Пилот: стиральная машина не сливает воду');
-  const engineerSelect=drawer.locator('select').filter({has:drawer.locator('option[value="'+engineer.id+'"]')});
+  const engineerSelect=drawer.locator('select').filter({hasText:'Pilot Engineer '+suffix});
   if(await engineerSelect.count()!==1)fail('MANAGER cannot choose branch engineer');
   await engineerSelect.selectOption(String(engineer.id));
   const createdResponse=managerPage.waitForResponse(r=>r.url().endsWith('/api/v1/requests')&&r.request().method()==='POST',{timeout:15000});
