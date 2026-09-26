@@ -173,6 +173,45 @@ export function CustomersDirectory({user,refreshKey=0,focusCustomer=null}){
     <Pagination meta={state.meta} limit={limit} onPage={setPage} onLimit={value=>{setLimit(value);setPage(1)}} loading={state.loading}/>
   </>;
 }
+export function EquipmentDirectory({refreshKey=0,focusEquipment=null}){
+  const {draft,setDraft,search}=useSearch();
+  const [page,setPage]=useState(1),[limit,setLimit]=useState(25);
+  const [focus,setFocus]=useState(focusEquipment);
+  useEffect(()=>{setFocus(focusEquipment);if(focusEquipment)setPage(1)},[focusEquipment]);
+  useEffect(()=>setPage(1),[search,limit]);
+  const filter={search:focus?'':search,focus_id:focus?.id,page,limit};
+  const state=useDirectory('equipment',filter,refreshKey);
+  useEffect(()=>{
+    if(!state.loading&&page>Math.max(1,Number(state.meta.pages)||0))setPage(Math.max(1,Number(state.meta.pages)||0));
+  },[state.loading,state.meta.pages,page]);
+  useEffect(()=>{
+    if(!focus||state.loading||!state.rows.some(x=>String(x.id)===String(focus.id)))return;
+    const row=document.querySelector('[data-search-record="equipment-'+focus.id+'"]');
+    if(!row)return;
+    row.scrollIntoView({behavior:'smooth',block:'center'});
+    row.classList.add('searchHit');row.focus({preventScroll:true});
+    const timeout=setTimeout(()=>row.classList.remove('searchHit'),2200);
+    return()=>clearTimeout(timeout);
+  },[focus?.id,state.loading,state.rows]);
+  return <>
+    <div className="toolbar dir-toolbar">
+      <SearchBox value={draft} onChange={value=>{setFocus(null);setDraft(value);setPage(1)}} placeholder="Бренд, модель, серийный номер, клиент…"/>
+      <div className="dir-tools"><span>Единиц техники: <b>{state.meta.total||0}</b></span></div>
+    </div>
+    {focus&&<div className="dir-focus">Выбранная техника: <b>{focus.title||[focus.brand,focus.model].filter(Boolean).join(' ')||'#'+focus.id}</b>
+      <button type="button" onClick={()=>{setFocus(null);setDraft('');setPage(1)}}>Показать всю технику</button></div>}
+    {state.error&&<div className="errorbox" role="alert">{state.error}</div>}
+    <section className="table" aria-busy={state.loading}>
+      {state.rows.length?state.rows.map(item=><div className="simple dir-equipment" key={item.id}
+        data-search-record={'equipment-'+item.id} tabIndex="-1">
+        <div><b>{[item.brand,item.model].filter(Boolean).join(' ')||item.category}</b><small>{item.category}</small></div>
+        <b>{item.customer_name}</b><span>{item.serial_number||'—'}</span><span>{date(item.created_at)}</span>
+      </div>):<div className="empty">{state.loading?'Загрузка техники…':'Техника по запросу не найдена'}</div>}
+    </section>
+    <Pagination meta={state.meta} limit={limit} onPage={setPage} onLimit={value=>{setLimit(value);setPage(1)}} loading={state.loading}/>
+  </>;
+}
+
 function localMonth(){
   return new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Qostanay',year:'numeric',month:'2-digit'}).format(new Date());
 }
