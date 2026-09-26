@@ -194,6 +194,15 @@ test('directory: pagination, filter/search, role and branch visibility, Excel ex
       const managerEquipment=await s.call(3,'/api/v1/directory/equipment?search=ARCHIVE-SERIAL-1001&limit=5');
       assert.equal(managerEquipment.status,200,JSON.stringify(managerEquipment.body));
       assert.deepEqual(managerEquipment.body.data.map(row=>row.id),[unused]);
+      assert.ok(managerEquipment.body.data[0].created_at,'equipment directory includes created_at');
+      const deepLink=await s.call(3,'/api/v1/directory/equipment?focus_id='+unused);
+      assert.equal(deepLink.status,200);
+      assert.deepEqual(deepLink.body.data.map(row=>row.id),[unused]);
+      assert.equal(deepLink.body.meta.total,1);
+      assert.equal((await s.call(4,'/api/v1/directory/equipment?focus_id='+unused)).body.meta.total,0);
+      assert.equal((await s.call(6,'/api/v1/directory/equipment?focus_id='+unused)).body.meta.total,0);
+      assert.equal((await s.call(1,'/api/v1/directory/equipment?focus_id=bogus')).status,422);
+      assert.equal((await s.call(3,'/api/v1/directory/equipment?focus_id='+unused+'&customer_id=1')).body.meta.total,0);
       assert.equal((await s.call(4,'/api/v1/directory/equipment?search=ARCHIVE-SERIAL-1001')).body.meta.total,0);
       assert.equal((await s.call(6,'/api/v1/directory/equipment?search=ARCHIVE-SERIAL-1001')).body.meta.total,0);
       assert.deepEqual((await s.call(5,'/api/v1/directory/equipment?customer_id='+archive)).body.data.map(row=>row.id),[]);
