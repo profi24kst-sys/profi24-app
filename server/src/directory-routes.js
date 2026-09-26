@@ -77,7 +77,7 @@ function ordersQuery(role,userId,filters,{withStatus=true}={}){
       "COALESCE(r.complaint,'') ILIKE "+p,"COALESCE(eng.name,'') ILIKE "+p
     ];
     if(phone)conditions.push("COALESCE(c.phone_norm,'') ILIKE "+phone);
-    where.push('('+conditions.map(sql=>sql+" ESCAPE '\\\\'").join(' OR ')+')');
+    where.push('('+conditions.map(sql=>sql+" ESCAPE '\\'").join(' OR ')+')');
   }
   const month=monthPredicate(params,'r',filters.month);
   if(month)where.push(month.slice(5));
@@ -110,7 +110,7 @@ function customersQuery(role,userId,filters){
     const conditions=["c.name ILIKE "+p,"c.phone ILIKE "+p,
       "COALESCE(c.phone_norm,'') ILIKE "+p,"COALESCE(c.email,'') ILIKE "+p];
     if(phone)conditions.push("COALESCE(c.phone_norm,'') ILIKE "+phone);
-    where.push('('+conditions.map(sql=>sql+" ESCAPE '\\\\'").join(' OR ')+')');
+    where.push('('+conditions.map(sql=>sql+" ESCAPE '\\'").join(' OR ')+')');
   }
   return{params,joinFilter,where:where.join(' AND ')};
 }
