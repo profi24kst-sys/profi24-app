@@ -137,16 +137,46 @@ test('A32: полный рабочий день проходит всеми ше
     // ENGINEER: completes repair, the reserved consumable is posted atomically, photo and test are recorded.
     r=await call('completion','POST',`/api/v1/requests/${order.id}/repair-done`,{repair_result:'Сливной тракт очищен, расходник установлен'},ids.engineer);assert.equal(r.status,200,JSON.stringify(r));
     assert.equal(r.data.parts_installed,1);
+    // A field engineer cannot skip photo evidence or take payment before testing.
+    r=await call('completion','POST',`/api/v1/requests/${order.id}/test`,{test_result:'No after-photo yet'},ids.engineer);
+    assert.equal(r.status,409);assert.equal(r.error?.code,'PHOTO_REQUIRED');
+    r=await call('completion','POST',`/api/v1/requests/${order.id}/payment`,{amount:'15000',account_id:cash.id},ids.accountant);
+    assert.equal(r.status,409,'payment requires successful functional testing');
     r=await call('documents','POST',`/api/v1/requests/${order.id}/files`,{name:'a32-after.png',kind:'PHOTO_AFTER',data:png},ids.engineer);assert.equal(r.status,201,JSON.stringify(r));
     r=await call('completion','POST',`/api/v1/requests/${order.id}/test`,{test_result:'Три цикла слива пройдены'},ids.engineer);assert.equal(r.status,200,JSON.stringify(r));
 
-    // MANAGER captures the client's handover signature.
-    r=await call('documents','POST',`/api/v1/requests/${order.id}/signatures`,{signer_type:'CLIENT',signer_name:'A32 Клиент',signature_data:png},ids.manager);assert.equal(r.status,201,JSON.stringify(r));
+    // PIlOT SHIFT: a non-finance role must not handle payment, even when the job is ready.
+    const paymentPayload={amount:'15000',account_id:cash.id,reference:'A32-RECEIPT-1'};
+    const paymentUrl=`/api/v1/requests/${order.id}/payment`;
+    r=await call('completion','POST',paymentUrl,paymentPayload,ids.engineer);
+    assert.equal(r.status,403,'engineer must not collect the payment');
+    r=await call('completion','POST',paymentUrl,paymentPayload,ids.supervisor);
+    assert.equal(r.status,403,'supervisor has audit/dispatch permissions, not payment permission');
 
-    // ACCOUNTANT: receives the exact approved amount to the real branch cash account.
+    // ACCOUNTANT: overpayment is blocked without writing either payment or cash movement.
+    r=await call('completion','POST',paymentUrl,{...paymentPayload,amount:'15001'},ids.accountant);
+    assert.equal(r.status,409,'payment above outstanding balance must be rejected');
+    assert.equal(Number((await query('SELECT paid FROM requests WHERE id=$1',[order.id])).rows[0].paid),0);
+
+    // ACCOUNTANT: a timeout or double-click retries the same key without double booking.
+    const paymentKey='a32-staff-shift-payment-001';
     const beforePay=(await query('SELECT total,paid FROM requests WHERE id=$1',[order.id])).rows[0];
     assert.equal(Number(beforePay.total),15000);assert.equal(Number(beforePay.paid),0);
-    r=await call('completion','POST',`/api/v1/requests/${order.id}/payment`,{amount:'15000',account_id:cash.id,reference:'A32-RECEIPT-1'},ids.accountant);assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.fully_paid,true);
+    r=await call('completion','POST',paymentUrl,paymentPayload,ids.accountant,{'idempotency-key':paymentKey});
+    assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.fully_paid,true);
+    r=await call('completion','POST',paymentUrl,paymentPayload,ids.accountant,{'idempotency-key':paymentKey});
+    assert.equal(r.status,200,'replayed payment should return the existing result');
+    assert.equal(Number(r.data.paid),15000);
+    r=await call('completion','POST',paymentUrl,{...paymentPayload,amount:'10'},ids.accountant,{'idempotency-key':paymentKey});
+    assert.equal(r.status,409,'reusing a payment key for different contents must fail');
+    assert.equal(Number((await query('SELECT count(*) c FROM payments WHERE request_id=$1 AND kind=\'PAYMENT\'',[order.id])).rows[0].c),1);
+
+    // MANAGER: full payment alone is not enough; the signed handover is mandatory.
+    r=await call('completion','POST',`/api/v1/requests/${order.id}/close`,{},ids.manager);
+    assert.equal(r.status,409,'closing without the client signature must be rejected');
+    assert.equal(r.error?.code,'CLIENT_SIGNATURE_REQUIRED');
+    r=await call('documents','POST',`/api/v1/requests/${order.id}/signatures`,{signer_type:'CLIENT',signer_name:'A32 Клиент',signature_data:png},ids.manager);
+    assert.equal(r.status,201,JSON.stringify(r));
 
     // MANAGER: closes through the completion procedure; direct status rewrite is never used.
     r=await call('completion','POST',`/api/v1/requests/${order.id}/close`,{},ids.manager);assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.status,'CLOSED');
