@@ -34,7 +34,7 @@ test('MANAGER не видит чужой филиал в списках и dashb
     const foreign=(await query("INSERT INTO requests(number,customer_id,engineer_id,branch_id,status,complaint,total,paid,direct_cost) VALUES('MB-OTHER',1,4,$1,'REPAIR','Foreign',9000,8000,4000) RETURNING id",[other])).rows[0].id;
     await query('UPDATE requests SET equipment_id=$1 WHERE id=$2',[ownEquipment,own]);
     await query('UPDATE requests SET customer_id=2,equipment_id=$1 WHERE id=$2',[foreignEquipment,foreign]);
-    await query("INSERT INTO requests(number,customer_id,engineer_id,branch_id,status,complaint,created_at) SELECT 'MB-BULK-'||g,2,4,$1,'CLOSED','Foreign bulk',now()+INTERVAL '1 second' FROM generate_series(1,1001) g",[other]);
+    await query("INSERT INTO requests(number,customer_id,engineer_id,branch_id,status,complaint,created_at) SELECT 'MB-BULK-'||g,2,4,$1,'REPAIR','Foreign bulk',now()+INTERVAL '1 second' FROM generate_series(1,1001) g",[other]);
     await query("INSERT INTO complaints(number,request_id,customer_id,text,status) VALUES('MB-C1',$1,1,'Own complaint','OPEN'),('MB-C2',$2,2,'Foreign complaint','OPEN')",[own,foreign]);
 
     let src=await readFile(path.join(root,'index2.js'),'utf8');
