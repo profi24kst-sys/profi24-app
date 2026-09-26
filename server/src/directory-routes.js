@@ -33,6 +33,10 @@ function escapeLike(value){
 function parameter(params,value){
   params.push(value);return '$'+params.length;
 }
+function phoneSearchParam(params,search){
+  const digits=search.replace(/\D/g,'');
+  return digits.length>=3&&/^[+\d\s()\-]+$/.test(search)?parameter(params,escapeLike(digits)):null;
+}
 function monthPredicate(params,alias,month){
   if(!month)return'';
   const p=parameter(params,month);
@@ -66,10 +70,14 @@ function visibleRequest(params,role,userId,alias){
 function ordersQuery(role,userId,filters,{withStatus=true}={}){
   const params=[],where=['r.deleted_at IS NULL',visibleRequest(params,role,userId,'r')];
   if(filters.search){
-    const p=parameter(params,escapeLike(filters.search));
-    where.push('(r.number ILIKE '+p+" ESCAPE '\\' OR c.name ILIKE "+p+" ESCAPE '\\' OR c.phone ILIKE "+p+" ESCAPE '\\' OR "+
-      "COALESCE(e.brand,'') ILIKE "+p+" ESCAPE '\\' OR COALESCE(e.model,'') ILIKE "+p+" ESCAPE '\\' OR "+
-      "COALESCE(r.complaint,'') ILIKE "+p+" ESCAPE '\\' OR COALESCE(eng.name,'') ILIKE "+p+" ESCAPE '\\')");
+    const p=parameter(params,escapeLike(filters.search)),phone=phoneSearchParam(params,filters.search);
+    const conditions=[
+      'r.number ILIKE '+p,"c.name ILIKE "+p,"c.phone ILIKE "+p,
+      "COALESCE(e.brand,'') ILIKE "+p,"COALESCE(e.model,'') ILIKE "+p,
+      "COALESCE(r.complaint,'') ILIKE "+p,"COALESCE(eng.name,'') ILIKE "+p
+    ];
+    if(phone)conditions.push("COALESCE(c.phone_norm,'') ILIKE "+phone);
+    where.push('('+conditions.map(sql=>sql+" ESCAPE '\\'").join(' OR ')+')');
   }
   const month=monthPredicate(params,'r',filters.month);
   if(month)where.push(month.slice(5));
@@ -98,9 +106,11 @@ function customersQuery(role,userId,filters){
   }
   if(filters.focusId)where.push('c.id='+parameter(params,filters.focusId));
   if(filters.search){
-    const p=parameter(params,escapeLike(filters.search));
-    where.push('(c.name ILIKE '+p+" ESCAPE '\\' OR c.phone ILIKE "+p+" ESCAPE '\\' OR "+
-      "COALESCE(c.phone_norm,'') ILIKE "+p+" ESCAPE '\\' OR COALESCE(c.email,'') ILIKE "+p+" ESCAPE '\\')");
+    const p=parameter(params,escapeLike(filters.search)),phone=phoneSearchParam(params,filters.search);
+    const conditions=["c.name ILIKE "+p,"c.phone ILIKE "+p,
+      "COALESCE(c.phone_norm,'') ILIKE "+p,"COALESCE(c.email,'') ILIKE "+p];
+    if(phone)conditions.push("COALESCE(c.phone_norm,'') ILIKE "+phone);
+    where.push('('+conditions.map(sql=>sql+" ESCAPE '\\'").join(' OR ')+')');
   }
   return{params,joinFilter,where:where.join(' AND ')};
 }
@@ -189,6 +199,35 @@ export function registerDirectoryRoutes(app,pool){
     const rows=(await q(CUSTOMER_SELECT+' FROM customers c LEFT JOIN requests r ON r.customer_id=c.id AND '+
       sql.joinFilter+' WHERE '+sql.where+' GROUP BY c.id ORDER BY c.created_at DESC,c.id DESC LIMIT '+limit+' OFFSET '+offset,params)).rows;
     return{data:safeCustomers(rows,req.user.role),meta:{page:filters.page,limit:filters.limit,total,pages:Math.ceil(total/filters.limit)}};
+  });
+
+  // Server-side equipment lookup: scope every row to the caller's accessible orders.
+  // Owner, supervisor and accountant can inspect equipment without an order.
+  app.get('/api/v1/directory/equipment',{preHandler:auth},async(req,reply)=>{
+    if(!ALL_ROLES.has(req.user.role))return fail(reply,'FORBIDDEN','Недостаточно прав',403);
+    const parsed=parseDirectoryQuery(req.query,'equipment');
+    if(parsed.error)return fail(reply,'VALIDATION',parsed.error);
+    const filters=parsed.value,params=[],where=['e.deleted_at IS NULL','c.deleted_at IS NULL'];
+    if(!['OWNER','SUPERVISOR','ACCOUNTANT'].includes(req.user.role)){
+      where.push('EXISTS (SELECT 1 FROM requests r WHERE r.equipment_id=e.id AND r.deleted_at IS NULL AND '+visibleRequest(params,req.user.role,req.user.id,'r')+')');
+    }
+    if(req.query.customer_id!=null){
+      const customerId=Number(req.query.customer_id);
+      if(!Number.isSafeInteger(customerId)||customerId<1)return fail(reply,'VALIDATION','Некорректный номер клиента');
+      where.push('e.customer_id='+parameter(params,customerId));
+    }
+    if(filters.search){
+      const p=parameter(params,escapeLike(filters.search));
+      where.push('(e.category ILIKE '+p+" ESCAPE '\\' OR COALESCE(e.brand,'') ILIKE "+p+" ESCAPE '\\' OR "+
+        "COALESCE(e.model,'') ILIKE "+p+" ESCAPE '\\' OR COALESCE(e.serial_number,'') ILIKE "+p+" ESCAPE '\\' OR "+
+        "c.name ILIKE "+p+" ESCAPE '\\')");
+    }
+    const from=' FROM equipment e JOIN customers c ON c.id=e.customer_id',condition=where.join(' AND ');
+    const total=(await q('SELECT count(*)::int total'+from+' WHERE '+condition,params)).rows[0].total;
+    const p=[...params],limit=parameter(p,filters.limit),offset=parameter(p,filters.offset);
+    const rows=(await q('SELECT e.id,e.customer_id,e.category,e.brand,e.model,e.serial_number,c.name customer_name'+
+      from+' WHERE '+condition+' ORDER BY e.created_at DESC,e.id DESC LIMIT '+limit+' OFFSET '+offset,p)).rows;
+    return{data:rows,meta:{page:filters.page,limit:filters.limit,total,pages:Math.ceil(total/filters.limit)}};
   });
 
   app.get('/api/v1/directory/orders/export',{preHandler:auth},async(req,reply)=>{
