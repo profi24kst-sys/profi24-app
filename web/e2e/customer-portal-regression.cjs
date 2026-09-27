@@ -6,7 +6,7 @@ async function gotoBase(page){
  for(let attempt=1;attempt<=3;attempt++){
   try{return await page.goto(BASE,{waitUntil:'domcontentloaded',timeout:15000})}
   catch(error){
-   if(!String(error.message||error).includes('ERR_ABORTED')||attempt===3)throw error;
+   if(!/(ERR_ABORTED|interrupted by another navigation)/i.test(String(error.message||error))||attempt===3)throw error;
    await page.waitForTimeout(300*attempt);
   }
  }
