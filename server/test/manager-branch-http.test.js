@@ -78,6 +78,13 @@ test('MANAGER не видит чужой филиал в списках и dashb
     const invalidOrder=await app.inject({method:'POST',url:'/api/v1/requests',headers:managerHeaders,payload:{customer_id:1,complaint:'Тест на обязательное дополнительное поле'}});
     assert.equal(invalidOrder.statusCode,422,invalidOrder.body);
     assert.equal(invalidOrder.json().error.code,'CUSTOM_FIELD_REQUIRED');
+
+    const unsupported=await app.inject({method:'POST',url:'/api/v1/requests',headers:managerHeaders,payload:{
+      customer_id:1,complaint:'Продажа пока не должна использовать процесс ремонта',order_type:'SALE',custom_fields:{}
+    }});
+    assert.equal(unsupported.statusCode,422);
+    assert.equal(unsupported.json().error.code,'ORDER_TYPE_NOT_READY');
+
     const createOrder=await app.inject({method:'POST',url:'/api/v1/requests',headers:managerHeaders,payload:{
       customer_id:1,complaint:'Тест на настраиваемые поля',order_type:'REPAIR',custom_fields:{external_condition:'  Царапины на корпусе  '}
     }});
