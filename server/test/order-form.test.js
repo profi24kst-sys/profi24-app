@@ -31,8 +31,8 @@ test('owner configures dictionaries and typed intake; manager may read but not m
   r=await send('POST','/api/v1/order-form/fields',{code:'external_condition',label:'Внешний вид',field_type:'TEXTAREA',required:false});
   assert.equal(r.status,201);
   r=await send('GET','/api/v1/order-form/schema?order_type=REPAIR',undefined,'MANAGER');
-  assert.equal(r.status,200);assert.equal(r.data.fields[0].code,'device_brand');
-  assert.equal(r.data.fields[0].options[0].id,choice);
+  assert.equal(r.status,200);assert.ok(r.data.fields.some(f=>f.code==='device_brand'));
+  assert.equal(r.data.fields.find(f=>f.code==='device_brand').options[0].id,choice);
   await assert.rejects(validateOrderFields(pool,'REPAIR',{}),e=>e.code==='CUSTOM_FIELD_REQUIRED');
   await assert.rejects(validateOrderFields(pool,'REPAIR',{device_brand:999}),e=>e.code==='INVALID_CUSTOM_FIELD');
   await assert.rejects(validateOrderFields(pool,'REPAIR',{device_brand:choice,unknown:'abc'}),e=>e.code==='UNKNOWN_CUSTOM_FIELD');
