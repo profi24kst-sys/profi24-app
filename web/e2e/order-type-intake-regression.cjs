@@ -48,7 +48,7 @@ function ok(v,msg){if(!v)throw Error(msg)}
   drawer=await startOrder('WORKSHOP');
   await drawer.locator('#new-order-type').selectOption('PAID_WORKSHOP');
   await drawer.locator('#new-order-type').waitFor({state:'visible'});
-  await page.waitForFunction(()=>{const button=[...document.querySelectorAll('.drawer button')].find(b=>b.textContent.trim()==='Создать заказ');return Boolean(button&&!button.disabled)},{timeout:15000});
+  await page.waitForFunction(()=>{const button=[...document.querySelectorAll('.drawer button')].find(b=>b.textContent.trim()==='Создать заказ');return Boolean(button&&!button.disabled)},null,{timeout:15000});
   ok(await drawer.locator('#custom-field-'+code).count()===0,'FIELD-only custom field leaked into workshop');
   await drawer.getByRole('button',{name:'Создать заказ',exact:true}).click();
   await drawer.waitFor({state:'detached',timeout:20000});
