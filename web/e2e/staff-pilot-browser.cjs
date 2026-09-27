@@ -1,11 +1,11 @@
 const assert=(v,m)=>{if(!v)throw Error(m)};
-async function api(p,url,body){
+async function api(p,url,body,method){
  const token=await p.evaluate(()=>localStorage.token);
- const r=await p.request.fetch('http://127.0.0.1:5173'+url,{method:body?'POST':'GET',headers:{Authorization:'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},...(body?{data:body}:{})});
+ const r=await p.request.fetch(p.pilotBase+url,{method:method||(body?'POST':'GET'),headers:{Authorization:'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},...(body?{data:body}:{})});
  const j=await r.json();assert(r.ok(),url+' '+r.status()+' '+JSON.stringify(j.error||{}));return j.data;
 }
 async function signIn(browser,email,password,base){
- const ctx=await browser.newContext(),p=await ctx.newPage();
+ const ctx=await browser.newContext(),p=await ctx.newPage();p.pilotBase=base;
  await p.goto(base+'/orders',{waitUntil:'domcontentloaded'});
  await p.locator('input[autocomplete="username"]').fill(email);
  await p.locator('input[autocomplete="current-password"]').fill(password);
@@ -14,12 +14,14 @@ async function signIn(browser,email,password,base){
  return{ctx,p};
 }
 module.exports=async({browser,owner,base})=>{
- const s=Date.now().toString(36).toUpperCase(),password='PilotBrowser2026Kst9',sessions=[];
+ const s=Date.now().toString(36).toUpperCase(),password='PilotBrowser2026Kst9',sessions=[];owner.pilotBase=base;
+ const branch=(await api(owner,'/branch-api/v1/branches')).find(x=>x.code==='KST');assert(branch,'KST branch missing');
  try{
   const users={};
   for(const role of ['MANAGER','ENGINEER']){
    const email='pilot-'+role.toLowerCase()+'-'+s+'@test.invalid';
    users[role]={...await api(owner,'/api/v1/users',{name:'Pilot '+role,email,role,password}),email};
+   await api(owner,'/branch-api/v1/users/'+users[role].id+'/branches',{branch_ids:[branch.id],primary_branch_id:branch.id},'PUT');
   }
   const m=await signIn(browser,users.MANAGER.email,password,base);sessions.push(m);
   await m.p.locator('section.table[aria-busy="false"]').waitFor({state:'visible',timeout:20000});
