@@ -85,6 +85,42 @@ test('MANAGER не видит чужой филиал в списках и dashb
     assert.equal(unsupported.statusCode,422);
     assert.equal(unsupported.json().error.code,'ORDER_TYPE_NOT_READY');
 
+
+    const fieldDef=await app.inject({method:'POST',url:'/api/v1/order-form/fields',headers:ownerHeaders,payload:{
+      code:'route_note',label:'Примечание к выезду',field_type:'TEXT',required:true,order_types:['FIELD']
+    }});
+    assert.equal(fieldDef.statusCode,201,fieldDef.body);
+    const fieldSchema=await app.inject({method:'GET',url:'/api/v1/order-form/schema?order_type=FIELD',headers:managerHeaders});
+    assert.equal(fieldSchema.statusCode,200);
+    assert.ok(fieldSchema.json().data.fields.some(x=>x.code==='route_note'));
+    assert.ok(!fieldSchema.json().data.fields.some(x=>x.code==='external_condition'));
+    const fieldMissing=await app.inject({method:'POST',url:'/api/v1/requests',headers:managerHeaders,payload:{
+      customer_id:1,complaint:'Выезд без обязательной заметки',order_type:'FIELD'
+    }});
+    assert.equal(fieldMissing.statusCode,422);
+    assert.equal(fieldMissing.json().error.code,'CUSTOM_FIELD_REQUIRED');
+    const fieldCreated=await app.inject({method:'POST',url:'/api/v1/requests',headers:managerHeaders,payload:{
+      customer_id:1,complaint:'Выезд с маршрутом',order_type:'FIELD',custom_fields:{route_note:'  Вход со двора  '}
+    }});
+    assert.equal(fieldCreated.statusCode,201,fieldCreated.body);
+    assert.equal(fieldCreated.json().data.order_type,'FIELD');
+    assert.equal(fieldCreated.json().data.visit_type,'FIELD');
+    assert.equal(fieldCreated.json().data.custom_fields.route_note,'Вход со двора');
+    const workshop=await app.inject({method:'POST',url:'/api/v1/requests',headers:managerHeaders,payload:{
+      customer_id:1,complaint:'Стационарный ремонт с приёмкой',order_type:'PAID_WORKSHOP'
+    }});
+    assert.equal(workshop.statusCode,201,workshop.body);
+    assert.equal(workshop.json().data.visit_type,'WORKSHOP');
+    const conflicting=await app.inject({method:'POST',url:'/api/v1/requests',headers:managerHeaders,payload:{
+      customer_id:1,complaint:'Недопустимая несовместимость типа и посещения',order_type:'PAID_WORKSHOP',visit_type:'FIELD'
+    }});
+    assert.equal(conflicting.statusCode,422);
+    assert.equal(conflicting.json().error.code,'VISIT_TYPE_MISMATCH');
+    const partsUnavailable=await app.inject({method:'POST',url:'/api/v1/requests',headers:managerHeaders,payload:{
+      customer_id:1,complaint:'Запчасти должны оформляться отдельно',order_type:'PARTS'
+    }});
+    assert.equal(partsUnavailable.statusCode,422);
+    assert.equal(partsUnavailable.json().error.code,'ORDER_TYPE_NOT_READY');
     const createOrder=await app.inject({method:'POST',url:'/api/v1/requests',headers:managerHeaders,payload:{
       customer_id:1,complaint:'Тест на настраиваемые поля',order_type:'REPAIR',custom_fields:{external_condition:'  Царапины на корпусе  '}
     }});
