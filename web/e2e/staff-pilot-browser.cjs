@@ -85,3 +85,6 @@ async function openOrder(page,number){
   for(const event of ['ACCEPT','DEPART','ARRIVE'])await api(eng.page,'/workflow-api/v1/requests/'+order.id+'/workflow',{method:'POST',body:{event},expect:200});
 
   await api(eng.page,'/documents-api/v1/requests/'+order.id+'/files',{method:'POST',body:{name:'pilot-before.png',kind:'PHOTO_BEFORE',data:png},expect:201});
+  const diagnosis=await api(eng.page,'/api/v1/requests/'+order.id+'/diagnosis',{method:'POST',body:{diagnosis:'Засор сливного тракта'},expect:200});
+  ok(diagnosis.data.status==='APPROVAL_REQUIRED','diagnosis must require approval');
+  await api(eng.page,'/api/v1/requests/'+order.id+'/works',{method:'POST',body:{name:'Очистка сливного тракта',qty:1,unit_price:15000},expect:201});
