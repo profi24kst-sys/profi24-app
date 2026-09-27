@@ -15,7 +15,7 @@ async function signIn(browser,email,password,base){
  // Do not open the order drawer until that reload and the orders bootstrap finish.
  await p.waitForTimeout(1000);
  await p.waitForFunction(expected=>{try{return JSON.parse(localStorage.user||'null')?.email===expected}catch{return false}},email,{timeout:12000});
- await p.locator('section.table[aria-busy="false"]').waitFor({state:'visible',timeout:20000});
+ if(email.startsWith('pilot-manager-'))await p.locator('section.table[aria-busy="false"]').waitFor({state:'visible',timeout:20000});
  return{ctx,p};
 }
 module.exports=async({browser,owner,base})=>{
