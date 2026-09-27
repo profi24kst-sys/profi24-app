@@ -140,13 +140,33 @@ test('A32: полный рабочий день проходит всеми ше
     r=await call('documents','POST',`/api/v1/requests/${order.id}/files`,{name:'a32-after.png',kind:'PHOTO_AFTER',data:png},ids.engineer);assert.equal(r.status,201,JSON.stringify(r));
     r=await call('completion','POST',`/api/v1/requests/${order.id}/test`,{test_result:'Три цикла слива пройдены'},ids.engineer);assert.equal(r.status,200,JSON.stringify(r));
 
+    // Account safety: even on a paid, assigned job the engineer cannot collect cash.
+    r=await call('completion','POST',`/api/v1/requests/${order.id}/payment`,{amount:'15000',account_id:cash.id,reference:'A32-ENGINEER-DENIED'},ids.engineer);
+    assert.equal(r.status,403,'engineer must not post a payment');
+    assert.equal(Number((await query('SELECT paid FROM requests WHERE id=$1',[order.id])).rows[0].paid),0,'denied payment mutated request');
+    assert.equal(Number((await query('SELECT count(*) c FROM payments WHERE request_id=$1',[order.id])).rows[0].c),0,'denied payment created a receipt');
+
     // MANAGER captures the client's handover signature.
     r=await call('documents','POST',`/api/v1/requests/${order.id}/signatures`,{signer_type:'CLIENT',signer_name:'A32 Клиент',signature_data:png},ids.manager);assert.equal(r.status,201,JSON.stringify(r));
 
     // ACCOUNTANT: receives the exact approved amount to the real branch cash account.
     const beforePay=(await query('SELECT total,paid FROM requests WHERE id=$1',[order.id])).rows[0];
     assert.equal(Number(beforePay.total),15000);assert.equal(Number(beforePay.paid),0);
-    r=await call('completion','POST',`/api/v1/requests/${order.id}/payment`,{amount:'15000',account_id:cash.id,reference:'A32-RECEIPT-1'},ids.accountant);assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.fully_paid,true);
+    // Overpayment must be rejected without any payment/ledger entry.
+    r=await call('completion','POST',`/api/v1/requests/${order.id}/payment`,{amount:'15001',account_id:cash.id,reference:'A32-OVERPAY-REJECT'},ids.accountant);
+    assert.equal(r.status,409,'overpayment must be rejected');
+    assert.equal(Number((await query('SELECT paid FROM requests WHERE id=$1',[order.id])).rows[0].paid),0,'overpayment changed paid balance');
+    assert.equal(Number((await query('SELECT count(*) c FROM finance_transactions WHERE account_id=$1',[cash.id])).rows[0].c),0,'overpayment made a ledger movement');
+
+    const paymentPayload={amount:'15000',account_id:cash.id,reference:'A32-RECEIPT-1'};
+    const samePaymentKey={'idempotency-key':'a32-exact-approved-payment'};
+    r=await call('completion','POST',`/api/v1/requests/${order.id}/payment`,paymentPayload,ids.accountant,samePaymentKey);
+    assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.fully_paid,true);
+    // A browser retry/duplicate click with the same key must replay, not charge twice.
+    r=await call('completion','POST',`/api/v1/requests/${order.id}/payment`,paymentPayload,ids.accountant,samePaymentKey);
+    assert.equal(r.status,200,'idempotent payment replay failed');assert.equal(Number(r.data.paid),15000);
+    r=await call('completion','POST',`/api/v1/requests/${order.id}/payment`,{...paymentPayload,amount:'14000'},ids.accountant,samePaymentKey);
+    assert.equal(r.status,409,'reusing a payment key with altered amount must be rejected');
 
     // MANAGER: closes through the completion procedure; direct status rewrite is never used.
     r=await call('completion','POST',`/api/v1/requests/${order.id}/close`,{},ids.manager);assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.status,'CLOSED');
@@ -158,6 +178,7 @@ test('A32: полный рабочий день проходит всеми ше
     assert.equal(Number((await query('SELECT balance FROM finance_account_balances WHERE id=$1',[cash.id])).rows[0].balance),15000);
     assert.equal(Number((await query("SELECT count(*) c FROM parts WHERE request_id=$1 AND status='INSTALLED'",[order.id])).rows[0].c),1);
     assert.equal(Number((await query("SELECT count(*) c FROM warehouse_movements WHERE request_id=$1 AND movement_type='INSTALL'",[order.id])).rows[0].c),1);
+    assert.equal(Number((await query('SELECT quantity FROM warehouse_items WHERE id=$1',[item.id])).rows[0].quantity),1,'warehouse quantity was not reduced exactly once');
     assert.equal(Number((await query('SELECT count(*) c FROM generated_documents WHERE request_id=$1',[order.id])).rows[0].c),2);
     assert.equal(Number((await query("SELECT count(*) c FROM request_files WHERE request_id=$1 AND kind='PHOTO_AFTER'",[order.id])).rows[0].c),1);
     assert.equal(Number((await query("SELECT count(*) c FROM request_signatures WHERE request_id=$1 AND signer_type='CLIENT'",[order.id])).rows[0].c),1);
