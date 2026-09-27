@@ -83,3 +83,5 @@ async function openOrder(page,number){
   ok(mine.some(x=>Number(x.id)===Number(order.id)),'engineer cannot see assigned order');
   await openOrder(eng.page,order.number);
   for(const event of ['ACCEPT','DEPART','ARRIVE'])await api(eng.page,'/workflow-api/v1/requests/'+order.id+'/workflow',{method:'POST',body:{event},expect:200});
+
+  await api(eng.page,'/documents-api/v1/requests/'+order.id+'/files',{method:'POST',body:{name:'pilot-before.png',kind:'PHOTO_BEFORE',data:png},expect:201});
