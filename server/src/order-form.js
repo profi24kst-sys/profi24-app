@@ -52,6 +52,14 @@ export function registerOrderFormRoutes(app,pool,{auth,roles,err}){
  const fail=(reply,e)=>err(reply,e.code||'VALIDATION',e.message,e.statusCode||422,e.details);
  app.get('/api/v1/order-form/schema',{preHandler:auth},async(req,reply)=>{try{return{data:await orderFormSchema(pool,req.query?.order_type||'REPAIR')}}catch(e){return fail(reply,e)}});
  app.get('/api/v1/order-form/dictionaries',{preHandler:roles('OWNER')},async()=>({data:(await q("SELECT * FROM order_field_dictionaries ORDER BY label")).rows}));
+
+ app.get('/api/v1/order-form/fields',{preHandler:roles('OWNER')},async()=>({data:(await q("SELECT f.*,d.label dictionary_label FROM order_field_defs f LEFT JOIN order_field_dictionaries d ON d.id=f.dictionary_id ORDER BY f.sort_order,f.id")).rows}));
+ app.get('/api/v1/order-form/dictionaries/:id/items',{preHandler:roles('OWNER')},async(req,reply)=>{
+  const id=Number(req.params.id);
+  if(!Number.isSafeInteger(id)||id<1)return err(reply,'VALIDATION','Некорректный справочник');
+  return {data:(await q("SELECT id,value,active,sort_order FROM order_field_dictionary_items WHERE dictionary_id=$1 ORDER BY sort_order,id",[id])).rows};
+ });
+
  app.post('/api/v1/order-form/dictionaries',{preHandler:roles('OWNER')},async(req,reply)=>{
   const {code,label}=req.body||{};
   if(!codeOk(code)||typeof label!=='string'||!label.trim()||label.length>120)return err(reply,'VALIDATION','Укажите код и название справочника');
