@@ -19,7 +19,18 @@ function ok(v,msg){if(!v)throw Error(msg)}
    const json=await result.json();ok(result.ok(),method+' '+url+': '+result.status()+' '+JSON.stringify(json.error||{}));return json.data;
   };
   const suffix=Date.now().toString(36),code='field_route_'+suffix;
-  await api('POST','/api/v1/order-form/fields',{code,label:'Условия выезда',field_type:'TEXT',required:true,order_types:['FIELD']});
+  await page.locator('aside').getByRole('button',{name:'Поля приёмки'}).click();
+  const ownerPanel=page.locator('.ofsLayer');await ownerPanel.waitFor({state:'visible'});
+  const fieldSettings=ownerPanel.locator('.ofsGrid section').nth(1);
+  await fieldSettings.getByLabel('Код').fill(code);
+  await fieldSettings.getByLabel('Название').fill('Условия выезда');
+  await fieldSettings.getByLabel('Обычный').uncheck();
+  await fieldSettings.getByLabel('Выездной').check();
+  await fieldSettings.getByLabel('Обязательное').check();
+  await fieldSettings.getByRole('button',{name:'Добавить поле'}).click();
+  await ownerPanel.getByText(code,{exact:true}).waitFor({state:'visible',timeout:10000});
+  await ownerPanel.getByRole('button',{name:'Закрыть'}).evaluate(b=>b.click());
+  await ownerPanel.waitFor({state:'detached',timeout:12000});
   async function startOrder(label){
    await page.getByRole('button',{name:/Новый заказ/}).click();
    const drawer=page.locator('.drawer');await drawer.waitFor({state:'visible'});
