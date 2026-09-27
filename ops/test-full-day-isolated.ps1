@@ -19,7 +19,7 @@ $commands = @(
   '  if npm ci --include=dev --no-audit --no-fund --fetch-retries=2; then break; fi',
   '  if [ "$attempt" -eq 3 ]; then',
   '    echo "npm install failed after three attempts; showing recent npm log" >&2',
-  '    find /root/.npm/_logs -type f -name "*-debug-0.log" -exec tail -n 50 {} \\; 2>/dev/null || true',
+  '    for log in /root/.npm/_logs/*-debug-0.log; do if [ -f "$log" ]; then tail -n 35 "$log"; fi; done',
   '    exit 1',
   '  fi',
   '  echo "npm install failed on attempt $attempt; retrying after a pause" >&2',
