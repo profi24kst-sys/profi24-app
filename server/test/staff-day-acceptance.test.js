@@ -156,7 +156,7 @@ test('A32: полный рабочий день проходит всеми ше
     r=await call('completion','POST',`/api/v1/requests/${order.id}/payment`,{amount:'15001',account_id:cash.id,reference:'A32-OVERPAY-REJECT'},ids.accountant);
     assert.equal(r.status,409,'overpayment must be rejected');
     assert.equal(Number((await query('SELECT paid FROM requests WHERE id=$1',[order.id])).rows[0].paid),0,'overpayment changed paid balance');
-    assert.equal(Number((await query('SELECT count(*) c FROM finance_transactions WHERE account_id=$1 AND kind='PAYMENT'',[cash.id])).rows[0].c),0,'overpayment made a ledger movement');
+    assert.equal(Number((await query("SELECT count(*) c FROM finance_transactions WHERE account_id=$1 AND kind='PAYMENT'",[cash.id])).rows[0].c),0,'overpayment made a ledger movement');
 
     const paymentPayload={amount:'15000',account_id:cash.id,reference:'A32-RECEIPT-1'};
     const samePaymentKey={'idempotency-key':'a32-exact-approved-payment'};
