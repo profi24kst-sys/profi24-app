@@ -9,7 +9,7 @@ test('legacy insecure server entrypoint cannot ship in working source or Docker 
     'Legacy three-role entrypoint must not remain next to the production API');
   const pkg=JSON.parse(read('server/package.json'));
   for(const [name,command] of Object.entries(pkg.scripts)){
-    assert.doesNotMatch(command,/(?:node|nodemon)\\s+(?:\\.\\/)?src\\/index\\.js(?:\\s|$)/,
+    assert.doesNotMatch(command,/(?:node|nodemon)\s+(?:\.\/)?src\/index\.js(?:\s|$)/,
       'Active npm script '+name+' must not execute legacy entrypoint');
   }
   const dockerfile=read('server/Dockerfile');
