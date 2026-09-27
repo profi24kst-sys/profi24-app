@@ -54,3 +54,33 @@ jobs:
               exit 1
             }
           }
+
+      - name: Parse isolated test script and verify LF-only Alpine shell payload
+        shell: powershell
+        run: |
+          $scriptPath = (Resolve-Path '.\ops\test-full-day-isolated.ps1')
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            $scriptPath, [ref]$tokens, [ref]$errors
+          )
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+          # Simulate a Windows CRLF checkout; the constructed command must
+          # still contain LF only, or Alpine sh treats CR as an illegal option.
+          $text = (Get-Content $scriptPath -Raw) -replace '(?<!\r)\n', "`r`n"
+          if ($text -notmatch '(?s)(\$commands = @\(.*?\) -join "`n")') {
+            Write-Error 'Explicit LF construction for docker sh payload is missing'
+            exit 1
+          }
+          Invoke-Expression $Matches[1]
+          if ($commands.Contains("`r") -or -not $commands.StartsWith("set -eu`n")) {
+            Write-Error 'Alpine shell payload contains CR or an invalid preamble'
+            exit 1
+          }
+          if ($text.Contains('docker compose down -v') -or $text.Contains('docker volume prune')) {
+            Write-Error 'Isolated test must not delete local database volumes'
+            exit 1
+          }
