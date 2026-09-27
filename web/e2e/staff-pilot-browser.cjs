@@ -11,6 +11,11 @@ async function signIn(browser,email,password,base){
  await p.locator('input[autocomplete="current-password"]').fill(password);
  await p.getByRole('button',{name:'Войти'}).click();
  await p.locator('aside').waitFor({state:'visible',timeout:12000});
+ // A login triggers a one-time reload while independent addon roots sync the role.
+ // Do not open the order drawer until that reload and the orders bootstrap finish.
+ await p.waitForTimeout(1000);
+ await p.waitForFunction(expected=>{try{return JSON.parse(localStorage.user||'null')?.email===expected}catch{return false}},email,{timeout:12000});
+ await p.locator('section.table[aria-busy="false"]').waitFor({state:'visible',timeout:20000});
  return{ctx,p};
 }
 module.exports=async({browser,owner,base})=>{
