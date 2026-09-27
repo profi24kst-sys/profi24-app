@@ -70,6 +70,34 @@ test('MANAGER не видит чужой филиал в списках и dashb
     const ownerToken=app.jwt.sign({id:1,role:'OWNER'});
     const ownerCustomers=await app.inject({method:'GET',url:'/api/v1/customers',headers:{authorization:'Bearer '+ownerToken}});
     assert.equal(ownerCustomers.statusCode,200);assert.ok(ownerCustomers.json().data.some(x=>x.id===2));
+
+    // Real core HTTP create path must enforce owner-configured custom fields.
+    const ownerHeaders={authorization:'Bearer '+ownerToken},managerHeaders={authorization:'Bearer '+token};
+    const fieldResponse=await app.inject({method:'POST',url:'/api/v1/order-form/fields',headers:ownerHeaders,payload:{code:'external_condition',label:'Внешний вид',field_type:'TEXT',required:true}});
+    assert.equal(fieldResponse.statusCode,201,fieldResponse.body);
+    const invalidOrder=await app.inject({method:'POST',url:'/api/v1/requests',headers:managerHeaders,payload:{customer_id:1,complaint:'Тест на обязательное дополнительное поле'}});
+    assert.equal(invalidOrder.statusCode,422,invalidOrder.body);
+    assert.equal(invalidOrder.json().error.code,'CUSTOM_FIELD_REQUIRED');
+
+    const unsupported=await app.inject({method:'POST',url:'/api/v1/requests',headers:managerHeaders,payload:{
+      customer_id:1,complaint:'Продажа пока не должна использовать процесс ремонта',order_type:'SALE',custom_fields:{}
+    }});
+    assert.equal(unsupported.statusCode,422);
+    assert.equal(unsupported.json().error.code,'ORDER_TYPE_NOT_READY');
+
+    const createOrder=await app.inject({method:'POST',url:'/api/v1/requests',headers:managerHeaders,payload:{
+      customer_id:1,complaint:'Тест на настраиваемые поля',order_type:'REPAIR',custom_fields:{external_condition:'  Царапины на корпусе  '}
+    }});
+    assert.equal(createOrder.statusCode,201,createOrder.body);
+    assert.equal(createOrder.json().data.custom_fields.external_condition,'Царапины на корпусе');
+    const createdId=createOrder.json().data.id;
+    const reread=await app.inject({method:'GET',url:'/api/v1/requests/'+createdId,headers:managerHeaders});
+    assert.equal(reread.statusCode,200);assert.equal(reread.json().data.custom_fields.external_condition,'Царапины на корпусе');
+    const injection=await app.inject({method:'POST',url:'/api/v1/requests',headers:managerHeaders,payload:{
+      customer_id:1,complaint:'Unknown custom field',custom_fields:{unexpected:'bad'}
+    }});
+    assert.equal(injection.statusCode,422);assert.equal(injection.json().error.code,'UNKNOWN_CUSTOM_FIELD');
+
   }finally{
     if(app)await app.close();await db.close();delete globalThis.__managerBranchPool;
   }

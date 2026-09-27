@@ -1,6 +1,7 @@
 import pg from 'pg';
 import {pathToFileURL} from 'node:url';
 import {coreStatements} from './core-schema.js';
+import {orderFormStatements} from './order-form.js';
 import {branchStatements} from './branch-schema.js';
 import {lifecycleStatements} from './lifecycle-schema.js';
 import {lifecycleV2Statements} from './lifecycle-schema-v2.js';
@@ -25,6 +26,7 @@ import {migrateFinance} from './finance/migrate.js';
 
 export async function migrateCore(pool) {
   for(const sql of coreStatements) await pool.query(sql);
+  for(const sql of orderFormStatements) await pool.query(sql);
   for(const sql of branchStatements) await pool.query(sql);
   for(const sql of lifecycleStatements) await pool.query(sql);
   for(const sql of lifecycleV2Statements) await pool.query(sql);
