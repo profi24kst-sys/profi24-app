@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PROFI24 — тестовая CRM</title>
+<style>
+:root{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;color:#172238;background:#f3f6fb}
+*{box-sizing:border-box}body{margin:0}button,input,select,textarea{font:inherit}button{cursor:pointer}button:disabled{opacity:.55;cursor:wait}
+header{background:#17263e;color:white;padding:17px clamp(18px,4vw,65px);display:flex;justify-content:space-between;align-items:center;gap:14px}
+.brand{font-size:24px;font-weight:900;letter-spacing:-.8px}.brand b{color:#2fb4f0}.chip{font-size:12px;color:#316b45;background:#e4f5e8;border:1px solid #bae3c1;border-radius:99px;padding:5px 10px;font-weight:700}
+main{max-width:1220px;margin:30px auto;padding:0 20px}.sub{color:#66758e;margin:7px 0 24px}.card{background:white;border:1px solid #dfe6f0;border-radius:18px;padding:24px;box-shadow:0 8px 35px #162e5010;margin-bottom:20px}
+.login{max-width:450px;margin:65px auto}h1{font-size:29px;letter-spacing:-.7px;margin:0 0 6px}h2{font-size:20px;margin:0 0 18px}
+label{display:block;color:#44536a;font-size:13px;font-weight:700;margin-bottom:6px}input,select,textarea{width:100%;border:1px solid #cbd5e2;border-radius:10px;padding:12px 13px;color:#172238;background:white}
+input:focus,select:focus,textarea:focus{outline:2px solid #a6def9;border-color:#0087cf}
+.field{margin-bottom:15px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.primary{background:#0276bd;color:white;border:0;border-radius:10px;padding:12px 18px;font-weight:700}.secondary{background:white;color:#275078;border:1px solid #cbd5e2;border-radius:10px;padding:11px 15px;font-weight:700}
+.tabs{display:flex;gap:7px;flex-wrap:wrap;margin:20px 0}.tabs button{background:white;border:1px solid #d7e1ed;color:#456077;padding:10px 15px;border-radius:10px;font-weight:700}
+.tabs button.on{color:white;background:#172e50;border-color:#172e50}.row{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.table-wrap{overflow:auto}table{border-collapse:collapse;width:100%;font-size:14px}td,th{text-align:left;padding:13px 11px;border-bottom:1px solid #e7edf4;white-space:nowrap}th{color:#617189;background:#f8fafc;font-size:12px;text-transform:uppercase;letter-spacing:.3px}
+tr:last-child td{border-bottom:0}.muted{color:#77869a}.stat{font-size:31px;font-weight:850;color:#152d4c;margin:4px 0}.alert{border-radius:11px;padding:12px 15px;margin:12px 0;white-space:pre-wrap;background:#fef3e5;color:#88531b}.alert.good{background:#e9f6ec;color:#235e36}.alert.bad{background:#ffebed;color:#8d2935}
+.hidden{display:none!important}.small{font-size:12px;color:#77869a}.notice{background:#fff8e6;border:1px solid #f5dfa9;border-radius:12px;padding:13px 15px;color:#805c21;margin-bottom:20px}
+@media(max-width:720px){.grid,.grid3{grid-template-columns:1fr}main{padding:0 12px;margin:18px auto}header{padding:15px}h1{font-size:24px}.card{padding:17px}}
+</style>
+</head>
+<body>
+<header><div class="brand">PROFI<b>24</b> <span style="font-size:13px;font-weight:500;letter-spacing:0">CRM · предпросмотр</span></div><span class="chip" id="server-status">Проверка сервера…</span></header>
+<main>
+<div class="notice"><strong>Ограниченная тестовая версия.</strong> Работают вход, клиенты, техника и заявки через настоящий API и отдельную тестовую PostgreSQL. Склад, кассы, согласования, документы и другие модули полной CRM здесь пока недоступны. Не вводите реальные данные клиентов.</div>
+<section id="login-panel" class="card login">
+<h1>Вход в тестовую CRM</h1><p class="sub">Используйте отдельные демонстрационные учётные данные.</p>
+<form id="login-form">
+<div class="field"><label for="email">Электронная почта</label><input id="email" type="email" autocomplete="username" required></div>
+<div class="field"><label for="password">Пароль</label><input id="password" type="password" autocomplete="current-password" required></div>
+<button class="primary" type="submit" id="login-btn">Войти</button>
+</form><p id="login-error" class="alert bad hidden"></p>
+</section>
+<section id="app-panel" class="hidden">
+<div class="row"><div><h1>Рабочий стол</h1><p class="sub" id="user-line"></p></div><button class="secondary" id="logout">Выйти</button></div>
+<div class="tabs" role="tablist"><button data-tab="orders" class="on">Заказы</button><button data-tab="customers">Клиенты</button><button data-tab="equipment">Техника</button><button data-tab="create">Новая заявка</button></div>
+<div id="app-error" class="alert bad hidden"></div>
+<div id="orders-panel" class="card"><div class="row"><h2>Заказы</h2><button class="secondary" id="refresh-orders">Обновить</button></div><div class="table-wrap"><table><thead><tr><th>Номер</th><th>Клиент</th><th>Неисправность</th><th>Статус</th><th>Сумма</th></tr></thead><tbody id="orders-body"></tbody></table></div></div>
+<div id="customers-panel" class="card hidden"><h2>Клиенты</h2><div class="table-wrap"><table><thead><tr><th>Имя</th><th>Телефон</th><th>Адрес</th><th>Заказы</th></tr></thead><tbody id="customers-body"></tbody></table></div></div>
+<div id="equipment-panel" class="card hidden"><h2>Техника</h2><div class="table-wrap"><table><thead><tr><th>Вид</th><th>Бренд</th><th>Модель</th><th>Клиент</th></tr></thead><tbody id="equipment-body"></tbody></table></div></div>
+<div id="create-panel" class="card hidden"><h2>Создание тестовой заявки</h2><p class="sub">Все три записи — клиент, техника, заявка — сохраняются в тестовой базе.</p>
+<form id="create-form">
+<div class="grid"><div class="field"><label for="customer-name">Имя клиента</label><input id="customer-name" required maxlength="120"></div><div class="field"><label for="customer-phone">Телефон</label><input id="customer-phone" required placeholder="+77010000000"></div></div>
+<div class="field"><label for="customer-address">Адрес</label><input id="customer-address" placeholder="Костанай"></div>
+<div class="grid3"><div class="field"><label for="device-category">Техника</label><select id="device-category"><option>Стиральная машина</option><option>Холодильник</option><option>Телевизор</option><option>Кондиционер</option><option>Посудомоечная машина</option><option>Другое</option></select></div><div class="field"><label for="device-brand">Бренд</label><input id="device-brand" required placeholder="LG"></div><div class="field"><label for="device-model">Модель</label><input id="device-model" placeholder="Модель"></div></div>
+<div class="field"><label for="complaint">Описание неисправности</label><textarea id="complaint" required rows="3" placeholder="Что произошло с техникой?"></textarea></div>
+<button class="primary" type="submit" id="create-btn">Создать заявку</button></form><p class="alert good hidden" id="create-success"></p>
+</div>
+</section>
+<p class="small">PROFI24KST · изолированный демонстрационный стенд · ограниченная функциональность · без производственных данных</p>
+</main><script src="/app.js" defer></script>
+</body></html>
