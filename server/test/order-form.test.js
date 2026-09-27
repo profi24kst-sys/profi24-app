@@ -43,6 +43,16 @@ test('owner configures dictionaries and typed intake; manager may read but not m
   r=await send('PATCH','/api/v1/order-form/fields/'+fieldId,{active:false});
   assert.equal(r.status,200);
   assert.equal((await orderFormSchema(pool,'REPAIR')).fields.some(f=>f.code==='device_brand'),false);
+
+  r=await send('POST','/api/v1/order-form/fields',{code:'visit_notes',label:'Выездные заметки',field_type:'TEXT',required:true,order_types:['FIELD']});
+  assert.equal(r.status,201);
+  r=await send('POST','/api/v1/order-form/fields',{code:'workshop_receipt',label:'Номер квитанции',field_type:'TEXT',required:true,order_types:['PAID_WORKSHOP']});
+  assert.equal(r.status,201);
+  assert.equal((await orderFormSchema(pool,'REPAIR')).fields.some(f=>['visit_notes','workshop_receipt'].includes(f.code)),false);
+  await assert.rejects(validateOrderFields(pool,'FIELD',{}),e=>e.code==='CUSTOM_FIELD_REQUIRED'&&e.details.field==='visit_notes');
+  await assert.rejects(validateOrderFields(pool,'PAID_WORKSHOP',{}),e=>e.code==='CUSTOM_FIELD_REQUIRED'&&e.details.field==='workshop_receipt');
+  assert.deepEqual((await validateOrderFields(pool,'FIELD',{visit_notes:'Выезд на завтра'})).custom_fields,{visit_notes:'Выезд на завтра'});
+  await assert.rejects(validateOrderFields(pool,'FIELD',{workshop_receipt:'123',visit_notes:'ok'}),e=>e.code==='UNKNOWN_CUSTOM_FIELD');
   const field=(await query('SELECT custom_fields,order_type FROM requests LIMIT 1')).rows;
   assert.equal(Array.isArray(field),true);
  }finally{await app.close();await db.close()}
