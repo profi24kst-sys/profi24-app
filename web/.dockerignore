@@ -2,3 +2,8 @@ node_modules
 dist
 npm-debug.log
 *.log
+# Never send environment secrets to web build context
+.env*
+!.env.example
+**/*.pem
+**/*.key
