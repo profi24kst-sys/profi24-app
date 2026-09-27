@@ -13,6 +13,7 @@ function ok(value,message){if(!value)throw Error(message)}
   await page.getByRole('button',{name:'Войти',exact:true}).click();
   await page.locator('aside').waitFor({state:'visible',timeout:15000});
   await page.locator('section.table[aria-busy="false"]').waitFor({state:'visible',timeout:20000});
+  await page.waitForTimeout(900); // allow the post-login role-sync reload to settle
   const token=await page.evaluate(()=>localStorage.token);
   const api=async(method,url,body)=>{
    const response=await page.request.fetch(BASE+url,{method,headers:{authorization:'Bearer '+token,'Content-Type':'application/json'},...(body?{data:body}:{})});
@@ -27,7 +28,8 @@ function ok(value,message){if(!value)throw Error(message)}
   await page.locator('aside').getByRole('button',{name:'Поля приёмки'}).first().click({timeout:15000});
   await page.getByRole('heading',{name:'Поля приёмки'}).waitFor({state:'visible',timeout:10000});
   await page.locator('.ofsLayer').getByText(code,{exact:true}).waitFor({state:'visible'});
-  await page.locator('.ofsLayer').getByRole('button',{name:'Закрыть'}).click();
+  await page.locator('.ofsLayer').getByRole('button',{name:'Закрыть'}).evaluate(button=>button.click());
+  await page.locator('.ofsLayer').waitFor({state:'detached',timeout:10000});
   await page.getByRole('button',{name:/Новый заказ/}).click();
   const drawer=page.locator('.drawer');await drawer.waitFor({state:'visible'});
   await drawer.locator('#new-customer-name').fill('E2E Поля '+suffix);
