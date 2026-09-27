@@ -36,7 +36,6 @@ function ok(v,msg){if(!v)throw Error(msg)}
   await drawer.locator('#new-order-type').selectOption('FIELD');
   const field=drawer.locator('#custom-field-'+code);
   await field.waitFor({state:'visible',timeout:15000});
-  ok((await drawer.locator('select').filter({has:drawer.locator('#new-order-type')}).count())===0 || true,'type is rendered');
   await drawer.getByRole('button',{name:'Создать заказ',exact:true}).click();
   await drawer.getByText('Заполните поле «Условия выезда»').waitFor({state:'visible',timeout:7000});
   await field.fill('Вход со двора');
@@ -49,7 +48,7 @@ function ok(v,msg){if(!v)throw Error(msg)}
   drawer=await startOrder('WORKSHOP');
   await drawer.locator('#new-order-type').selectOption('PAID_WORKSHOP');
   await drawer.locator('#new-order-type').waitFor({state:'visible'});
-  await drawer.getByText('Загрузка дополнительных полей приёмки…').waitFor({state:'hidden',timeout:15000}).catch(()=>{});
+  await page.waitForFunction(()=>{const button=[...document.querySelectorAll('.drawer button')].find(b=>b.textContent.trim()==='Создать заказ');return Boolean(button&&!button.disabled)},{timeout:15000});
   ok(await drawer.locator('#custom-field-'+code).count()===0,'FIELD-only custom field leaked into workshop');
   await drawer.getByRole('button',{name:'Создать заказ',exact:true}).click();
   await drawer.waitFor({state:'detached',timeout:20000});
