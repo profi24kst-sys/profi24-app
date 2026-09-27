@@ -51,6 +51,22 @@ jobs:
           docker compose ps
           docker compose logs --tail=120
           exit 1
+      - name: Assert one set of public security headers on static, core and auth responses
+        run: |
+          set -euo pipefail
+          for route in / /health /api/v1/requests /auth-health; do
+            headers="$(curl -sS -D - -o /dev/null "http://127.0.0.1:5173$route" | tr -d '\r')"
+            for name in X-Frame-Options X-Content-Type-Options Referrer-Policy Permissions-Policy Content-Security-Policy; do
+              count="$(printf '%s\n' "$headers" | grep -ic "^$name:" || true)"
+              if [ "$count" -ne 1 ]; then
+                echo "$route: expected exactly one $name, got $count" >&2
+                exit 1
+              fi
+            done
+            printf '%s\n' "$headers" | grep -Eiq '^X-Frame-Options: DENY$'
+            printf '%s\n' "$headers" | grep -Eiq '^X-Content-Type-Options: nosniff$'
+            printf '%s\n' "$headers" | grep -Eiq '^Referrer-Policy: no-referrer$'
+          done
       - name: Verify backend containers are non-root and documents remain writable
         run: |
           test "$(docker compose exec -T api id -u)" != '0'
