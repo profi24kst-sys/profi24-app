@@ -80,6 +80,18 @@ jobs:
             Write-Error 'Alpine shell payload contains CR or an invalid preamble'
             exit 1
           }
+          if (-not $text.Contains('node:22-bookworm-slim')) {
+            Write-Error 'Isolated acceptance must use Debian Node to avoid Alpine npm OpenSSL failures on some Windows Docker hosts'
+            exit 1
+          }
+          if (-not $text.Contains('npm ci --include=dev --no-audit --no-fund --fetch-retries=2')) {
+            Write-Error 'Isolated acceptance npm retry command missing'
+            exit 1
+          }
+          if (-not $text.Contains('target=/source,readonly')) {
+            Write-Error 'Source must be mounted read-only in isolated acceptance'
+            exit 1
+          }
           if ($text.Contains('docker compose down -v') -or $text.Contains('docker volume prune')) {
             Write-Error 'Isolated test must not delete local database volumes'
             exit 1
