@@ -1,4 +1,10 @@
 **/node_modules/
 web/dist/
-.env
+**/.env*
+!**/.env.example
 **/*.log
+
+# Private credentials and local exports
+**/*.pem
+**/*.key
+**/secrets/
