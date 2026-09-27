@@ -42,6 +42,7 @@ function fail(message){throw new Error(message)}
   await drawer.getByRole('button',{name:'Создать заказ',exact:true}).evaluate(button=>{button.click();button.click()});
   await drawer.waitFor({state:'detached',timeout:15000});
   if(requestPosts!==1)fail('expected exactly one request POST, got '+requestPosts);
+  await require('./staff-pilot-browser.cjs')({browser,owner:page,base:BASE});
   console.log('form_validation_regression=ok request_posts=1');
  }catch(error){try{await page.screenshot({path:path.join(artifacts,'form-validation-failure.png'),fullPage:true})}catch{}fs.writeFileSync(path.join(artifacts,'form-validation-error.txt'),String(error.stack||error));console.error(error);process.exitCode=1}
  finally{await browser.close()}
