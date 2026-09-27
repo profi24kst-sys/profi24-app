@@ -71,3 +71,15 @@ async function openOrder(page,number){
   const order=orders.find(x=>String(x.complaint).includes('PILOT-'+suffix));
   ok(order,'manager-created order missing');ok(Number(order.engineer_id)===Number(users.ENGINEER.id),'engineer was not assigned');
   await openOrder(mgr.page,order.number);
+
+  const stock=(await api(owner.page,'/warehouse-api/v1/items',{method:'POST',body:{name:'Pilot drain consumable '+suffix,sku:'PILOT-'+suffix,branch_id:branch.id,purchase_price:500,sale_price:0,min_quantity:0},expect:201})).data;
+  await api(owner.page,'/warehouse-api/v1/items/'+stock.id+'/receive',{method:'POST',body:{quantity:2,purchase_price:500,comment:'Pilot goods receipt'},expect:200});
+  const sup=await login(browser,users.SUPERVISOR.email,STAFF_PASSWORD);sessions.push(sup);
+  await api(sup.page,'/procurement-api/v1/reservations',{method:'POST',body:{item_id:stock.id,request_id:order.id,quantity:1},expect:201});
+  const stage=(await api(sup.page,'/workflow-api/v1/requests/'+order.id+'/workflow',{expect:200})).data;
+  if(stage.status==='NEW')await api(sup.page,'/workflow-api/v1/requests/'+order.id+'/workflow',{method:'POST',body:{event:'ASSIGN'},expect:200});
+  const eng=await login(browser,users.ENGINEER.email,STAFF_PASSWORD);sessions.push(eng);lastPage=eng.page;
+  const mine=(await api(eng.page,'/api/v1/requests',{expect:200})).data;
+  ok(mine.some(x=>Number(x.id)===Number(order.id)),'engineer cannot see assigned order');
+  await openOrder(eng.page,order.number);
+  for(const event of ['ACCEPT','DEPART','ARRIVE'])await api(eng.page,'/workflow-api/v1/requests/'+order.id+'/workflow',{method:'POST',body:{event},expect:200});
