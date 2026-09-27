@@ -111,6 +111,20 @@ test('MANAGER не видит чужой филиал в списках и dashb
     }});
     assert.equal(workshop.statusCode,201,workshop.body);
     assert.equal(workshop.json().data.visit_type,'WORKSHOP');
+
+    const fieldId=fieldCreated.json().data.id,workshopId=workshop.json().data.id;
+    const fieldWrongSchedule=await app.inject({method:'PATCH',url:'/api/v1/requests/'+fieldId+'/schedule',headers:managerHeaders,payload:{visit_type:'WORKSHOP'}});
+    assert.equal(fieldWrongSchedule.statusCode,422);
+    assert.equal(fieldWrongSchedule.json().error.code,'VISIT_TYPE_MISMATCH');
+    assert.equal((await query('SELECT visit_type FROM requests WHERE id=$1',[fieldId])).rows[0].visit_type,'FIELD');
+    const workshopWrongSchedule=await app.inject({method:'PATCH',url:'/api/v1/requests/'+workshopId+'/schedule',headers:managerHeaders,payload:{visit_type:'FIELD'}});
+    assert.equal(workshopWrongSchedule.statusCode,422);
+    assert.equal(workshopWrongSchedule.json().error.code,'VISIT_TYPE_MISMATCH');
+    const fieldCorrectSchedule=await app.inject({method:'PATCH',url:'/api/v1/requests/'+fieldId+'/schedule',headers:managerHeaders,payload:{visit_type:'FIELD'}});
+    assert.equal(fieldCorrectSchedule.statusCode,200,fieldCorrectSchedule.body);
+    const foreignSchedule=await app.inject({method:'PATCH',url:'/api/v1/requests/'+foreign+'/schedule',headers:managerHeaders,payload:{visit_type:'FIELD'}});
+    assert.equal(foreignSchedule.statusCode,403,'manager must not reschedule a different branch');
+
     const conflicting=await app.inject({method:'POST',url:'/api/v1/requests',headers:managerHeaders,payload:{
       customer_id:1,complaint:'Недопустимая несовместимость типа и посещения',order_type:'PAID_WORKSHOP',visit_type:'FIELD'
     }});
