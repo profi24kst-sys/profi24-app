@@ -11,7 +11,8 @@ async function api(url,options={}){
  return payload.data;
 }
 const types=[['TEXT','Одна строка'],['TEXTAREA','Многострочное'],['NUMBER','Число'],['DATE','Дата'],['IMEI','IMEI (15 цифр)'],['SELECT','Справочник']];
-const empty={code:'',label:'',field_type:'TEXT',required:false,sort_order:0,dictionary_id:''};
+const orderKinds=[['REPAIR','Обычный ремонт'],['FIELD','Выездной ремонт'],['PAID_WORKSHOP','Платный стационар']];
+const empty={code:'',label:'',field_type:'TEXT',required:false,sort_order:0,dictionary_id:'',order_types:['REPAIR']};
 function OrderFormSettings(){
  const[open,setOpen]=useState(false),[fields,setFields]=useState([]),[dictionaries,setDictionaries]=useState([]),[items,setItems]=useState([]),[chosenDict,setChosenDict]=useState(''),[dictionary,setDictionary]=useState({code:'',label:''}),[item,setItem]=useState(''),[field,setField]=useState(empty),[error,setError]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false);
  const owner=()=>{try{return JSON.parse(localStorage.user||'null')?.role==='OWNER'}catch{return false}};
@@ -39,7 +40,7 @@ function OrderFormSettings(){
   setItem('');setItems(await api('/dictionaries/'+chosenDict+'/items'));
  }
  async function saveField(){
-  await mutate(()=>api('/fields',{method:'POST',body:JSON.stringify({...field,dictionary_id:field.field_type==='SELECT'?Number(field.dictionary_id):null,sort_order:Number(field.sort_order||0),order_types:['REPAIR']})}),'Поле добавлено в форму приёмки');
+  await mutate(()=>api('/fields',{method:'POST',body:JSON.stringify({...field,dictionary_id:field.field_type==='SELECT'?Number(field.dictionary_id):null,sort_order:Number(field.sort_order||0),order_types:field.order_types})}),'Поле добавлено в выбранные формы приёмки');
   setField(empty);
  }
  async function toggleField(f,key,value){await mutate(()=>api('/fields/'+f.id,{method:'PATCH',body:JSON.stringify({[key]:value})}),'Настройки обновлены')}
@@ -65,21 +66,22 @@ function OrderFormSettings(){
      <label>Название<input required maxLength={120} value={field.label} onChange={e=>setField(v=>({...v,label:e.target.value}))} placeholder="Внешний вид"/></label>
      <label>Тип<select value={field.field_type} onChange={e=>setField(v=>({...v,field_type:e.target.value,dictionary_id:''}))}>{types.map(([code,label])=><option value={code} key={code}>{label}</option>)}</select></label>
      {field.field_type==='SELECT'&&<label>Справочник<select required value={field.dictionary_id} onChange={e=>setField(v=>({...v,dictionary_id:e.target.value}))}><option value="">Выберите</option>{dictionaries.filter(d=>d.active).map(d=><option value={d.id} key={d.id}>{d.label}</option>)}</select></label>}
+     <fieldset className="ofsTypes"><legend>В каких формах показывать поле</legend>{orderKinds.map(([key,label])=><label key={key} className="ofsCheck"><input type="checkbox" checked={field.order_types.includes(key)} onChange={e=>setField(v=>({...v,order_types:e.target.checked?[...v.order_types,key]:v.order_types.filter(x=>x!==key)}))}/>{label}</label>)}</fieldset>
      <label>Порядок<input type="number" min="-100000" max="100000" value={field.sort_order} onChange={e=>setField(v=>({...v,sort_order:e.target.value}))}/></label>
      <label className="ofsCheck"><input type="checkbox" checked={field.required} onChange={e=>setField(v=>({...v,required:e.target.checked}))}/> Обязательное</label>
-     <button disabled={busy}>Добавить поле</button>
+     <button disabled={busy||field.order_types.length===0}>Добавить поле</button>
     </form>
    </section>
   </div>
-  <section><h2>Поля формы ремонта</h2>
-   <div className="ofsScroll"><table><thead><tr><th>Порядок</th><th>Код</th><th>Название</th><th>Тип</th><th>Обязательное</th><th>Активно</th></tr></thead><tbody>
+  <section><h2>Поля форм ремонта</h2>
+   <div className="ofsScroll"><table><thead><tr><th>Порядок</th><th>Код</th><th>Название</th><th>Тип</th><th>Формы</th><th>Обязательное</th><th>Активно</th></tr></thead><tbody>
     {fields.map(f=><tr key={f.id}><td><input type="number" aria-label={'Порядок '+f.code} defaultValue={f.sort_order} onBlur={e=>Number(e.target.value)!==f.sort_order&&toggleField(f,'sort_order',Number(e.target.value))} style={{width:74}}/></td>
-     <td>{f.code}</td><td>{f.label}</td><td>{types.find(t=>t[0]===f.field_type)?.[1]||f.field_type}</td>
+     <td>{f.code}</td><td>{f.label}</td><td>{types.find(t=>t[0]===f.field_type)?.[1]||f.field_type}</td><td><select aria-label={'Формы '+f.code} value="" onChange={e=>{if(!e.target.value)return;toggleField(f,'order_types',e.target.value==='ALL'?orderKinds.map(x=>x[0]):[e.target.value])}} disabled={busy}><option value="">{(f.order_types||[]).map(code=>orderKinds.find(k=>k[0]===code)?.[1]||code).join(', ')}</option>{orderKinds.map(([key,label])=><option key={key} value={key}>Только: {label}</option>)}<option value="ALL">Все три формы</option></select></td>
      <td><input aria-label={'Обязательное '+f.code} type="checkbox" checked={f.required} onChange={e=>toggleField(f,'required',e.target.checked)} disabled={busy}/></td>
      <td><input aria-label={'Активно '+f.code} type="checkbox" checked={f.active} onChange={e=>toggleField(f,'active',e.target.checked)} disabled={busy}/></td></tr>)}
-    {!fields.length&&<tr><td colSpan={6}>Дополнительных полей пока нет. Основные поля заявки сохраняются как прежде.</td></tr>}
+    {!fields.length&&<tr><td colSpan={7}>Дополнительных полей пока нет. Основные поля заявки сохраняются как прежде.</td></tr>}
    </tbody></table></div>
-   <p className="ofsTip">Первый этап: поля формы ремонта (REPAIR). Устройство строгого жизненного цикла и старые заказы не меняются. Пароли устройств здесь не сохраняйте.</p>
+   <p className="ofsTip">Для выездного ремонта и платного стационара используется существующий безопасный цикл ремонта. Продажа техники и заказ запчастей получат отдельные процессы; старые заказы не меняются. Пароли устройств здесь не сохраняйте.</p>
   </section>
  </div></div>;
 }
