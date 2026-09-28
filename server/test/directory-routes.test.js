@@ -87,6 +87,10 @@ test('directory query parser validates limits, dates and status',()=>{
   assert.ok(parseDirectoryQuery({limit:101}).error);
   assert.ok(parseDirectoryQuery({status:'UNKNOWN'}).error);
   assert.ok(parseDirectoryQuery({month:'2026-13'}).error);
+  assert.equal(parseDirectoryQuery({from:'2026-09-01',to:'2026-09-30'}).value.from,'2026-09-01');
+  assert.ok(parseDirectoryQuery({from:'2026-09-01'}).error);
+  assert.ok(parseDirectoryQuery({from:'2026-09-30',to:'2026-09-01'}).error);
+  assert.ok(parseDirectoryQuery({month:'2026-09',from:'2026-09-01',to:'2026-09-30'}).error);
 });
 
 test('XLSX uses literal text and a valid ZIP worksheet; caps exported rows',()=>{
