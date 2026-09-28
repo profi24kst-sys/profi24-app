@@ -11,7 +11,7 @@ const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,max:5});
 const q=(s,p=[])=>pool.query(s,p);
 const fail=(reply,code,message,status=422)=>reply.code(status).send({data:null,error:{code,message}});
 const auth=async(req,reply)=>{if(!await authenticate(req,reply,pool))return;};
-const permit=permission=>async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,permission))return fail(reply,'FORBIDDEN','Недостаточно прав',403)};
+const permit=permission=>async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user,permission))return fail(reply,'FORBIDDEN','Недостаточно прав',403)};
 const id=v=>{const n=Number(v);return Number.isSafeInteger(n)&&n>0?n:null};
 const note=v=>String(v||'').trim().slice(0,1000);
 const globalView=role=>['OWNER','ACCOUNTANT','SUPERVISOR'].includes(role);
