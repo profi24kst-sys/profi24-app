@@ -1,6 +1,7 @@
 import {canAccessAllOrders,canMutateOrder,isAssignedOnly,isKnownRole} from './rbac.js';
 import {registerComplaintRoutes} from './complaints-routes.js';
 import {runSchemaTransaction} from './schema-retry.js';
+import {reportPeriod} from './report-period.js';
 
 // Shared authentication and order authorization for every API service.
 const authenticated = Symbol('active-user');
@@ -166,8 +167,15 @@ export function installOrderAccess(app, db, service) {
       return payload;
     }
     if(route==='/api/v1/dashboard/finance'&&payload.data&&typeof payload.data==='object'&&!Array.isArray(payload.data)){
-      const totals=branches.length?(await db.query(`SELECT COALESCE(sum(total),0)::numeric revenue,COALESCE(sum(direct_cost),0)::numeric direct_cost,COALESCE(sum(total-direct_cost),0)::numeric gross_profit,COALESCE(sum(paid),0)::numeric paid,COALESCE(sum(GREATEST(total-paid,0)),0)::numeric outstanding FROM requests WHERE created_at>=date_trunc('month',now()) AND deleted_at IS NULL AND status<>'CANCELLED' AND branch_id=ANY($1::int[])`,[branches])).rows[0]:{revenue:0,direct_cost:0,gross_profit:0,paid:0,outstanding:0};
-      payload.data={totals};
+      const zero={revenue:0,direct_cost:0,gross_profit:0,paid:0,outstanding:0},period=reportPeriod(req.query||{});
+      const scoped=async(start,end)=>{
+        if(!branches.length)return zero;
+        const params=[branches],where=["deleted_at IS NULL","status<>'CANCELLED'","branch_id=ANY($1::int[])"];
+        if(start&&end){params.push(start,end);where.push('created_at>=$2::date','created_at<$3::date')}else where.push("created_at>=date_trunc('month',now())");
+        return (await db.query(`SELECT COALESCE(sum(total),0)::numeric revenue,COALESCE(sum(direct_cost),0)::numeric direct_cost,COALESCE(sum(total-direct_cost),0)::numeric gross_profit,COALESCE(sum(paid),0)::numeric paid,COALESCE(sum(GREATEST(total-paid,0)),0)::numeric outstanding FROM requests WHERE ${where.join(' AND ')}`,params)).rows[0];
+      };
+      const totals=await scoped(period?.start,period?.end),previous=period?await scoped(period.previousStart,period.previousEnd):null;
+      payload.data={totals,previous,period:period?{from:period.from,to:period.to,previous_from:period.previousFrom,previous_to:period.previousTo,days:period.days}:null};
       return payload;
     }
     return payload;
