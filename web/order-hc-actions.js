@@ -1,3 +1,4 @@
+import {escapeHtml as safe} from './html-safety.js';
 // PROFI24 Order Workspace actions v1.1 — functional controls for unified order card.
 (function () {
   const API = '/api/v1';
@@ -11,9 +12,6 @@
     return globalThis.crypto?.randomUUID?.() || `crm-${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
   }
   function money(n) { return new Intl.NumberFormat('ru-KZ', { maximumFractionDigits: 0 }).format(Number(n || 0)) + ' ₸'; }
-  function safe(s) {
-    return String(s ?? '').replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
-  }
   async function api(path, opt = {}) {
     const url = path.startsWith('/finance-api') ? path : API + path;
     const r = await fetch(url, {

@@ -28,3 +28,16 @@ test('secret-bearing environment variants and private keys are excluded from Git
   }
   assert.ok(existsSync(new URL('.env.example',root)),'documented safe .env.example must remain');
 });
+
+
+test('shared frontend HTML escaping is used for dynamic workflow and order-action markup',async()=>{
+  const {escapeHtml}=await import('../../web/html-safety.js');
+  assert.equal(escapeHtml('&<>"\''),'&amp;&lt;&gt;&quot;&#39;');
+  for(const file of ['web/order-hc-actions.js','web/workflow-addon.jsx']){
+    const source=read(file);
+    assert.match(source,/from '\.\/html-safety\.js'/,file+' must use the shared HTML safety helper');
+  }
+  const workflow=read('web/workflow-addon.jsx');
+  assert.match(workflow,/esc\(e\.user_name\|\|'Система'\)/);
+  assert.match(workflow,/esc\(x\.next\.label\)/);
+});
