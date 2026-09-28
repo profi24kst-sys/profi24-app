@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import {loadPermissionOverrides} from '../access.js';
 import {canAdminFinance,isKnownRole} from '../rbac.js';
 import { reject,money,text,id,date,today,monthRange,fingerprint,operationKey,transaction,lockAccounts,requestAccess,insertEntry,replay,createTransfer,recalcParts } from './service.js';
 
@@ -9,9 +10,10 @@ export async function financeRoutes(app,pool) {
     const user=(await q('SELECT id,name,role FROM users WHERE id=$1 AND active=true',[req.user.id])).rows[0];
     if(!user)reject('Пользователь неактивен','FORBIDDEN',403);
     if(!isKnownRole(user.role))reject('Роль пользователя не поддерживается','FORBIDDEN',403);
+    user.permission_overrides=await loadPermissionOverrides(pool,user.id);
     req.user=user;
   };
-  const owner=async req=>{await auth(req);if(!canAdminFinance(req.user.role))reject('Доступно собственнику или бухгалтеру','FORBIDDEN',403);};
+  const owner=async req=>{await auth(req);if(!canAdminFinance(req.user))reject('Доступно собственнику или бухгалтеру','FORBIDDEN',403);};
   const allowedSql=`($1::text IN ('OWNER','SUPERVISOR','ACCOUNTANT') OR a.responsible_id=$2)`;
   const resolveBranch=async(c,value)=>{
     if(value!=null&&value!==''){
