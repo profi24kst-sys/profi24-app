@@ -73,6 +73,22 @@ export function registerOrderFormRoutes(app,pool,{auth,roles,err}){
   try{return reply.code(201).send({data:(await q("INSERT INTO order_field_dictionary_items(dictionary_id,value) VALUES($1,$2) RETURNING *",[id,value.trim()])).rows[0]})}
   catch(e){if(e.code==='23505')return err(reply,'DUPLICATE_VALUE','Значение уже существует',409);throw e}
  });
+ app.patch('/api/v1/order-form/dictionaries/:id',{preHandler:roles('OWNER')},async(req,reply)=>{
+  const id=Number(req.params.id),body=req.body||{},allowed=['label','active'];
+  if(!Number.isSafeInteger(id)||id<1||!plain(body)||!Object.keys(body).length||Object.keys(body).some(k=>!allowed.includes(k)))return err(reply,'VALIDATION','Проверьте параметры справочника');
+  if(body.label!==undefined&&(typeof body.label!=='string'||!body.label.trim()||body.label.length>120)||body.active!==undefined&&typeof body.active!=='boolean')return err(reply,'VALIDATION','Некорректное значение справочника');
+  const row=(await q("UPDATE order_field_dictionaries SET label=COALESCE($2,label),active=COALESCE($3,active) WHERE id=$1 RETURNING *",[id,body.label?.trim()??null,body.active??null])).rows[0];
+  return row?{data:row}:err(reply,'NOT_FOUND','Справочник не найден',404);
+ });
+ app.patch('/api/v1/order-form/dictionaries/:id/items/:itemId',{preHandler:roles('OWNER')},async(req,reply)=>{
+  const id=Number(req.params.id),itemId=Number(req.params.itemId),body=req.body||{},allowed=['value','active','sort_order'];
+  if(!Number.isSafeInteger(id)||id<1||!Number.isSafeInteger(itemId)||itemId<1||!plain(body)||!Object.keys(body).length||Object.keys(body).some(k=>!allowed.includes(k)))return err(reply,'VALIDATION','Проверьте параметры значения');
+  if(body.value!==undefined&&(typeof body.value!=='string'||!body.value.trim()||body.value.length>160)||body.active!==undefined&&typeof body.active!=='boolean'||body.sort_order!==undefined&&(!Number.isSafeInteger(body.sort_order)||Math.abs(body.sort_order)>100000))return err(reply,'VALIDATION','Некорректное значение справочника');
+  try{
+   const row=(await q("UPDATE order_field_dictionary_items SET value=COALESCE($3,value),active=COALESCE($4,active),sort_order=COALESCE($5,sort_order) WHERE id=$1 AND dictionary_id=$2 RETURNING *",[itemId,id,body.value?.trim()??null,body.active??null,body.sort_order??null])).rows[0];
+   return row?{data:row}:err(reply,'NOT_FOUND','Значение не найдено',404);
+  }catch(e){if(e.code==='23505')return err(reply,'DUPLICATE_VALUE','Значение уже существует',409);throw e}
+ });
  app.post('/api/v1/order-form/fields',{preHandler:roles('OWNER')},async(req,reply)=>{
   const f=req.body||{},types=f.order_types===undefined?['REPAIR']:f.order_types,sort=f.sort_order??0;
   if(!codeOk(f.code)||typeof f.label!=='string'||!f.label.trim()||f.label.length>120||!FIELD_TYPES.includes(f.field_type)||!Array.isArray(types)||!types.length||types.some(t=>!TYPES.includes(t))||!Number.isSafeInteger(sort)||Math.abs(sort)>100000||f.required!==undefined&&typeof f.required!=='boolean')return err(reply,'VALIDATION','Проверьте определение поля');
