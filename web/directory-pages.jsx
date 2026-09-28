@@ -3,6 +3,7 @@ import {ChevronLeft,ChevronRight,Download,Search} from 'lucide-react';
 import './directory-pages.css';
 
 const BASE=(import.meta.env.VITE_API_URL||'/api/v1').replace(/\/$/,'')+'/directory';
+const WORKFLOW_BASE='/workflow-api/v1';
 const EXPORT_ROLES=new Set(['OWNER','SUPERVISOR','ACCOUNTANT','MANAGER']);
 const TABS=[
   ['ACTIVE','Активные','active'],['NEW','Новые','new'],['PART','Ждут деталь','part'],
@@ -10,7 +11,7 @@ const TABS=[
   ['CLOSED','Закрытые','closed'],['ALL','Все','total']
 ];
 const LABELS={
-  NEW:'Новая',ASSIGNED:'Назначена',ACCEPTED:'Принята',DIAGNOSTICS:'Диагностика',
+  NEW:'Новая',ASSIGNED:'Назначена',ACCEPTED:'Принята',ON_ROUTE:'В пути',DIAGNOSTICS:'Диагностика',
   APPROVAL_REQUIRED:'Согласование',WAITING_PART:'Ждет деталь',REPAIR:'Ремонт',
   TESTING:'Проверка',PAYMENT_REQUIRED:'К оплате',CLOSED:'Закрыта',CANCELLED:'Отменена'
 };
@@ -29,6 +30,50 @@ async function read(path,signal){
   const body=await response.json();
   if(!response.ok)throw new Error(body.error?.message||'Не удалось загрузить список');
   return body;
+}
+async function workflowCall(id,options={}){
+  const token=localStorage.getItem('token');
+  const response=await fetch(WORKFLOW_BASE+'/requests/'+encodeURIComponent(id)+'/workflow',{
+    ...options,
+    headers:{Authorization:'Bearer '+token,...(options.body!=null?{'Content-Type':'application/json'}:{}),...(options.headers||{})}
+  });
+  const body=await response.json().catch(()=>({}));
+  if(!response.ok)throw new Error(body.error?.message||'Не удалось изменить этап заказа');
+  return body.data;
+}
+function InlineWorkflow({order}){
+  const [flow,setFlow]=useState(null),[busy,setBusy]=useState(false),[error,setError]=useState('');
+  useEffect(()=>{
+    let live=true;setError('');
+    workflowCall(order.id).then(data=>{if(live)setFlow(data)}).catch(problem=>{if(live)setError(problem.message)});
+    return()=>{live=false};
+  },[order.id,order.status]);
+  const current=flow?.status||order.status,next=flow?.next;
+  async function change(event){
+    event.stopPropagation();
+    const value=event.target.value;
+    if(!next||value!==next.to)return;
+    if(['START_TEST','REQUEST_PAYMENT','CLOSE'].includes(next.event)){
+      window.dispatchEvent(new CustomEvent('profi24:open-completion',{detail:{id:Number(order.id)}}));
+      event.target.value=current;
+      return;
+    }
+    setBusy(true);setError('');
+    try{
+      await workflowCall(order.id,{method:'POST',body:JSON.stringify({event:next.event})});
+      window.dispatchEvent(new CustomEvent('profi24:request-updated',{detail:{id:Number(order.id)}}));
+    }catch(problem){setError(problem.message)}
+    finally{setBusy(false)}
+  }
+  return <div className="dir-inline-flow" onClick={event=>event.stopPropagation()} onKeyDown={event=>event.stopPropagation()}>
+    <select aria-label={'Статус '+order.number} value={current} onChange={change} disabled={busy||!next}>
+      <option value={current}>{LABELS[current]||current}</option>
+      {next&&next.to!==current&&<option value={next.to}>→ {LABELS[next.to]||next.label||next.to}</option>}
+      {next&&next.to===current&&<option value={next.to+'__next'} disabled>{next.label}</option>}
+    </select>
+    {next&&<small>{next.label}</small>}
+    {error&&<small className="dir-inline-error" role="alert">{error}</small>}
+  </div>;
 }
 async function download(kind,filter){
   const token=localStorage.getItem('token'),query=params(filter);
@@ -128,7 +173,7 @@ export function OrdersDirectory({open,user,refreshKey=0}){
         <div><b>{order.customer_name}</b><small>{order.phone} · {[order.brand,order.model||order.category].filter(Boolean).join(' ')}</small></div>
         <div className="ellipsis" title={order.complaint||''}>{order.complaint}</div>
         <div><b>{order.engineer_name||'Не назначен'}</b><small>{overdue(order)?'SLA просрочен':order.scheduled_at?'Выезд '+date(order.scheduled_at):'Без времени'}</small></div>
-        <span className={'pill '+order.status}>{LABELS[order.status]||order.status}</span>
+        <InlineWorkflow order={order}/>
         <b className="right">{money(order.total)}</b>
       </div>):<div className="empty">{state.loading?'Загрузка заказов…':'По выбранным фильтрам заказов нет'}</div>}
     </section>
