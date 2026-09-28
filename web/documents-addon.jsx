@@ -2,6 +2,7 @@ import React,{useEffect,useRef,useState}from'react';
 import{createRoot}from'react-dom/client';
 import{Camera,PenLine,Upload,X,Trash2,Printer}from'lucide-react';
 import'./warehouse.css';
+import{escapeHtml as esc}from'./html-safety.js';
 
 const B='/documents-api/v1';
 const SAFE_IMAGE_ACCEPT='.jpg,.jpeg,.png,.webp,.heic,.heif,.hif';
@@ -12,7 +13,6 @@ const role=()=>currentUser()?.role||'';
 const canUpload=()=>['OWNER','SUPERVISOR','MANAGER','ENGINEER','TRAINEE'].includes(role());
 const canDelete=()=>['OWNER','SUPERVISOR','MANAGER'].includes(role());
 const canSign=()=>['OWNER','SUPERVISOR','MANAGER','ENGINEER'].includes(role());
-const esc=v=>String(v??'').replace(/[&<>"']/g,c=>c==='&'?'&amp;':c==='<'?'&lt;':c==='>'?'&gt;':c==='"'?'&quot;':'&#39;');
 const money=n=>new Intl.NumberFormat('ru-KZ').format(Number(n||0))+' ₸';
 
 async function api(path,options={}){
