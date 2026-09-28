@@ -41,6 +41,10 @@ export async function authenticate(req, reply, db) {
   catch(error){if(error.code!=='42703')throw error;user=(await db.query('SELECT id,name,email,role FROM users WHERE id=$1 AND active=true',[req.user.id])).rows[0];}
   if (!user) { reply.code(403).send({data:null,error:{code:'FORBIDDEN',message:'Пользователь неактивен'}}); return false; }
   if (!isKnownRole(user.role)) { reply.code(403).send({data:null,error:{code:'FORBIDDEN',message:'Роль пользователя не поддерживается'}}); return false; }
+  try{
+    const rows=(await db.query('SELECT permission,allowed FROM user_permission_overrides WHERE user_id=$1',[user.id])).rows;
+    user.permission_overrides=Object.fromEntries(rows.map(row=>[row.permission,row.allowed===true]));
+  }catch(error){if(error.code!=='42P01')throw error;user.permission_overrides={}}
   req.user = user;
   req[authenticated] = true;
   return true;
@@ -105,7 +109,7 @@ export async function requireOrder(db, user, requestId, {mutable=false, lock=fal
     if (isAssignedOnly(user.role) && !await hasTechnicalOrderAccess(db,user,order)) {
       throw accessError('FORBIDDEN','Нет доступа к этому заказу',403);
     }
-    if (!isAssignedOnly(user.role) && !canAccessAllOrders(user.role)) {
+    if (!isAssignedOnly(user.role) && !canAccessAllOrders(user)) {
       throw accessError('FORBIDDEN','Нет доступа к заказам',403);
     }
     if (!await hasManagerBranchAccess(db,user,order)) {
@@ -205,7 +209,7 @@ export function installOrderAccess(app, db, service) {
     }
     if (requestId == null) return;
     const readOnly = ['GET','HEAD'].includes(req.method);
-    if (!readOnly && !canMutateOrder(req.user.role,{service,route,method:req.method})) {
+    if (!readOnly && !canMutateOrder(req.user,{service,route,method:req.method})) {
       throw accessError('FORBIDDEN','Эта роль не может изменять ремонт или его операционные данные',403);
     }
     // Append-only evidence and documented corrections may bypass terminal/hold guards only where explicitly required.
