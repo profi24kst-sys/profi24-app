@@ -1,6 +1,6 @@
 import {recalculateOrder} from './order-totals.js';
 import {authenticate,installOrderAccess,protectOrderTables,requireOrder} from './access.js';
-import {ROLE_CODES,ROLE_LABELS,PERMISSIONS,can,isAssignedOnly,isTechnicalRole,roleAllowed} from './rbac.js';
+import {ROLE_CODES,ROLE_LABELS,PERMISSIONS,can,permissionsForRole,permissionsForUser,isAssignedOnly,isTechnicalRole,roleAllowed} from './rbac.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
@@ -74,6 +74,27 @@ app.get('/api/v1/users',{preHandler:auth},async req=>({data:(await q(isTechnical
 app.post('/api/v1/users',{preHandler:roles('OWNER')},async(req,reply)=>{const {name,email,password='profi24',role='ENGINEER'}=req.body||{};if(!name||!email||!ROLE_CODES.includes(role))return err(reply,'VALIDATION','Укажите имя, email и корректную роль');const hash=await bcrypt.hash(password,10);const r=await q('INSERT INTO users(name,email,password_hash,role,active) VALUES($1,$2,$3,$4,true) RETURNING id,name,email,role,active,created_at',[name,email,hash,role]);return reply.code(201).send({data:r.rows[0]})});
 app.patch('/api/v1/users/:id',{preHandler:roles('OWNER')},async(req,reply)=>{const old=(await q('SELECT * FROM users WHERE id=$1',[req.params.id])).rows[0];if(!old)return err(reply,'NOT_FOUND','Сотрудник не найден',404);const name=req.body?.name??old.name,email=req.body?.email??old.email,role=req.body?.role??old.role,active=req.body?.active??old.active;if(!ROLE_CODES.includes(role))return err(reply,'VALIDATION','Некорректная роль');const r=await q('UPDATE users SET name=$1,email=$2,role=$3,active=$4 WHERE id=$5 RETURNING id,name,email,role,active,created_at',[name,email,role,active,req.params.id]);return {data:r.rows[0]}});
 app.post('/api/v1/users/:id/password',{preHandler:roles('OWNER')},async(req,reply)=>{if(!req.body?.password||String(req.body.password).length<6)return err(reply,'VALIDATION','Пароль минимум 6 символов');const hash=await bcrypt.hash(req.body.password,10);const changed=await tx(async c=>{const r=await c.query('UPDATE users SET password_hash=$1 WHERE id=$2 RETURNING id',[hash,req.params.id]);if(!r.rows[0])return null;await revokeUserRefreshSessions(c,r.rows[0].id);return r.rows[0]});if(!changed)return err(reply,'NOT_FOUND','Сотрудник не найден',404);return {data:{ok:true}}});
+app.get('/api/v1/users/:id/permissions',{preHandler:roles('OWNER')},async(req,reply)=>{
+  const id=Number(req.params.id);if(!Number.isSafeInteger(id)||id<1)return err(reply,'VALIDATION','Некорректный сотрудник');
+  const user=(await q('SELECT id,name,role,active FROM users WHERE id=$1',[id])).rows[0];if(!user)return err(reply,'NOT_FOUND','Сотрудник не найден',404);
+  const rows=(await q('SELECT permission,allowed,updated_at,updated_by FROM user_permission_overrides WHERE user_id=$1 ORDER BY permission',[id])).rows;
+  user.permission_overrides=Object.fromEntries(rows.map(row=>[row.permission,row.allowed===true]));
+  return {data:{user:{id:user.id,name:user.name,role:user.role,active:user.active},role_permissions:permissionsForRole(user.role),overrides:rows,effective_permissions:permissionsForUser(user)}};
+});
+app.put('/api/v1/users/:id/permissions',{preHandler:roles('OWNER')},async(req,reply)=>{
+  const id=Number(req.params.id),overrides=req.body?.overrides;
+  if(!Number.isSafeInteger(id)||id<1||!overrides||typeof overrides!=='object'||Array.isArray(overrides))return err(reply,'VALIDATION','Передайте объект индивидуальных прав');
+  const known=new Set(Object.values(PERMISSIONS)),entries=Object.entries(overrides);
+  if(entries.length>known.size||entries.some(([permission,allowed])=>!known.has(permission)||typeof allowed!=='boolean'))return err(reply,'VALIDATION','Проверьте индивидуальные права');
+  const user=(await q('SELECT id,name,role,active FROM users WHERE id=$1',[id])).rows[0];if(!user)return err(reply,'NOT_FOUND','Сотрудник не найден',404);
+  await tx(async c=>{
+    await c.query('DELETE FROM user_permission_overrides WHERE user_id=$1',[id]);
+    for(const [permission,allowed] of entries)await c.query('INSERT INTO user_permission_overrides(user_id,permission,allowed,updated_by) VALUES($1,$2,$3,$4)',[id,permission,allowed,req.user.id]);
+  });
+  const rows=(await q('SELECT permission,allowed,updated_at,updated_by FROM user_permission_overrides WHERE user_id=$1 ORDER BY permission',[id])).rows;
+  user.permission_overrides=Object.fromEntries(rows.map(row=>[row.permission,row.allowed===true]));
+  return {data:{user:{id:user.id,name:user.name,role:user.role,active:user.active},role_permissions:permissionsForRole(user.role),overrides:rows,effective_permissions:permissionsForUser(user)}};
+});
 app.get('/api/v1/customers',{preHandler:auth},async req=>({data:(await q(`SELECT c.*,count(DISTINCT r.id)::int request_count,COALESCE(sum(r.paid),0)::numeric lifetime_paid
   FROM customers c LEFT JOIN requests r ON r.customer_id=c.id AND r.deleted_at IS NULL
     AND ${visibleCoreOrderPredicate('r','$2','$1')}
