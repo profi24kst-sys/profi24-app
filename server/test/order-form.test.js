@@ -38,6 +38,11 @@ test('owner configures dictionaries and typed intake; manager may read but not m
   await assert.rejects(validateOrderFields(pool,'REPAIR',{device_brand:choice,unknown:'abc'}),e=>e.code==='UNKNOWN_CUSTOM_FIELD');
   const valid=await validateOrderFields(pool,'REPAIR',{device_brand:choice,external_condition:'  Без царапин  '});
   assert.deepEqual(valid.custom_fields,{device_brand:choice,external_condition:'Без царапин'});
+  r=await send('POST','/api/v1/order-form/fields',{code:'commercial_note',label:'Комментарий продажи/запчасти',field_type:'TEXT',order_types:['SALE','PARTS']});
+  assert.equal(r.status,201);
+  assert.ok((await orderFormSchema(pool,'SALE')).fields.some(f=>f.code==='commercial_note'));
+  assert.ok((await orderFormSchema(pool,'PARTS')).fields.some(f=>f.code==='commercial_note'));
+  assert.equal((await orderFormSchema(pool,'REPAIR')).fields.some(f=>f.code==='commercial_note'),false);
   r=await send('POST','/api/v1/order-form/fields',{code:'unapproved',label:'Чужое поле',field_type:'TEXT'},'MANAGER');
   assert.equal(r.status,403);
   r=await send('PATCH','/api/v1/order-form/fields/'+fieldId,{active:false});
