@@ -114,6 +114,7 @@ jobs:
             sidebar-navigation.cjs
             customer-merge-regression.cjs
             current-order360-regression.cjs
+            order-list-inline-workflow-regression.cjs
             documents-entrypoint-regression.cjs
             customer-portal-regression.cjs
             warranty-public-regression.cjs
