@@ -67,7 +67,7 @@ await runSchemaStatements(pool,[...schema,...warehouseBranchStatements],{logger:
 await prepareWarehouseInventory(pool,{logger:app.log});
 
 const auth=async(req,reply)=>{if(!await authenticate(req,reply,pool))return;};
-const permit=permission=>async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,permission))return fail(reply,'FORBIDDEN','Недостаточно прав для этой операции склада',403)};
+const permit=permission=>async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user,permission))return fail(reply,'FORBIDDEN','Недостаточно прав для этой операции склада',403)};
 const warehouseView=permit(PERMISSIONS.WAREHOUSE_VIEW);
 const warehouseReceive=permit(PERMISSIONS.WAREHOUSE_RECEIVE);
 const warehouseIssue=permit(PERMISSIONS.WAREHOUSE_ISSUE);
