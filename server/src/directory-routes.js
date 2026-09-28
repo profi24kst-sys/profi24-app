@@ -24,7 +24,13 @@ export function parseDirectoryQuery(query={},kind='orders'){
   if(focusId!=null&&(!Number.isSafeInteger(focusId)||focusId<1))return{error:'Некорректный номер клиента'};
   const month=query.month==null?'':String(query.month);
   if(month&&!/^20\d\d-(0[1-9]|1[0-2])$/.test(month))return{error:'Месяц укажите в формате ГГГГ-ММ'};
-  return{value:{page,limit,search,status,month,focusId,offset:(page-1)*limit}};
+  const from=query.from==null?'':String(query.from),to=query.to==null?'':String(query.to);
+  const validDate=v=>/^20\d\d-(0[1-9]|1[0-2])-([0-2]\d|3[01])$/.test(v)&&!Number.isNaN(Date.parse(v+'T00:00:00Z'))&&new Date(v+'T00:00:00Z').toISOString().slice(0,10)===v;
+  if(Boolean(from)!==Boolean(to))return{error:'Укажите начало и конец периода'};
+  if(from&&(!validDate(from)||!validDate(to)))return{error:'Период укажите в формате ГГГГ-ММ-ДД'};
+  if(from&&to<from)return{error:'Конец периода не может быть раньше начала'};
+  if(month&&from)return{error:'Используйте либо месяц, либо произвольный период'};
+  return{value:{page,limit,search,status,month,from,to,focusId,offset:(page-1)*limit}};
 }
 
 function escapeLike(value){
@@ -46,6 +52,13 @@ function monthPredicate(params,alias,month){
   const first='('+localStart+" AT TIME ZONE 'Asia/Qostanay')";
   const next='(('+localStart+" + INTERVAL '1 month') AT TIME ZONE 'Asia/Qostanay')";
   return ' AND '+alias+'.created_at >= '+first+' AND '+alias+'.created_at < '+next;
+}
+function rangePredicate(params,alias,from,to){
+  if(!from||!to)return'';
+  const pFrom=parameter(params,from),pTo=parameter(params,to);
+  const start="("+pFrom+"::date::timestamp AT TIME ZONE 'Asia/Qostanay')";
+  const end="(("+pTo+"::date + INTERVAL '1 day')::timestamp AT TIME ZONE 'Asia/Qostanay')";
+  return ' AND '+alias+'.created_at >= '+start+' AND '+alias+'.created_at < '+end;
 }
 
 function visibleRequest(params,role,userId,alias){
@@ -79,8 +92,9 @@ function ordersQuery(role,userId,filters,{withStatus=true}={}){
     if(phone)conditions.push("COALESCE(c.phone_norm,'') ILIKE "+phone);
     where.push('('+conditions.map(sql=>sql+" ESCAPE '\\'").join(' OR ')+')');
   }
-  const month=monthPredicate(params,'r',filters.month);
+  const month=monthPredicate(params,'r',filters.month),range=rangePredicate(params,'r',filters.from,filters.to);
   if(month)where.push(month.slice(5));
+  if(range)where.push(range.slice(5));
   const baseWhere=where.join(' AND ');
   if(withStatus){
     if(filters.status==='ACTIVE')where.push("r.status NOT IN ('CLOSED','CANCELLED')");
@@ -100,8 +114,9 @@ function customersQuery(role,userId,filters){
   const params=[],accessible=visibleRequest(params,role,userId,'r');
   let joinFilter='r.deleted_at IS NULL AND '+accessible;
   joinFilter+=monthPredicate(params,'r',filters.month);
+  joinFilter+=rangePredicate(params,'r',filters.from,filters.to);
   const where=['c.deleted_at IS NULL'];
-  if(role==='MANAGER'||role==='ENGINEER'||role==='TRAINEE'||filters.month){
+  if(role==='MANAGER'||role==='ENGINEER'||role==='TRAINEE'||filters.month||filters.from){
     where.push('EXISTS (SELECT 1 FROM requests r WHERE r.customer_id=c.id AND '+joinFilter+')');
   }
   if(filters.focusId)where.push('c.id='+parameter(params,filters.focusId));
