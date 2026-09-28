@@ -3,6 +3,7 @@ import{createRoot}from'react-dom/client';
 import{Camera,PenLine,Upload,X,Trash2,Printer}from'lucide-react';
 import'./warehouse.css';
 import{escapeHtml as esc}from'./html-safety.js';
+import{MAX_UPLOAD_BYTES,prepareImageUpload,fileToDataUrl}from'./image-upload.js';
 
 const B='/documents-api/v1';
 const SAFE_IMAGE_ACCEPT='.jpg,.jpeg,.png,.webp,.heic,.heif,.hif';
@@ -70,17 +71,15 @@ function App(){
   if(!open)return <div className="docsHint">Дважды нажмите на шапку заказа — фото и документы</div>;
 
   async function upload(event,kind){
-    const file=event.target.files?.[0];if(!file)return;
-    const reader=new FileReader();
-    reader.onerror=()=>setErr('Не удалось прочитать файл');
-    reader.onload=async()=>{
-      try{
-        setErr('');
-        await api(`/requests/${orderId}/files`,{method:'POST',body:JSON.stringify({name:file.name,kind,data:reader.result})});
-        await load();
-      }catch(error){setErr(error.message)}finally{event.target.value=''}
-    };
-    reader.readAsDataURL(file);
+    const original=event.target.files?.[0];if(!original)return;
+    try{
+      setErr('');
+      const file=original.type==='application/pdf'?original:await prepareImageUpload(original);
+      if(file.size>MAX_UPLOAD_BYTES)throw new Error('Максимальный размер файла 10 МБ');
+      const data=await fileToDataUrl(file);
+      await api(`/requests/${orderId}/files`,{method:'POST',body:JSON.stringify({name:file.name,kind,data})});
+      await load();
+    }catch(error){setErr(error.message)}finally{event.target.value=''}
   }
 
   async function printDocument(type){
