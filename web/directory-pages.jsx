@@ -48,11 +48,11 @@ function InlineWorkflow({order}){
     workflowCall(order.id).then(data=>{if(live)setFlow(data)}).catch(problem=>{if(live)setError(problem.message)});
     return()=>{live=false};
   },[order.id,order.status]);
-  const current=flow?.status||order.status,next=flow?.next;
+  const current=flow?.status||order.status,next=flow?.next,nextTarget=next?.event==='DEPART'?'ON_ROUTE':next?.to;
   async function change(event){
     event.stopPropagation();
     const value=event.target.value;
-    if(!next||value!==next.to)return;
+    if(!next||value!==nextTarget)return;
     if(['START_TEST','REQUEST_PAYMENT','CLOSE'].includes(next.event)){
       window.dispatchEvent(new CustomEvent('profi24:open-completion',{detail:{id:Number(order.id)}}));
       event.target.value=current;
@@ -68,8 +68,7 @@ function InlineWorkflow({order}){
   return <div className="dir-inline-flow" onClick={event=>event.stopPropagation()} onKeyDown={event=>event.stopPropagation()}>
     <select aria-label={'Статус '+order.number} value={current} onChange={change} disabled={busy||!next}>
       <option value={current}>{LABELS[current]||current}</option>
-      {next&&next.to!==current&&<option value={next.to}>→ {LABELS[next.to]||next.label||next.to}</option>}
-      {next&&next.to===current&&<option value={next.to+'__next'} disabled>{next.label}</option>}
+      {next&&<option value={nextTarget}>→ {LABELS[nextTarget]||next.label||nextTarget}</option>}
     </select>
     {next&&<small>{next.label}</small>}
     {error&&<small className="dir-inline-error" role="alert">{error}</small>}
