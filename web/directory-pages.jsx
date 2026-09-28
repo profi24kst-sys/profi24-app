@@ -215,13 +215,14 @@ export function EquipmentDirectory({refreshKey=0,focusEquipment=null}){
 function localMonth(){
   return new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Qostanay',year:'numeric',month:'2-digit'}).format(new Date());
 }
-export function ReportExports({user}){
+export function ReportExports({user,range}){
   const [month,setMonth]=useState(localMonth());
   if(!EXPORT_ROLES.has(user?.role))return null;
+  const filter=range?.from&&range?.to?{from:range.from,to:range.to}:{month};
   return <section className="dir-report-box">
-    <div><h2>Выгрузка данных в Excel</h2><p>Все строки за выбранный месяц, независимо от количества страниц. Учитываются права доступа к филиалам.</p></div>
-    <label>Месяц <input type="month" min="2023-01" value={month} onChange={e=>setMonth(e.target.value)}/></label>
-    <div className="dir-report-actions"><ExportButton kind="orders" filter={{status:'ALL',month}}/><ExportButton kind="customers" filter={{month}}/></div>
+    <div><h2>Выгрузка данных в Excel</h2><p>{range?.from&&range?.to?`Все строки за период ${range.from} — ${range.to}.`:'Все строки за выбранный месяц.'} Учитываются права доступа к филиалам.</p></div>
+    {!range?.from&&<label>Месяц <input type="month" min="2023-01" value={month} onChange={e=>setMonth(e.target.value)}/></label>}
+    <div className="dir-report-actions"><ExportButton kind="orders" filter={{status:'ALL',...filter}}/><ExportButton kind="customers" filter={filter}/></div>
     <small>Не более 10 000 строк в одном файле. Для более крупных выгрузок выберите меньший период.</small>
   </section>;
 }
