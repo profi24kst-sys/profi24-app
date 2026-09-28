@@ -33,11 +33,20 @@ test('secret-bearing environment variants and private keys are excluded from Git
 test('shared frontend HTML escaping is used for dynamic workflow and order-action markup',async()=>{
   const {escapeHtml}=await import('../../web/html-safety.js');
   assert.equal(escapeHtml('&<>"\''),'&amp;&lt;&gt;&quot;&#39;');
-  for(const file of ['web/order-hc-actions.js','web/workflow-addon.jsx']){
+  for(const file of ['web/order-hc-actions.js','web/workflow-addon.jsx','web/closed-order-edit.js']){
     const source=read(file);
     assert.match(source,/from '\.\/html-safety\.js'/,file+' must use the shared HTML safety helper');
   }
   const workflow=read('web/workflow-addon.jsx');
   assert.match(workflow,/esc\(e\.user_name\|\|'Система'\)/);
   assert.match(workflow,/esc\(x\.next\.label\)/);
+});
+
+
+test('owner correction editor escapes database-provided names before innerHTML interpolation',()=>{
+  const source=read('web/closed-order-edit.js');
+  assert.match(source,/esc\(w\.name\|\|'Работа'\)/);
+  assert.match(source,/esc\(p\.name\|\|'Запчасть'\)/);
+  assert.match(source,/esc\(p\.created_by_name\)/);
+  assert.match(source,/esc\(f\.value\?\?''\)/);
 });
