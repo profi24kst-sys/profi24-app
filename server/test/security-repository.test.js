@@ -50,3 +50,17 @@ test('owner correction editor escapes database-provided names before innerHTML i
   assert.match(source,/esc\(p\.created_by_name\)/);
   assert.match(source,/esc\(f\.value\?\?''\)/);
 });
+
+
+test('image uploads use the shared 10 MB client limit and compression helper',async()=>{
+  const {MAX_UPLOAD_BYTES}=await import('../../web/image-upload.js');
+  assert.equal(MAX_UPLOAD_BYTES,10*1024*1024);
+  for(const file of ['web/documents-addon.jsx','web/order360-photo-before.js','web/engineer-mobile.jsx']){
+    const source=read(file);
+    assert.match(source,/prepareImageUpload/,file+' must prepare images before upload');
+    assert.match(source,/MAX_UPLOAD_BYTES/,file+' must enforce the shared 10 MB client limit');
+  }
+  const ui=read('web/upload-security-ui.js');
+  assert.match(ui,/до 10 МБ/);
+  assert.doesNotMatch(ui,/до 8 МБ/);
+});
