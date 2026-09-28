@@ -26,6 +26,8 @@ test('owner configures dictionaries and typed intake; manager may read but not m
   assert.equal(r.status,201);const dictionaryId=r.data.id;
   r=await send('POST','/api/v1/order-form/dictionaries/'+dictionaryId+'/items',{value:'LG'});
   assert.equal(r.status,201);const choice=r.data.id;
+  r=await send('PATCH','/api/v1/order-form/dictionaries/'+dictionaryId+'/items/'+choice,{value:'LG Electronics',sort_order:7});
+  assert.equal(r.status,200);assert.equal(r.data.value,'LG Electronics');assert.equal(r.data.sort_order,7);
   r=await send('POST','/api/v1/order-form/fields',{code:'device_brand',label:'Бренд',field_type:'SELECT',dictionary_id:dictionaryId,required:true,sort_order:1});
   assert.equal(r.status,201);const fieldId=r.data.id;
   r=await send('POST','/api/v1/order-form/fields',{code:'external_condition',label:'Внешний вид',field_type:'TEXTAREA',required:false});
@@ -33,6 +35,13 @@ test('owner configures dictionaries and typed intake; manager may read but not m
   r=await send('GET','/api/v1/order-form/schema?order_type=REPAIR',undefined,'MANAGER');
   assert.equal(r.status,200);assert.ok(r.data.fields.some(f=>f.code==='device_brand'));
   assert.equal(r.data.fields.find(f=>f.code==='device_brand').options[0].id,choice);
+  assert.equal(r.data.fields.find(f=>f.code==='device_brand').options[0].value,'LG Electronics');
+  r=await send('PATCH','/api/v1/order-form/dictionaries/'+dictionaryId+'/items/'+choice,{active:false});
+  assert.equal(r.status,200);assert.equal(r.data.active,false);
+  r=await send('GET','/api/v1/order-form/schema?order_type=REPAIR',undefined,'MANAGER');
+  assert.equal(r.status,200);assert.equal(r.data.fields.find(f=>f.code==='device_brand').options.length,0);
+  r=await send('PATCH','/api/v1/order-form/dictionaries/'+dictionaryId+'/items/'+choice,{active:true});
+  assert.equal(r.status,200);
   await assert.rejects(validateOrderFields(pool,'REPAIR',{}),e=>e.code==='CUSTOM_FIELD_REQUIRED');
   await assert.rejects(validateOrderFields(pool,'REPAIR',{device_brand:999}),e=>e.code==='INVALID_CUSTOM_FIELD');
   await assert.rejects(validateOrderFields(pool,'REPAIR',{device_brand:choice,unknown:'abc'}),e=>e.code==='UNKNOWN_CUSTOM_FIELD');
