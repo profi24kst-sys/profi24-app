@@ -100,29 +100,38 @@ const ASSIGNED_ONLY=new Set(['ENGINEER','TRAINEE']);
 const LEGACY_INHERITANCE=Object.freeze({SUPERVISOR:new Set(['MANAGER']),ACCOUNTANT:new Set(),TRAINEE:new Set()});
 
 export function isKnownRole(role){return KNOWN.has(role)}
-export function can(role,permission){return Boolean(isKnownRole(role)&&ROLE_PERMISSION_MAP[role]?.has(permission))}
+const subjectRole=subject=>typeof subject==='string'?subject:subject?.role;
+export function can(subject,permission){
+  const role=subjectRole(subject);
+  if(!isKnownRole(role)||!Object.values(P).includes(permission))return false;
+  if(subject&&typeof subject==='object'&&subject.permission_overrides&&Object.prototype.hasOwnProperty.call(subject.permission_overrides,permission))return subject.permission_overrides[permission]===true;
+  return Boolean(ROLE_PERMISSION_MAP[role]?.has(permission));
+}
 export function permissionsForRole(role){return isKnownRole(role)?Object.freeze([...ROLE_PERMISSION_MAP[role]]):Object.freeze([])}
+export function permissionsForUser(user){if(!isKnownRole(user?.role))return Object.freeze([]);return Object.freeze(Object.values(P).filter(permission=>can(user,permission)))}
 export function isAssignedOnly(role){return ASSIGNED_ONLY.has(role)}
-export function canAccessAllOrders(role){return can(role,P.ORDERS_VIEW_ALL)}
-export function canAdminFinance(role){return can(role,P.FINANCE_ADJUST)}
-export function canViewFinance(role){return can(role,P.FINANCE_VIEW)}
-export function canAdminStaff(role){return can(role,P.ROLES_MANAGE)}
-export function canManageOperations(role){return can(role,P.OPERATIONS_MANAGE)}
+export function canAccessAllOrders(subject){return can(subject,P.ORDERS_VIEW_ALL)}
+export function canAdminFinance(subject){return can(subject,P.FINANCE_ADJUST)}
+export function canViewFinance(subject){return can(subject,P.FINANCE_VIEW)}
+export function canAdminStaff(subject){return can(subject,P.ROLES_MANAGE)}
+export function canManageOperations(subject){return can(subject,P.OPERATIONS_MANAGE)}
 export function isTechnicalRole(role){return role==='ENGINEER'||role==='TRAINEE'}
 
 export function roleAllowed(role,allowed=[]){if(allowed.includes(role))return true;const inherited=LEGACY_INHERITANCE[role];return Boolean(inherited&&allowed.some(x=>inherited.has(x)))}
 
-export function canMutateOrder(role,{service='',route='',method='GET'}={}){
+export function canMutateOrder(subject,{service='',route='',method='GET'}={}){
   if(['GET','HEAD'].includes(method))return true;
-  if(role==='OWNER'||role==='SUPERVISOR'||role==='MANAGER')return true;
-  if(role==='ENGINEER'){if(/\/(payment|refund|schedule|assign|cancel|close)(?:\/|$)/.test(route))return false;return can(role,P.ORDERS_TECHNICAL)||can(role,P.ORDERS_NOTES)||can(role,P.ORDERS_FILES)}
-  if(role==='ACCOUNTANT'){
-    if(/\/payment$/.test(route)&&(service==='index2'||service==='completion'))return can(role,P.FINANCE_RECEIVE_PAYMENT);
-    if(service==='index2'&&/\/refund$/.test(route))return can(role,P.FINANCE_REFUND);
-    return false;
-  }
-  if(role==='TRAINEE'){if(/\/(notes|comment)$/.test(route))return can(role,P.ORDERS_NOTES);return service==='documents'&&method==='POST'&&/\/requests\/:id\/files$/.test(route)&&can(role,P.ORDERS_FILES)}
-  return false;
+  const role=subjectRole(subject);
+  if(/\/discount$/.test(route))return can(subject,P.ORDERS_DISCOUNT);
+  if(/\/payment$/.test(route)&&(service==='index2'||service==='completion'))return can(subject,P.FINANCE_RECEIVE_PAYMENT);
+  if(service==='index2'&&/\/refund$/.test(route))return can(subject,P.FINANCE_REFUND);
+  if(/\/assign(?:\/|$)|\/schedule(?:\/|$)/.test(route))return can(subject,P.ORDERS_ASSIGN);
+  if(/\/close(?:\/|$)/.test(route))return can(subject,P.ORDERS_CLOSE);
+  if(/\/cancel(?:\/|$)/.test(route))return can(subject,P.ORDERS_CANCEL);
+  if(role==='ENGINEER')return can(subject,P.ORDERS_TECHNICAL)||can(subject,P.ORDERS_NOTES)||can(subject,P.ORDERS_FILES);
+  if(role==='ACCOUNTANT')return false;
+  if(role==='TRAINEE'){if(/\/(notes|comment)$/.test(route))return can(subject,P.ORDERS_NOTES);return service==='documents'&&method==='POST'&&/\/requests\/:id\/files$/.test(route)&&can(subject,P.ORDERS_FILES)}
+  return can(subject,P.ORDERS_EDIT);
 }
 
 export function roleDescriptor(role){if(!isKnownRole(role))return null;return{code:role,label:ROLE_LABELS[role],permissions:permissionsForRole(role),all_orders:canAccessAllOrders(role),assigned_only:isAssignedOnly(role),finance_view:canViewFinance(role),finance_admin:canAdminFinance(role),staff_admin:canAdminStaff(role),operations_admin:canManageOperations(role)}}
