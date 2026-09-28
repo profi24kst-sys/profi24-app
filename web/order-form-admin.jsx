@@ -44,6 +44,8 @@ function OrderFormSettings(){
   setField(empty);
  }
  async function toggleField(f,key,value){await mutate(()=>api('/fields/'+f.id,{method:'PATCH',body:JSON.stringify({[key]:value})}),'Настройки обновлены')}
+ async function toggleDictionary(d,key,value){await mutate(()=>api('/dictionaries/'+d.id,{method:'PATCH',body:JSON.stringify({[key]:value})}),'Справочник обновлён')}
+ async function updateItem(i,key,value){if(!chosenDict)return;await mutate(()=>api('/dictionaries/'+chosenDict+'/items/'+i.id,{method:'PATCH',body:JSON.stringify({[key]:value})}),'Значение обновлено');setItems(await api('/dictionaries/'+chosenDict+'/items'))}
  if(!open||!owner())return null;
  return <div className="ofsLayer" role="dialog" aria-modal="true" aria-label="Настройки формы приёмки">
  <div className="ofsPanel">
@@ -58,7 +60,8 @@ function OrderFormSettings(){
      <button type="submit" disabled={busy}>Создать справочник</button>
     </form>
     <label>Добавить значение в справочник<select value={chosenDict} onChange={e=>setChosenDict(e.target.value)}><option value="">Выберите справочник</option>{dictionaries.filter(x=>x.active).map(d=><option key={d.id} value={d.id}>{d.label}</option>)}</select></label>
-    {chosenDict&&<><form onSubmit={e=>{e.preventDefault();saveItem()}}><label>Новое значение<input required maxLength={160} value={item} onChange={e=>setItem(e.target.value)}/></label><button disabled={busy}>Добавить</button></form><p>Значения: {items.map(i=>i.value).join(', ')||'Пока пусто'}</p></>}
+    <div className="ofsScroll"><table><thead><tr><th>Справочник</th><th>Статус</th></tr></thead><tbody>{dictionaries.map(d=><tr key={d.id}><td>{d.label}</td><td><label className="ofsCheck"><input type="checkbox" checked={d.active} disabled={busy} onChange={e=>toggleDictionary(d,'active',e.target.checked)}/> Активен</label></td></tr>)}</tbody></table></div>
+    {chosenDict&&<><form onSubmit={e=>{e.preventDefault();saveItem()}}><label>Новое значение<input required maxLength={160} value={item} onChange={e=>setItem(e.target.value)}/></label><button disabled={busy}>Добавить</button></form><div className="ofsScroll"><table><thead><tr><th>Порядок</th><th>Значение</th><th>Активно</th></tr></thead><tbody>{items.map(i=><tr key={i.id}><td><input type="number" value={i.sort_order||0} onChange={e=>setItems(rows=>rows.map(x=>x.id===i.id?{...x,sort_order:Number(e.target.value)}:x))} onBlur={e=>updateItem(i,'sort_order',Number(e.target.value))} style={{width:74}}/></td><td><input value={i.value} maxLength={160} onChange={e=>setItems(rows=>rows.map(x=>x.id===i.id?{...x,value:e.target.value}:x))} onBlur={e=>e.target.value.trim()&&updateItem(i,'value',e.target.value.trim())}/></td><td><input type="checkbox" checked={i.active} disabled={busy} onChange={e=>updateItem(i,'active',e.target.checked)}/></td></tr>)}</tbody></table></div></>}
    </section>
    <section><h2>Новое поле заказа</h2>
     <form onSubmit={e=>{e.preventDefault();saveField()}}>
