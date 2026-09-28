@@ -117,11 +117,13 @@ test('Сквозные регрессии доступа, заказов, скл
    assert.equal(Number((await query('SELECT quantity FROM warehouse_items WHERE id=$1',[item])).rows[0].quantity),1);
    assert.equal(Number((await query("SELECT count(*) n FROM warehouse_movements WHERE item_id=$1 AND movement_type='RECEIPT'",[item])).rows[0].n),1);
   });
-  await t.test('Прайс сохраняет скидку и себестоимость',async()=>{
+  await t.test('Прайс отдаёт рекомендованную/минимальную цену и сохраняет скидку и себестоимость',async()=>{
    const id=await order();await query('UPDATE requests SET discount_amount=100 WHERE id=$1',[id]);
-   const item=(await query("INSERT INTO pricebook(category,name,base_price,labor_cost) VALUES('Test','Work',1000,100) RETURNING id")).rows[0].id;
-   const result=await call('pricebook','POST',`/api/v1/requests/${id}/add`,{item_id:item});assert.equal(result.status,200,JSON.stringify(result));
-   const r=(await query('SELECT total,direct_cost FROM requests WHERE id=$1',[id])).rows[0];assert.equal(Number(r.total),900);assert.equal(Number(r.direct_cost),100);
+   const item=(await query("INSERT INTO pricebook(category,name,base_price,min_price,labor_cost,material_cost) VALUES('Test','Work',1000,900,100,50) RETURNING id")).rows[0].id;
+   const list=await call('pricebook','GET','/api/v1/items?q=Work');assert.equal(list.status,200,JSON.stringify(list));
+   const priced=list.data.find(x=>Number(x.id)===Number(item));assert.ok(priced);assert.ok(Number(priced.recommended_price)>=1000);assert.ok(Number(priced.minimum_price)>=900);assert.equal(Number(priced.target_margin),30);
+   const result=await call('pricebook','POST',`/api/v1/requests/${id}/add`,{item_id:item,price:1000});assert.equal(result.status,200,JSON.stringify(result));
+   const r=(await query('SELECT total,direct_cost FROM requests WHERE id=$1',[id])).rows[0];assert.equal(Number(r.total),900);assert.equal(Number(r.direct_cost),150);
   });
   await t.test('Зарплата, прибыль заказа и P&L учитывают фактического исполнителя одинаково',async()=>{
    const id=await order();await query('UPDATE requests SET direct_cost=100 WHERE id=$1',[id]);
