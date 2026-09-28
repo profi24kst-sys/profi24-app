@@ -11,7 +11,7 @@ async function api(url,options={}){
  return payload.data;
 }
 const types=[['TEXT','Одна строка'],['TEXTAREA','Многострочное'],['NUMBER','Число'],['DATE','Дата'],['IMEI','IMEI (15 цифр)'],['SELECT','Справочник']];
-const repairTypes=[['REPAIR','Обычный'],['FIELD','Выездной'],['PAID_WORKSHOP','Стационар']];
+const repairTypes=[['REPAIR','Обычный ремонт'],['FIELD','Выездной ремонт'],['PAID_WORKSHOP','Платный стационар'],['SALE','Продажа техники'],['PARTS','Заказ запчастей']];
 const empty={code:'',label:'',field_type:'TEXT',required:false,sort_order:0,dictionary_id:'',order_types:['REPAIR']};
 function OrderFormSettings(){
  const[open,setOpen]=useState(false),[fields,setFields]=useState([]),[dictionaries,setDictionaries]=useState([]),[items,setItems]=useState([]),[chosenDict,setChosenDict]=useState(''),[dictionary,setDictionary]=useState({code:'',label:''}),[item,setItem]=useState(''),[field,setField]=useState(empty),[error,setError]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false);
@@ -81,7 +81,7 @@ function OrderFormSettings(){
      <td><input aria-label={'Активно '+f.code} type="checkbox" checked={f.active} onChange={e=>toggleField(f,'active',e.target.checked)} disabled={busy}/></td></tr>)}
     {!fields.length&&<tr><td colSpan={7}>Дополнительных полей пока нет. Основные поля заявки сохраняются как прежде.</td></tr>}
    </tbody></table></div>
-   <p className="ofsTip">Дополнительные поля настраиваются отдельно для обычного, выездного и стационарного ремонта. Устройство строгого жизненного цикла и старые заказы не меняются. Пароли устройств здесь не сохраняйте.</p>
+   <p className="ofsTip">Дополнительные поля настраиваются отдельно для ремонта, выезда, стационара, продажи техники и заказа запчастей. Устройство строгого жизненного цикла и старые заказы не меняются. Пароли устройств здесь не сохраняйте.</p>
   </section>
  </div></div>;
 }
