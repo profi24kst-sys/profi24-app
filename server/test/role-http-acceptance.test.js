@@ -127,6 +127,11 @@ test('HTTP acceptance: шесть ролей соблюдают границы �
     await t.test('Склад и закупки разделяют SUPERVISOR / ACCOUNTANT / MANAGER',async()=>{
       const item=(await call('warehouse','POST','/api/v1/items',{name:'HTTP складская позиция',branch_id:s.kst,purchase_price:100,sale_price:200},1)).data;
       assert.ok(item?.id);
+      assert.equal(Number(item.min_quantity),1,'новая позиция без явного порога должна получить безопасный минимум 1');
+      const stockBefore=await call('warehouse','GET','/api/v1/stock',undefined,1);
+      const stockItem=stockBefore.data.find(x=>Number(x.id)===Number(item.id));
+      assert.equal(stockItem.threshold_missing,false);
+      assert.equal(stockItem.low_stock,true);
       assert.equal((await call('warehouse','POST',`/api/v1/items/${item.id}/receive`,{quantity:3,purchase_price:100},1)).status,200);
       assert.equal((await call('warehouse','GET','/api/v1/stock',undefined,2)).status,200);
       assert.equal((await call('warehouse','GET','/api/v1/stock',undefined,3)).status,200);
