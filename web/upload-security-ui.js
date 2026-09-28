@@ -8,7 +8,7 @@
       input.dataset.secureUploadPolicy='1';
     });
     document.querySelectorAll('.orderFilesHead small').forEach(node=>{
-      if(/до\\s*8\\s*МБ/i.test(node.textContent||''))node.textContent='JPEG, PNG, WebP, HEIC/HEIF или PDF · до 8 МБ';
+      if(/до\s*(8|10)\s*МБ/i.test(node.textContent||''))node.textContent='JPEG, PNG, WebP, HEIC/HEIF или PDF · до 10 МБ';
     });
   }
   apply();
