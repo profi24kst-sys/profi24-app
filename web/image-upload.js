@@ -45,3 +45,5 @@ export function fileToDataUrl(file){
     reader.readAsDataURL(file);
   });
 }
+
+// Server-side MIME/signature/size validation remains authoritative after client preprocessing.
