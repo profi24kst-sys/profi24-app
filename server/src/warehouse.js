@@ -216,3 +216,5 @@ app.get('/api/v1/transfers',{preHandler:warehouseView},async req=>{
 
 const close=async()=>{try{await pool.end()}finally{process.exit(0)}};process.on('SIGTERM',close);process.on('SIGINT',close);
 app.listen({port:Number(process.env.PORT||8081),host:'0.0.0.0'});
+
+// Existing zero-threshold items are preserved and surfaced via threshold_missing instead of rewritten.
