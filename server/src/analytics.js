@@ -28,11 +28,11 @@ await q('ALTER TABLE requests ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ');
 
 const auth=async(req,reply)=>{if(!await authenticate(req,reply,pool))return;};
 const owner=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(req.user.role!=='OWNER')return fail(reply,'FORBIDDEN','Раздел аналитики доступен владельцу',403)};
-const analyticsView=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,PERMISSIONS.ANALYTICS_VIEW))return fail(reply,'FORBIDDEN','Недостаточно прав для аналитики',403)};
-const warehouseView=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,PERMISSIONS.WAREHOUSE_VIEW))return fail(reply,'FORBIDDEN','Недостаточно прав для аналитики склада',403)};
-const procurementView=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,PERMISSIONS.PROCUREMENT_VIEW))return fail(reply,'FORBIDDEN','Недостаточно прав для аналитики поставщиков',403)};
-const operationsView=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,PERMISSIONS.OPERATIONS_MANAGE))return fail(reply,'FORBIDDEN','Недостаточно прав для диспетчеризации',403)};
-const routeView=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(req.user.role!=='ENGINEER'&&!can(req.user.role,PERMISSIONS.OPERATIONS_MANAGE))return fail(reply,'FORBIDDEN','Недостаточно прав для просмотра маршрута',403)};
+const analyticsView=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user,PERMISSIONS.ANALYTICS_VIEW))return fail(reply,'FORBIDDEN','Недостаточно прав для аналитики',403)};
+const warehouseView=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user,PERMISSIONS.WAREHOUSE_VIEW))return fail(reply,'FORBIDDEN','Недостаточно прав для аналитики склада',403)};
+const procurementView=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user,PERMISSIONS.PROCUREMENT_VIEW))return fail(reply,'FORBIDDEN','Недостаточно прав для аналитики поставщиков',403)};
+const operationsView=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user,PERMISSIONS.OPERATIONS_MANAGE))return fail(reply,'FORBIDDEN','Недостаточно прав для диспетчеризации',403)};
+const routeView=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(req.user.role!=='ENGINEER'&&!can(req.user,PERMISSIONS.OPERATIONS_MANAGE))return fail(reply,'FORBIDDEN','Недостаточно прав для просмотра маршрута',403)};
 function range(month){const d=month?new Date(month+'-01T00:00:00Z'):new Date();const s=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),1)),e=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()+1,1));return[s,e]}
 
 installOrderAccess(app,pool,'analytics');

@@ -175,3 +175,21 @@ test('стажёр получает заказ только как участн�
     await assert.rejects(requireOrder(pool,{id:6,role:'TRAINEE'},mentorOrder),error=>error.code==='FORBIDDEN');
   }finally{await db.close();}
 });
+
+test('отдельные права технических операций, комментариев и файлов независимы',()=>{
+  const subject=overrides=>({role:'ENGINEER',permission_overrides:overrides});
+  const denied=subject({'orders.technical':false});
+  for(const operation of [
+    {service:'index2',route:'/api/v1/requests/:id/diagnosis',method:'POST'},
+    {service:'index2',route:'/api/v1/requests/:id/works',method:'POST'},
+    {service:'diagnostic-flow',route:'/api/v1/requests/:id/diagnosis',method:'PUT'},
+    {service:'completion',route:'/api/v1/requests/:id/repair-done',method:'POST'}
+  ])assert.equal(canMutateOrder(denied,operation),false,operation.service+operation.route);
+  const notes={service:'index2',route:'/api/v1/requests/:id/notes',method:'POST'};
+  const files={service:'documents',route:'/api/v1/requests/:id/files',method:'POST'};
+  assert.equal(canMutateOrder(denied,notes),true);
+  assert.equal(canMutateOrder(denied,files),true);
+  assert.equal(canMutateOrder(subject({'orders.notes':false}),notes),false);
+  assert.equal(canMutateOrder(subject({'orders.files':false}),files),false);
+  assert.equal(canMutateOrder(subject({'orders.notes':false,'orders.files':false}),{service:'index2',route:'/api/v1/requests/:id/diagnosis',method:'POST'}),true);
+});

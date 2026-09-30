@@ -128,7 +128,10 @@ export function canMutateOrder(subject,{service='',route='',method='GET'}={}){
   if(/\/assign(?:\/|$)|\/schedule(?:\/|$)/.test(route))return can(subject,P.ORDERS_ASSIGN);
   if(/\/close(?:\/|$)/.test(route))return can(subject,P.ORDERS_CLOSE);
   if(/\/cancel(?:\/|$)/.test(route))return can(subject,P.ORDERS_CANCEL);
-  if(role==='ENGINEER')return can(subject,P.ORDERS_TECHNICAL)||can(subject,P.ORDERS_NOTES)||can(subject,P.ORDERS_FILES);
+  if(/\/(notes|comment)$/.test(route))return can(subject,P.ORDERS_NOTES);
+  if(service==='documents'&&method==='POST'&&/\/files$/.test(route))return can(subject,P.ORDERS_FILES);
+  if(/\/(diagnosis|works|parts|accept|status)(?:\/|$)/.test(route)||['diagnostic-flow','completion'].includes(service))return can(subject,P.ORDERS_TECHNICAL);
+  if(role==='ENGINEER')return can(subject,P.ORDERS_TECHNICAL);
   if(role==='ACCOUNTANT')return false;
   if(role==='TRAINEE'){if(/\/(notes|comment)$/.test(route))return can(subject,P.ORDERS_NOTES);return service==='documents'&&method==='POST'&&/\/requests\/:id\/files$/.test(route)&&can(subject,P.ORDERS_FILES)}
   return can(subject,P.ORDERS_EDIT);

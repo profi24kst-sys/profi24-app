@@ -25,8 +25,8 @@ const text=(v,max=500)=>String(v||'').trim().slice(0,max);
 const positiveId=v=>{const n=Number(v);return Number.isSafeInteger(n)&&n>0?n:null};
 const dateValue=v=>{if(!v)return null;const d=new Date(v);return Number.isNaN(d.getTime())?null:d};
 const auth=async(req,reply)=>{if(!await authenticate(req,reply,pool))return;};
-const office=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,PERMISSIONS.ORDERS_EDIT))return fail(reply,'FORBIDDEN','Операционное изменение доступно собственнику, управляющему или менеджеру',403)};
-const operations=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,PERMISSIONS.OPERATIONS_MANAGE))return fail(reply,'FORBIDDEN','Недостаточно операционных прав',403)};
+const office=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user,PERMISSIONS.ORDERS_EDIT))return fail(reply,'FORBIDDEN','Операционное изменение доступно собственнику, управляющему или менеджеру',403)};
+const operations=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user,PERMISSIONS.OPERATIONS_MANAGE))return fail(reply,'FORBIDDEN','Недостаточно операционных прав',403)};
 const owner=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(req.user.role!=='OWNER')return fail(reply,'FORBIDDEN','Возврат техники без ремонта подтверждает только собственник',403)};
 
 installOrderAccess(app,pool,'lifecycle');
@@ -65,7 +65,7 @@ app.get('/api/v1/requests/:id/lifecycle',{preHandler:auth},async(req)=>{
 app.post('/api/v1/requests/:id/holds',{preHandler:auth},async(req,reply)=>{
   const type=String(req.body?.hold_type||'').toUpperCase(),reason=text(req.body?.reason),responsibleId=positiveId(req.body?.responsible_id),pauseSla=req.body?.pause_sla!==false,expected=dateValue(req.body?.expected_until);
   if(!HOLD_TYPES.has(type))return fail(reply,'VALIDATION','Выберите корректный тип ожидания');
-  const officeAllowed=can(req.user.role,PERMISSIONS.ORDERS_EDIT),engineerAllowed=req.user.role==='ENGINEER'&&ENGINEER_HOLD_TYPES.has(type);
+  const officeAllowed=can(req.user,PERMISSIONS.ORDERS_EDIT),engineerAllowed=req.user.role==='ENGINEER'&&ENGINEER_HOLD_TYPES.has(type);
   if(!officeAllowed&&!engineerAllowed)return fail(reply,'FORBIDDEN','Эта роль не может поставить заказ на такой тип ожидания',403);
   if(reason.length<3)return fail(reply,'VALIDATION','Опишите причину ожидания');
   if(req.body?.expected_until&&!expected)return fail(reply,'VALIDATION','Некорректный срок ожидания');
@@ -130,7 +130,7 @@ app.post('/api/v1/requests/:id/visits/:visitId/outcome',{preHandler:auth},async(
   const outcome=String(req.body?.outcome||'').toUpperCase(),reason=text(req.body?.reason),visitId=positiveId(req.params.visitId);
   if(!visitId||!VISIT_OUTCOMES.has(outcome))return fail(reply,'VALIDATION','Выберите результат визита');
   if(outcome!=='COMPLETED'&&reason.length<3)return fail(reply,'VALIDATION','Опишите причину результата визита');
-  if(!can(req.user.role,PERMISSIONS.ORDERS_TECHNICAL)&&!can(req.user.role,PERMISSIONS.ORDERS_EDIT))return fail(reply,'FORBIDDEN','Недостаточно прав для результата визита',403);
+  if(!can(req.user,PERMISSIONS.ORDERS_TECHNICAL)&&!can(req.user,PERMISSIONS.ORDERS_EDIT))return fail(reply,'FORBIDDEN','Недостаточно прав для результата визита',403);
   const result=await tx(async c=>{
     const order=await requireOrder(c,req.user,req.params.id,{mutable:true,lock:true});
     const visit=(await c.query('SELECT * FROM request_visit_attempts WHERE id=$1 AND request_id=$2 FOR UPDATE',[visitId,order.id])).rows[0];
