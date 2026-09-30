@@ -111,6 +111,8 @@ test('HTTP acceptance: шесть ролей соблюдают границы �
       assert.equal(permissions.status,200,JSON.stringify(permissions));
       assert.ok(permissions.data.role_permissions.includes('orders.discount'));
       assert.ok(!permissions.data.role_permissions.includes('finance.audit'));
+      assert.ok(permissions.data.available_permissions.includes('finance.audit'));
+      assert.ok(permissions.data.available_permissions.includes('warehouse.view'));
 
       permissions=await call('index2','PUT','/api/v1/users/4/permissions',{overrides:{
         'orders.discount':false,
