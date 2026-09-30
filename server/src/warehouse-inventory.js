@@ -49,7 +49,7 @@ async function detail(pool,user,id){
 export function installWarehouseInventory(app,pool){
   const tx=async fn=>{const c=await pool.connect();try{await c.query('BEGIN');const out=await fn(c);await c.query('COMMIT');return out}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}};
   const auth=async(req,reply)=>{if(!await authenticate(req,reply,pool))return};
-  const permit=permission=>async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,permission))return reply.code(403).send({data:null,error:{code:'FORBIDDEN',message:'Недостаточно прав для инвентаризации склада'}})};
+  const permit=permission=>async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user,permission))return reply.code(403).send({data:null,error:{code:'FORBIDDEN',message:'Недостаточно прав для инвентаризации склада'}})};
   const view=permit(PERMISSIONS.WAREHOUSE_VIEW),manage=permit(PERMISSIONS.WAREHOUSE_INVENTORY);
 
   app.get('/api/v1/inventories',{preHandler:view},async(req,reply)=>{
