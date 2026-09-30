@@ -56,7 +56,7 @@ export async function lockAccounts(c,ids,user,{active=true}={}) {
   const accounts=(await c.query('SELECT * FROM finance_accounts WHERE id=ANY($1::int[]) ORDER BY id FOR UPDATE',[unique])).rows;
   if(accounts.length!==unique.length) reject('Денежный счёт не найден','NOT_FOUND',404);
   for(const a of accounts){
-    if(!canAdminFinance(user.role)){
+    if(!canAdminFinance(user)){
       if(Number(a.responsible_id)!==Number(user.id))reject('Нет доступа к этому источнику денег','FORBIDDEN',403);
       if(!await hasBranchMembership(c,user.id,a.branch_id))reject('Касса или счёт относятся к другому филиалу','FORBIDDEN',403);
     }
@@ -92,7 +92,7 @@ export async function createTransfer(c,user,body,key,digest) {
   const amount=money(body.amount),comment=text(body.comment,'Назначение перевода'),occurred_at=date(body.occurred_at),group=randomUUID();
   if(body.request_id)await requestAccess(c,body.request_id,user);
   const [fromAccount,toAccount]=await lockAccounts(c,[from,to],user);
-  if(fromAccount.branch_id!==toAccount.branch_id&&!canAdminFinance(user.role))reject('Перевод между филиалами доступен только бухгалтеру или собственнику','FORBIDDEN',403);
+  if(fromAccount.branch_id!==toAccount.branch_id&&!canAdminFinance(user))reject('Перевод между филиалами доступен только бухгалтеру или собственнику','FORBIDDEN',403);
   await c.query('INSERT INTO finance_transfers(id,from_account_id,to_account_id,amount,created_by,comment) VALUES($1,$2,$3,$4,$5,$6)',[group,from,to,amount,user.id,comment]);
   const common={kind:'TRANSFER',category:'TRANSFER',amount,comment,occurred_at,transfer_group_id:group,request_id:body.request_id||null,metadata:{fingerprint:digest}};
   const out=await insertEntry(c,user,{...common,type:'EXPENSE',account_id:from,idempotency_key:key});
