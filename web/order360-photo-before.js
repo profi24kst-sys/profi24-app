@@ -1,19 +1,19 @@
+import {MAX_UPLOAD_BYTES,prepareImageUpload,fileToDataUrl} from './image-upload.js';
 // PROFI24 Order360: explicit PHOTO_BEFORE evidence upload.
 (function(){
   const ACCEPT='.jpg,.jpeg,.png,.webp,.heic,.heif,.hif';
   const allowedRoles=new Set(['OWNER','SUPERVISOR','MANAGER','ENGINEER','TRAINEE']);
   const user=()=>{try{return JSON.parse(localStorage.getItem('user')||'null')}catch{return null}};
   const token=()=>localStorage.getItem('token')||'';
-  function toData(file){return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onerror=()=>reject(new Error('Не удалось прочитать файл'));reader.onload=()=>resolve(reader.result);reader.readAsDataURL(file)})}
   async function upload(input){
-    const file=input.files?.[0],root=input.closest('.o360');
+    const original=input.files?.[0],root=input.closest('.o360');
     const requestId=Number(root?.dataset.currentRequestId||0);
-    if(!file||!requestId)return;
-    if(file.size>8*1024*1024){input.value='';alert('Файл больше 8 МБ');return;}
+    if(!original||!requestId)return;
     const label=input.closest('[data-o360-photo-before]');
     try{
       label?.classList.add('busy');
-      const data=await toData(file);
+      const file=await prepareImageUpload(original);if(file.size>MAX_UPLOAD_BYTES)throw new Error('Максимальный размер файла 10 МБ');
+      const data=await fileToDataUrl(file);
       const response=await fetch(`/documents-api/v1/requests/${requestId}/files`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({name:file.name,kind:'PHOTO_BEFORE',data})});
       const json=await response.json().catch(()=>({}));
       if(!response.ok)throw new Error(json.error?.message||`Ошибка ${response.status}`);
