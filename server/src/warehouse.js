@@ -112,7 +112,7 @@ app.get('/api/v1/stock',{preHandler:warehouseView},async req=>{
  if(ids){p.push(ids);where+=` AND i.branch_id=ANY($${p.length}::int[])`}
  if(requested){p.push(requested);where+=` AND i.branch_id=$${p.length}`}
  if(search){p.push(`%${search}%`);where+=` AND (i.name ILIKE $${p.length} OR COALESCE(i.sku,'') ILIKE $${p.length} OR COALESCE(i.oem_code,'') ILIKE $${p.length} OR COALESCE(i.supplier,'') ILIKE $${p.length})`}
- const rows=(await q(`SELECT i.*,b.code branch_code,b.name branch_name,CASE WHEN i.quantity<=i.min_quantity THEN true ELSE false END low_stock,(i.quantity*i.purchase_price)::numeric stock_cost FROM warehouse_items i JOIN branches b ON b.id=i.branch_id ${where} ORDER BY low_stock DESC,b.name,i.name LIMIT 1000`,p)).rows;
+ const rows=(await q(`SELECT i.*,b.code branch_code,b.name branch_name,CASE WHEN i.quantity<=i.min_quantity THEN true ELSE false END low_stock,CASE WHEN i.min_quantity<=0 THEN true ELSE false END threshold_missing,(i.quantity*i.purchase_price)::numeric stock_cost FROM warehouse_items i JOIN branches b ON b.id=i.branch_id ${where} ORDER BY low_stock DESC,b.name,i.name LIMIT 1000`,p)).rows;
  return {data:rows};
 });
 
@@ -125,7 +125,7 @@ app.get('/api/v1/metrics',{preHandler:warehouseView},async req=>{
 });
 
 app.post('/api/v1/items',{preHandler:warehouseReceive},async(req,reply)=>{
- const {sku,name,oem_code,supplier,purchase_price=0,sale_price=0,min_quantity=0,location,notes}=req.body||{};
+ const {sku,name,oem_code,supplier,purchase_price=0,sale_price=0,min_quantity=1,location,notes}=req.body||{};
  if(!name?.trim())return fail(reply,'VALIDATION','Укажите название запчасти');
  const branchId=req.body?.branch_id?n(req.body.branch_id):await defaultBranch(pool,req.user);await assertBranchAccess(pool,req.user,branchId);
  try{const r=await q(`INSERT INTO warehouse_items(branch_id,sku,name,oem_code,supplier,purchase_price,sale_price,min_quantity,location,notes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,[branchId,sku?.trim()||null,name.trim(),oem_code?.trim()||null,supplier?.trim()||null,n(purchase_price),n(sale_price),n(min_quantity),location?.trim()||null,notes?.trim()||null]);return reply.code(201).send({data:r.rows[0]})}catch(e){if(e.code==='23505')return fail(reply,'DUPLICATE','Такая складская позиция уже есть в этом филиале',409);throw e}
@@ -216,3 +216,5 @@ app.get('/api/v1/transfers',{preHandler:warehouseView},async req=>{
 
 const close=async()=>{try{await pool.end()}finally{process.exit(0)}};process.on('SIGTERM',close);process.on('SIGINT',close);
 app.listen({port:Number(process.env.PORT||8081),host:'0.0.0.0'});
+
+// Existing zero-threshold items are preserved and surfaced via threshold_missing instead of rewritten.
