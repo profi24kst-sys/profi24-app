@@ -79,11 +79,17 @@ test('MANAGER не видит чужой филиал в списках и dashb
     assert.equal(invalidOrder.statusCode,422,invalidOrder.body);
     assert.equal(invalidOrder.json().error.code,'CUSTOM_FIELD_REQUIRED');
 
-    const unsupported=await app.inject({method:'POST',url:'/api/v1/requests',headers:managerHeaders,payload:{
-      customer_id:1,complaint:'Продажа пока не должна использовать процесс ремонта',order_type:'SALE',custom_fields:{}
+    const saleDef=await app.inject({method:'POST',url:'/api/v1/order-form/fields',headers:ownerHeaders,payload:{
+      code:'sale_note',label:'Комментарий продажи',field_type:'TEXT',required:true,order_types:['SALE']
     }});
-    assert.equal(unsupported.statusCode,422);
-    assert.equal(unsupported.json().error.code,'ORDER_TYPE_NOT_READY');
+    assert.equal(saleDef.statusCode,201,saleDef.body);
+    const sale=await app.inject({method:'POST',url:'/api/v1/requests',headers:managerHeaders,payload:{
+      customer_id:1,complaint:'Продажа техники клиенту',order_type:'SALE',custom_fields:{sale_note:'  Витринный образец  '}
+    }});
+    assert.equal(sale.statusCode,201,sale.body);
+    assert.equal(sale.json().data.order_type,'SALE');
+    assert.equal(sale.json().data.visit_type,'WORKSHOP');
+    assert.equal(sale.json().data.custom_fields.sale_note,'Витринный образец');
 
 
     const fieldDef=await app.inject({method:'POST',url:'/api/v1/order-form/fields',headers:ownerHeaders,payload:{
@@ -130,11 +136,20 @@ test('MANAGER не видит чужой филиал в списках и dashb
     }});
     assert.equal(conflicting.statusCode,422);
     assert.equal(conflicting.json().error.code,'VISIT_TYPE_MISMATCH');
-    const partsUnavailable=await app.inject({method:'POST',url:'/api/v1/requests',headers:managerHeaders,payload:{
-      customer_id:1,complaint:'Запчасти должны оформляться отдельно',order_type:'PARTS'
+    const partsDef=await app.inject({method:'POST',url:'/api/v1/order-form/fields',headers:ownerHeaders,payload:{
+      code:'parts_note',label:'Комментарий к запчасти',field_type:'TEXT',required:true,order_types:['PARTS']
     }});
-    assert.equal(partsUnavailable.statusCode,422);
-    assert.equal(partsUnavailable.json().error.code,'ORDER_TYPE_NOT_READY');
+    assert.equal(partsDef.statusCode,201,partsDef.body);
+    const partsOrder=await app.inject({method:'POST',url:'/api/v1/requests',headers:managerHeaders,payload:{
+      customer_id:1,complaint:'Заказ запчасти клиенту',order_type:'PARTS',custom_fields:{parts_note:'  Компрессор под заказ  '}
+    }});
+    assert.equal(partsOrder.statusCode,201,partsOrder.body);
+    assert.equal(partsOrder.json().data.order_type,'PARTS');
+    assert.equal(partsOrder.json().data.visit_type,'WORKSHOP');
+    assert.equal(partsOrder.json().data.custom_fields.parts_note,'Компрессор под заказ');
+    const partsWrongSchedule=await app.inject({method:'PATCH',url:'/api/v1/requests/'+partsOrder.json().data.id+'/schedule',headers:managerHeaders,payload:{visit_type:'FIELD'}});
+    assert.equal(partsWrongSchedule.statusCode,422);
+    assert.equal(partsWrongSchedule.json().error.code,'VISIT_TYPE_MISMATCH');
     const createOrder=await app.inject({method:'POST',url:'/api/v1/requests',headers:managerHeaders,payload:{
       customer_id:1,complaint:'Тест на настраиваемые поля',order_type:'REPAIR',custom_fields:{external_condition:'  Царапины на корпусе  '}
     }});
