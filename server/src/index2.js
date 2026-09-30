@@ -79,7 +79,7 @@ app.get('/api/v1/users/:id/permissions',{preHandler:roles('OWNER')},async(req,re
   const user=(await q('SELECT id,name,role,active FROM users WHERE id=$1',[id])).rows[0];if(!user)return err(reply,'NOT_FOUND','Сотрудник не найден',404);
   const rows=(await q('SELECT permission,allowed,updated_at,updated_by FROM user_permission_overrides WHERE user_id=$1 ORDER BY permission',[id])).rows;
   user.permission_overrides=Object.fromEntries(rows.map(row=>[row.permission,row.allowed===true]));
-  return {data:{user:{id:user.id,name:user.name,role:user.role,active:user.active},role_permissions:permissionsForRole(user.role),overrides:rows,effective_permissions:permissionsForUser(user)}};
+  return {data:{user:{id:user.id,name:user.name,role:user.role,active:user.active},available_permissions:Object.values(PERMISSIONS),role_permissions:permissionsForRole(user.role),overrides:rows,effective_permissions:permissionsForUser(user)}};
 });
 app.put('/api/v1/users/:id/permissions',{preHandler:roles('OWNER')},async(req,reply)=>{
   const id=Number(req.params.id),overrides=req.body?.overrides;
@@ -93,7 +93,7 @@ app.put('/api/v1/users/:id/permissions',{preHandler:roles('OWNER')},async(req,re
   });
   const rows=(await q('SELECT permission,allowed,updated_at,updated_by FROM user_permission_overrides WHERE user_id=$1 ORDER BY permission',[id])).rows;
   user.permission_overrides=Object.fromEntries(rows.map(row=>[row.permission,row.allowed===true]));
-  return {data:{user:{id:user.id,name:user.name,role:user.role,active:user.active},role_permissions:permissionsForRole(user.role),overrides:rows,effective_permissions:permissionsForUser(user)}};
+  return {data:{user:{id:user.id,name:user.name,role:user.role,active:user.active},available_permissions:Object.values(PERMISSIONS),role_permissions:permissionsForRole(user.role),overrides:rows,effective_permissions:permissionsForUser(user)}};
 });
 app.get('/api/v1/customers',{preHandler:auth},async req=>({data:(await q(`SELECT c.*,count(DISTINCT r.id)::int request_count,COALESCE(sum(r.paid),0)::numeric lifetime_paid
   FROM customers c LEFT JOIN requests r ON r.customer_id=c.id AND r.deleted_at IS NULL
