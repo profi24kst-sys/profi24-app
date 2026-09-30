@@ -106,6 +106,38 @@ test('HTTP acceptance: шесть ролей соблюдают границы �
       assert.equal((await call('finance','GET','/api/v1/audit-view',undefined,4)).status,403);
     });
 
+    await t.test('OWNER задаёт персональные overrides, они действуют между сервисами и сбрасываются к роли',async()=>{
+      let permissions=await call('index2','GET','/api/v1/users/4/permissions',undefined,1);
+      assert.equal(permissions.status,200,JSON.stringify(permissions));
+      assert.ok(permissions.data.role_permissions.includes('orders.discount'));
+      assert.ok(!permissions.data.role_permissions.includes('finance.audit'));
+
+      permissions=await call('index2','PUT','/api/v1/users/4/permissions',{overrides:{
+        'orders.discount':false,
+        'warehouse.view':false,
+        'finance.audit':true
+      }},1);
+      assert.equal(permissions.status,200,JSON.stringify(permissions));
+      assert.ok(!permissions.data.effective_permissions.includes('orders.discount'));
+      assert.ok(!permissions.data.effective_permissions.includes('warehouse.view'));
+      assert.ok(permissions.data.effective_permissions.includes('finance.audit'));
+
+      assert.equal((await call('index2','POST',`/api/v1/requests/${s.ownOrder}/discount`,{amount:50},4)).status,403);
+      assert.equal((await call('warehouse','GET','/api/v1/stock',undefined,4)).status,403);
+      assert.equal((await call('finance','GET','/api/v1/audit-view',undefined,4)).status,200);
+
+      permissions=await call('index2','PUT','/api/v1/users/4/permissions',{overrides:{}},1);
+      assert.equal(permissions.status,200);
+      assert.equal(permissions.data.overrides.length,0);
+      assert.ok(permissions.data.effective_permissions.includes('orders.discount'));
+      assert.ok(permissions.data.effective_permissions.includes('warehouse.view'));
+      assert.ok(!permissions.data.effective_permissions.includes('finance.audit'));
+
+      assert.equal((await call('index2','POST',`/api/v1/requests/${s.ownOrder}/discount`,{amount:50},4)).status,200);
+      assert.equal((await call('warehouse','GET','/api/v1/stock',undefined,4)).status,200);
+      assert.equal((await call('finance','GET','/api/v1/audit-view',undefined,4)).status,403);
+    });
+
     await t.test('ENGINEER работает только со своими заказами и не получает глобальные деньги/склад/закупки',async()=>{
       assert.equal((await call('index2','GET',`/api/v1/requests/${s.ownOrder}`,undefined,5)).status,200);
       assert.equal((await call('index2','GET',`/api/v1/requests/${s.foreignOrder}`,undefined,5)).status,403);
