@@ -1,5 +1,5 @@
 export const financeMoney = value => new Intl.NumberFormat('ru-KZ',{minimumFractionDigits:0,maximumFractionDigits:2}).format(Number(value||0))+' ₸';
-export const financeDate = () => new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Almaty',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+export const financeDate = () => new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Qostanay',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
 export const financeKey = () => globalThis.crypto?.randomUUID?.() || 'op-'+Date.now()+'-'+Math.random().toString(36).slice(2);
 export const financeUser = () => {try{return JSON.parse(localStorage.getItem('user')||'null');}catch{return null;}};
 export async function financeApi(path,{method='GET',body,key,signal}={}) {

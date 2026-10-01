@@ -112,6 +112,7 @@ jobs:
             form-validation-regression.cjs
             global-search-regression.cjs
             sidebar-navigation.cjs
+            finance-account-periods.cjs
             customer-merge-regression.cjs
             current-order360-regression.cjs
             documents-entrypoint-regression.cjs
