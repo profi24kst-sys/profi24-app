@@ -9,8 +9,9 @@ export const slaStatements=[
  ADD COLUMN IF NOT EXISTS sla_reacted_at TIMESTAMPTZ,
  ADD COLUMN IF NOT EXISTS sla_paused_at TIMESTAMPTZ`,
 `CREATE OR REPLACE FUNCTION request_sla_clock() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE policy sla_policies%ROWTYPE; pause_start TIMESTAMPTZ; elapsed INTERVAL;
+DECLARE policy sla_policies%ROWTYPE; pause_start TIMESTAMPTZ; elapsed INTERVAL; requested_deadline TIMESTAMPTZ;
 BEGIN
+ requested_deadline=NEW.sla_deadline;
  IF TG_OP='INSERT' THEN
   IF NEW.status NOT IN ('NEW','ASSIGNED') THEN RETURN NEW; END IF;
   SELECT * INTO policy FROM sla_policies WHERE order_type=NEW.order_type AND priority=NEW.priority;
@@ -39,6 +40,12 @@ BEGIN
  END IF;
  IF NEW.status NOT IN ('NEW','ASSIGNED','CANCELLED') AND NEW.sla_reacted_at IS NULL THEN
   NEW.sla_reacted_at=now(); NEW.sla_execution_deadline=now()+make_interval(mins=>NEW.sla_execution_minutes);
+ END IF;
+ -- Explicit, audited OWNER correction; ordinary order edits cannot change clocks.
+ IF TG_OP='UPDATE' AND COALESCE(current_setting('app.sla_override_request',true),'')=NEW.id::text THEN
+  IF NEW.sla_paused_at IS NOT NULL THEN RAISE EXCEPTION 'Сначала возобновите SLA после ожидания'; END IF;
+  IF NEW.sla_reacted_at IS NULL THEN NEW.sla_reaction_deadline=requested_deadline;
+  ELSE NEW.sla_execution_deadline=requested_deadline; END IF;
  END IF;
  NEW.sla_deadline=CASE
   WHEN NEW.status IN ('PAYMENT_REQUIRED','CLOSED','CANCELLED') OR NEW.sla_paused_at IS NOT NULL THEN NULL

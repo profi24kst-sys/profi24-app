@@ -62,6 +62,28 @@ test('SLA clocks, policies, holds, legacy records and automatic controls',async 
   await query("UPDATE requests SET status='REPAIR' WHERE id=$1",[order.id]);
   assert.equal(+new Date((await read(order.id)).sla_deadline),+new Date(before.sla_deadline));
  });
+ await t.test('explicit owner corrections change only the active phase and do not leak beyond their transaction',async()=>{
+  const corrected=new Date(Date.now()+4*3600000).toISOString();
+  const before=await read(order.id);
+  await query('BEGIN');
+  await query("SELECT set_config('app.sla_override_request',$1,true)",[String(order.id)]);
+  await query('UPDATE requests SET sla_deadline=$2 WHERE id=$1',[order.id,corrected]);
+  await query('COMMIT');
+  const after=await read(order.id);
+  assert.equal(+new Date(after.sla_execution_deadline),+new Date(corrected));
+  assert.equal(+new Date(after.sla_reaction_deadline),+new Date(before.sla_reaction_deadline));
+  assert.equal(after.sla_execution_minutes,before.sla_execution_minutes);
+  await query("UPDATE requests SET sla_deadline=now()-interval '1 day' WHERE id=$1",[order.id]);
+  assert.equal(+new Date((await read(order.id)).sla_deadline),+new Date(corrected));
+  const pending=await create('SLA-CORRECTION');
+  await query('BEGIN');
+  await query("SELECT set_config('app.sla_override_request',$1,true)",[String(pending.id)]);
+  await query('UPDATE requests SET sla_deadline=NULL WHERE id=$1',[pending.id]);
+  await query('COMMIT');
+  const removed=await read(pending.id);assert.equal(removed.sla_deadline,null);assert.equal(removed.sla_reaction_deadline,null);
+  await query("UPDATE requests SET status='ACCEPTED' WHERE id=$1",[pending.id]);
+  assert.ok((await read(pending.id)).sla_execution_deadline);
+ });
  await t.test('automatic controls are idempotent, skip pauses/finished orders and preserve manual decisions',async()=>{
   const overdue=await create('SLA-OVERDUE',"now()-interval '1 day'");
   const manual=await create('SLA-MANUAL',"now()-interval '1 day'");
