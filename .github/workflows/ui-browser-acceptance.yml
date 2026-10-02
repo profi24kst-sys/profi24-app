@@ -135,6 +135,7 @@ jobs:
             warehouse-stock-analytics-regression.cjs
             warehouse-inventory-regression.cjs
             diagnostic-load-race.cjs
+            engineer-form-drafts.cjs
             knowledge-base-regression.cjs
             fault-model-analytics-regression.cjs
             seasonal-load-forecast-regression.cjs
