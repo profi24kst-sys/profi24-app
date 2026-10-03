@@ -113,6 +113,7 @@ jobs:
             global-search-regression.cjs
             sidebar-navigation.cjs
             finance-account-periods.cjs
+            cash-flow-categories.cjs
             sla-settings.cjs
             order-views.cjs
             customer-merge-regression.cjs

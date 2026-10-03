@@ -39,6 +39,71 @@ async function setup(legacy=''){
 }
 async function runTx(pool,fn){const c=await pool.connect();try{await c.query('BEGIN');const result=await fn(c);await c.query('COMMIT');return result}catch(error){await c.query('ROLLBACK');throw error}finally{c.release()}}
 
+test('Статьи ДДС: тип, способы оплаты, отключение, версии, аудит и идемпотентность',async()=>{
+  const s=await setup();try{
+    const cash=await s.create('DDS cash','CASH',1000),bank=await s.create('DDS bank','BANK');
+    const body={name:'Сервисные поступления',type:'INCOME',payment_methods:['BANK']};
+    assert.equal((await s.api('POST','/api/v1/categories',body,3)).status,403);
+    assert.equal((await s.api('POST','/api/v1/categories',{...body,payment_methods:[]})).status,422);
+    const cat=await s.api('POST','/api/v1/categories',body);assert.equal(cat.status,201,JSON.stringify(cat));
+    assert.equal((await s.api('POST','/api/v1/categories',{...body,name:body.name.toUpperCase()})).status,409);
+    const posting={account_id:bank,type:'INCOME',category:cat.data.code,amount:'123.45',comment:'Тест ДДС',occurred_at:'2025-09-11'};
+    assert.equal((await s.api('POST','/api/v1/transactions',{...posting,account_id:cash})).status,422);
+    assert.equal((await s.api('POST','/api/v1/transactions',{...posting,type:'EXPENSE'})).status,422);
+    assert.equal((await s.api('POST','/api/v1/transactions',{...posting,category:'UNKNOWN'})).status,422);
+    assert.equal((await s.api('POST','/api/v1/transactions',{...posting,category:'PAYMENT'})).status,422);
+    const posted=await s.api('POST','/api/v1/transactions',posting,1,'dds-posting-key-0001');assert.equal(posted.status,201,JSON.stringify(posted));
+    assert.equal(posted.data.metadata.cash_flow_method,'BANK');
+    assert.equal((await s.api('PATCH','/api/v1/categories/'+cat.data.code,{type:'EXPENSE',version:1})).status,422);
+    assert.equal((await s.api('PATCH','/api/v1/categories/PARTS',{name:'Unsafe rename',version:1})).status,422);
+    const updated=await s.api('PATCH','/api/v1/categories/'+cat.data.code,{name:'Поступления сервиса',is_active:false,version:1});assert.equal(updated.status,200);
+    assert.equal((await s.api('PATCH','/api/v1/categories/'+cat.data.code,{name:'Stale overwrite',version:1})).status,409);
+    assert.equal((await s.api('POST','/api/v1/transactions',posting)).status,422);
+    assert.equal((await s.api('POST','/api/v1/transactions',posting,1,'dds-posting-key-0001')).data.id,posted.data.id);
+    assert.equal(await s.balance(bank),123.45);
+    const report=(await s.api('GET','/api/v1/cash-flow?month=2025-09&account_id='+bank)).data;
+    assert.equal(report.rows[0].category_name,'Поступления сервиса');assert.equal(Number(report.summary.income),123.45);
+    assert.equal((await s.query("SELECT count(*) n FROM finance_audit_log WHERE action IN ('CATEGORY_CREATED','CATEGORY_UPDATED')")).rows[0].n,2);
+    await migrateFinance(s.pool);assert.equal(await s.balance(bank),123.45);
+    assert.equal((await s.query('SELECT category FROM finance_transactions WHERE id=$1',[posted.data.id])).rows[0].category,cat.data.code);
+  }finally{await s.close();}
+});
+
+test('ДДС: границы дат, сверка остатков, переводы, сторно, история и права счёта',async()=>{
+  const s=await setup();try{
+    const own=await s.create('DDS assigned','CARD',0,3),foreign=await s.create('DDS foreign','CARD',0,4);
+    const post=(account_id,type,amount,occurred_at,category='OTHER',kind='MANUAL',extra={})=>runTx(s.pool,c=>insertEntry(c,{id:1},{account_id,type,amount,occurred_at,kind,category,comment:'Synthetic DDS fixture',...extra}));
+    await post(own,'INCOME',1000,'2025-09-09');
+    await post(own,'INCOME',50,'2025-09-10','LEGACY_UNKNOWN');
+    const expense=await post(own,'EXPENSE',20,'2025-09-11','TAXI');
+    await post(own,'INCOME',20,'2025-09-12','TAXI','REVERSAL',{reversal_of:expense.id});
+    await post(own,'INCOME',7,'2025-09-12','ADJUSTMENT','ADJUSTMENT');
+    await post(own,'INCOME',900,'2025-09-13');
+    await post(foreign,'INCOME',10000,'2025-09-11');
+    assert.equal((await s.api('POST','/api/v1/transfers',{from_account_id:own,to_account_id:foreign,amount:10,occurred_at:'2025-09-11',comment:'Synthetic DDS transfer'})).status,201);
+    const url='/api/v1/cash-flow?from=2025-09-10&to=2025-09-12';
+    const report=await s.api('GET',url,undefined,3);assert.equal(report.status,200,JSON.stringify(report));
+    assert.deepEqual(report.data.summary,{opening:1000,closing:1047,income:70,expense:20,net:50});
+    const rows=report.data.rows;
+    assert.equal(rows.find(r=>r.category==='LEGACY_UNKNOWN').category_name,'LEGACY_UNKNOWN');
+    assert.equal(Number(rows.find(r=>r.category==='TAXI').net),0);
+    assert.equal(Number(rows.find(r=>r.bucket==='transfer').net),-10);
+    assert.equal(Number(rows.find(r=>r.bucket==='adjustment').net),7);
+    assert.equal(rows.reduce((n,r)=>n+Number(r.net),report.data.summary.opening),report.data.summary.closing);
+    assert.equal((await s.api('GET',url+'&account_id='+foreign,undefined,3)).status,403);
+    assert.equal((await s.api('GET',url,undefined,2)).status,403);
+    const global=(await s.api('GET',url)).data;assert.equal(global.rows.filter(r=>r.bucket==='transfer').reduce((n,r)=>n+Number(r.net),0),0);
+    assert.deepEqual((await s.api('GET',url+'&payment_method=CARD',undefined,3)).data,report.data);
+    assert.equal((await s.api('GET',url+'&payment_method=CASH',undefined,3)).data.rows.length,0);
+    for(const bad of ['from=2025-09-10','from=2025-02-30&to=2025-03-01','from=2025-09-12&to=2025-09-10','payment_method=UNKNOWN'])assert.equal((await s.api('GET','/api/v1/cash-flow?'+bad)).status,422,bad);
+    assert.equal((await s.api('GET','/api/v1/requests/1/categories',undefined,2)).status,200);
+    assert.equal((await s.api('GET','/api/v1/requests/2/categories',undefined,2)).status,403);
+    // New postings retain their method even after an account's type changes.
+    await s.api('PATCH','/api/v1/accounts/'+own,{type:'BANK'});
+    assert.deepEqual((await s.api('GET',url+'&payment_method=CARD',undefined,3)).data,report.data);
+  }finally{await s.close();}
+});
+
 test('Сведения о покупке в заказе: источник, документ, автор и права доступа',async()=>{
   const s=await setup();try{
     const cash=await s.create('Касса офиса','CASH',10000),card=await s.create('Карта инженера','CARD',10000,2);
