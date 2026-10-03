@@ -1,3 +1,5 @@
+import {useOrderDraft,DraftNotice} from './order-draft.jsx';
+import {draftUser,draftSession} from './order-draft-store.js';
 import React,{useEffect,useRef,useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {Camera,Wallet,ShieldCheck,PackageCheck} from 'lucide-react';
@@ -33,13 +35,17 @@ function App(){
   const canReceivePayment=can(P.FINANCE_RECEIVE_PAYMENT,user?.role);
   const canClose=can(P.ORDERS_CLOSE,user?.role);
   const [open,setOpen]=useState(false),[id,setId]=useState(null),[data,setData]=useState(null);
-  const [accounts,setAccounts]=useState([]),[repair,setRepair]=useState(''),[test,setTest]=useState(''),[amount,setAmount]=useState('');
+  const [accounts,setAccounts]=useState([]),[amount,setAmount]=useState('');
   const [accountId,setAccountId]=useState(''),[message,setMessage]=useState('');
-  const paymentKey=useRef(financeKey());
+  const completionDraft=useOrderDraft('completion'),{repair_result:repair,test_result:test}=completionDraft.value;
+  const setRepair=v=>completionDraft.setValue(old=>({...old,repair_result:v})),setTest=v=>completionDraft.setValue(old=>({...old,test_result:v}));
+  const paymentKey=useRef(financeKey()),loadVersion=useRef(0);
   async function load(requestId=id){
     if(!requestId)return;
+    const version=++loadVersion.current,userId=draftUser(),session=draftSession();setData(null);
     const value=await completionApi('/requests/'+requestId);
-    setData(value);setRepair(value.completion?.repair_result||'');setTest(value.completion?.test_result||'');
+    if(version!==loadVersion.current||session!==draftSession())return;
+    setData(value);completionDraft.initialize(requestId,value.completion||{},userId,session);
     setAmount(String(Math.max(0,Number(value.request.total)-Number(value.request.paid))));setMessage('');
   }
   async function openCurrent(detail={}){
@@ -54,6 +60,7 @@ function App(){
     }catch(error){setMessage(error.message);setOpen(true);}
   }
   async function act(path,body={}){
+    const context=completionDraft.ticket();
     try{
       let result;
       if(path==='payment'){
@@ -66,10 +73,13 @@ function App(){
         if(path==='close'&&!canClose)throw new Error('У вашей роли нет права закрывать заказ');
         result=await completionApi('/requests/'+id+'/'+path,{method:'POST',body:JSON.stringify(body)});
       }
+      if(path==='repair-done')completionDraft.savedFields({repair_result:body.repair_result},context);
+      if(path==='test')completionDraft.savedFields({test_result:body.test_result},context);
       setMessage('Готово');await load();window.dispatchEvent(new CustomEvent('profi24:request-updated',{detail:{id}}));return result;
     }catch(error){setMessage(error.message);}
   }
   useEffect(()=>{const handler=event=>openCurrent(event.detail||{});window.addEventListener('profi24:open-completion',handler);return()=>window.removeEventListener('profi24:open-completion',handler);},[]);
+  useEffect(()=>{const close=()=>{loadVersion.current++;setOpen(false)};window.addEventListener('profi24:close-overlays',close);return()=>window.removeEventListener('profi24:close-overlays',close)},[]);
   if(!open)return null;
   const request=data?.request,balance=request?Math.max(0,Number(request.total)-Number(request.paid)):0;
   const overpayment=request?Math.max(0,Number(request.paid)-Number(request.total)):0;
@@ -78,10 +88,10 @@ function App(){
   const repairReady=!!data?.completion?.repair_result?.trim()&&!!data?.completion?.parts_posted;
   const testReady=!!data?.completion?.test_result?.trim();
   const closeReady=request?.status==='PAYMENT_REQUIRED'&&repairReady&&testReady&&after>0&&clientSignature&&balance<=0&&overpayment<=0.01;
-  return <div className="co"><header><div><h1>Завершение ремонта</h1><p>{request?'Заказ '+request.number+' · списание → проверка → оплата → гарантия':'Открытие заказа...'}</p></div><button onClick={()=>setOpen(false)}>×</button></header>
+  return <div className="co"><header><div><h1>Завершение ремонта</h1><p>{request?'Заказ '+request.number+' · списание → проверка → оплата → гарантия':'Открытие заказа...'}</p></div><button aria-label="Закрыть завершение ремонта" onClick={()=>{loadVersion.current++;setOpen(false)}}>×</button></header>
     {message&&<div className="coMsg">{message}</div>}
     {data&&<main><section className="coCard"><h2>Заказ {request.number}</h2><div className="coState"><span>Статус <b>{request.status}</b></span><span>Сумма <b>{financeMoney(request.total)}</b></span><span>Оплачено <b>{financeMoney(request.paid)}</b></span><span>Остаток <b>{financeMoney(balance)}</b></span></div>
-      <h3><PackageCheck/> 1. Ремонт выполнен</h3><textarea disabled={!canTechnical} placeholder="Что выполнено" value={repair} onChange={e=>setRepair(e.target.value)}/>{canTechnical?<button disabled={!repair.trim()} onClick={()=>act('repair-done',{repair_result:repair})}>Зафиксировать ремонт и списать резерв</button>:<p className="hint">Техническое завершение доступно инженеру и операционным ролям.</p>}<p className="hint">Зарезервированные запчасти списываются со склада и входят в фактическую себестоимость заказа.</p>
+      <DraftNotice draft={completionDraft}/><h3><PackageCheck/> 1. Ремонт выполнен</h3><textarea disabled={!canTechnical} placeholder="Что выполнено" value={repair} onChange={e=>setRepair(e.target.value)}/>{canTechnical?<button disabled={!repair.trim()} onClick={()=>act('repair-done',{repair_result:repair})}>Зафиксировать ремонт и списать резерв</button>:<p className="hint">Техническое завершение доступно инженеру и операционным ролям.</p>}<p className="hint">Зарезервированные запчасти списываются со склада и входят в фактическую себестоимость заказа.</p>
       <h3><Camera/> 2. Контрольная проверка</h3><textarea disabled={!canTechnical} placeholder="Результат проверки" value={test} onChange={e=>setTest(e.target.value)}/><div className={after?'ok':'warn'}>Фото после ремонта: {after}</div>{canTechnical&&<button disabled={!test.trim()} onClick={()=>act('test',{test_result:test})}>Проверка пройдена</button>}</section>
       <section className="coCard"><h3><Wallet/> 3. Оплата</h3>{!canReceivePayment?<p className="hint">У вашей роли нет права проводить оплату клиента.</p>:<><div className="payRow"><input type="number" min="0.01" step="0.01" value={amount} onChange={e=>{setAmount(e.target.value);paymentKey.current=financeKey();}}/><select required value={accountId} onChange={e=>{setAccountId(e.target.value);paymentKey.current=financeKey();}}><option value="">Выберите денежный счёт</option>{accounts.map(value=><option key={value.id} value={value.id}>{value.name} · {financeMoney(value.balance)}</option>)}</select></div>{!accounts.length&&<p className="warn">Нет доступного активного счёта для вашей роли.</p>}<button disabled={!balance||!accountId||Number(amount)<=0} onClick={()=>act('payment',{amount:Number(amount),account_id:accountId})}>Принять оплату</button></>}
         <h3><ShieldCheck/> 4. Закрытие и гарантия</h3><div className={repairReady?'ok':'warn'}>Ремонт и списание деталей: {repairReady?'зафиксированы':'не завершены'}</div><div className={testReady?'ok':'warn'}>Контрольная проверка: {testReady?'зафиксирована':'не завершена'}</div><div className={clientSignature?'ok':'warn'}>Подпись клиента: {clientSignature?'есть':'нет'}</div><div className={after?'ok':'warn'}>Фото после ремонта: {after?'есть':'нет'}</div><div className={balance<=0&&overpayment<=0.01?'ok':'warn'}>Оплата: {overpayment>0.01?'переплата '+financeMoney(overpayment):balance<=0?'полная':'осталось '+financeMoney(balance)}</div>{canClose?<button className="closeOrder" disabled={!closeReady} onClick={()=>act('close')}>{request.status==='CLOSED'?'Заказ закрыт':'Закрыть заказ и выпустить документы'}</button>:<p className="hint">Закрытие заказа выполняет менеджер, управляющий или собственник.</p>}{request.warranty_until&&<div className="warranty"><ShieldCheck/><span>Гарантия до <b>{new Date(request.warranty_until).toLocaleDateString('ru-RU')}</b></span></div>}</section></main>}
