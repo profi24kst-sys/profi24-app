@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
 import { migrateFinance } from '../src/finance/migrate.js';
 import { buildFinanceApp } from '../src/finance/app.js';
-import { fingerprint,money,today } from '../src/finance/service.js';
+import { fingerprint,money,today,insertEntry } from '../src/finance/service.js';
 import {cancelOrder,cancellationReadiness,refundPayment} from '../src/order-financial-actions.js';
 
 const fixture=`
@@ -207,5 +207,40 @@ test('Миграция прежней версии сохраняет начал
     const count=(await s.query('SELECT count(*) n FROM finance_audit_log')).rows[0].n;assert.equal(count,4);
     await migrateFinance(s.pool);assert.equal(await s.balance(1),397750);
     assert.equal((await s.query('SELECT count(*) n FROM finance_audit_log')).rows[0].n,count);
+  }finally{await s.close();}
+});
+
+
+test('Диапазон журнала: обе даты включены, остатки, пагинация, переводы и права счёта',async()=>{
+  const s=await setup();try{
+    const own=await s.create('Range own','CARD',0,3),foreign=await s.create('Range foreign','CARD',0,4);
+    const post=(account_id,type,amount,occurred_at)=>runTx(s.pool,c=>insertEntry(c,{id:1},{account_id,type,amount,occurred_at,kind:'MANUAL',category:'OTHER',comment:'Synthetic range fixture',document_reference:'TEST'}));
+    await post(own,'INCOME',100,'2025-09-09');
+    await post(own,'INCOME',50,'2025-09-10');
+    await post(own,'EXPENSE',20,'2025-09-12');
+    await post(own,'INCOME',900,'2025-09-13');
+    await post(foreign,'INCOME',10000,'2025-09-11');
+    const url='/api/v1/transactions?from=2025-09-10&to=2025-09-12';
+    const r=await s.api('GET',url,undefined,3);
+    assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.rows.length,2);
+    assert.deepEqual(Object.fromEntries(Object.entries(r.data.summary).map(([k,v])=>[k,Number(v)])),{opening:100,closing:130,income:50,expense:20});
+    assert.equal(r.data.period.from,'2025-09-10');assert.equal(r.data.period.to,'2025-09-12');
+    assert.equal((await s.api('GET',url+'&account_id='+foreign,undefined,3)).status,403);
+    const count=(await s.query('SELECT count(*) n FROM finance_transactions')).rows[0].n;
+    for(const bad of ['from=2025-09-10','to=2025-09-12','from=&to=','from=2025-02-30&to=2025-03-01','from=2025-09-12&to=2025-09-10','from=2024-01-01&to=2025-09-12','month=2025-09&from=2025-09-10&to=2025-09-12'])
+      assert.equal((await s.api('GET','/api/v1/transactions?'+bad)).status,422,bad);
+    assert.equal((await s.query('SELECT count(*) n FROM finance_transactions')).rows[0].n,count);
+    const monthly=await s.api('GET','/api/v1/transactions?month=2025-09&account_id='+own);
+    const ranged=await s.api('GET','/api/v1/transactions?from=2025-09-01&to=2025-09-30&account_id='+own);
+    assert.deepEqual(monthly.data,ranged.data);
+    for(let i=0;i<49;i++)await post(own,'INCOME',1,'2025-09-11');
+    const first=(await s.api('GET',url+'&account_id='+own)).data;
+    const second=(await s.api('GET',url+'&account_id='+own+'&page=2')).data;
+    assert.equal(first.rows.length,50);assert.equal(first.has_more,true);assert.equal(second.rows.length,1);
+    assert.deepEqual(first.summary,second.summary);assert.equal(Number(first.summary.closing),179);
+    const transfer=await s.api('POST','/api/v1/transfers',{from_account_id:own,to_account_id:foreign,amount:10,occurred_at:'2025-09-11',comment:'Synthetic transfer'});
+    assert.equal(transfer.status,201,JSON.stringify(transfer));
+    const filtered=(await s.api('GET',url+'&account_id='+own+'&transfers=true')).data;
+    assert.equal(filtered.rows.length,1);assert.equal(filtered.rows[0].kind,'TRANSFER');assert.equal(Number(filtered.summary.closing),169);
   }finally{await s.close();}
 });

@@ -1,7 +1,8 @@
+import {financePeriod} from './period.js';
 import { randomUUID } from 'node:crypto';
 import {loadPermissionOverrides} from '../access.js';
 import {canAdminFinance,isKnownRole} from '../rbac.js';
-import { reject,money,text,id,date,today,monthRange,fingerprint,operationKey,transaction,lockAccounts,requestAccess,insertEntry,replay,createTransfer,recalcParts } from './service.js';
+import { reject,money,text,id,date,today,fingerprint,operationKey,transaction,lockAccounts,requestAccess,insertEntry,replay,createTransfer,recalcParts } from './service.js';
 
 export async function financeRoutes(app,pool) {
   const q=(s,p=[])=>pool.query(s,p);
@@ -78,7 +79,7 @@ export async function financeRoutes(app,pool) {
   });
 
   app.get('/api/v1/transactions',{preHandler:auth},async req=>{
-    const [start,end]=monthRange(req.query?.month),account=req.query?.account_id?id(req.query.account_id):null;
+    const period=financePeriod(req.query),{dateStart:start,dateEnd:end}=period,account=req.query?.account_id?id(req.query.account_id):null;
     const page=Math.max(1,Math.min(100000,Number(req.query?.page)||1)),limit=50;
     if(!Number.isInteger(page))reject('Некорректная страница');
     if(account){const a=(await q(`SELECT a.id FROM finance_accounts a WHERE a.id=$3 AND ${allowedSql}`,[req.user.role,req.user.id,account])).rows[0];if(!a)reject('Нет доступа к счёту','FORBIDDEN',403);}
@@ -97,7 +98,7 @@ export async function financeRoutes(app,pool) {
       COALESCE(sum(f.amount) FILTER(WHERE occurred_at>=$4 AND occurred_at<$5 AND f.type='INCOME'),0) income,
       COALESCE(sum(f.amount) FILTER(WHERE occurred_at>=$4 AND occurred_at<$5 AND f.type='EXPENSE'),0) expense
       FROM finance_transactions f JOIN finance_accounts a ON a.id=f.account_id WHERE ${allowedSql} AND ($3::int IS NULL OR a.id=$3)`,params)).rows[0];
-    return {data:{rows:rows.slice(0,limit),has_more:rows.length>limit,page,summary}};
+    return {data:{rows:rows.slice(0,limit),has_more:rows.length>limit,page,summary,period:period.metadata}};
   });
 
   async function postExpense(req,reply,requestId=null) {

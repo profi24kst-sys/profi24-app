@@ -1,7 +1,7 @@
 import {canAccessAllOrders,canMutateOrder,isAssignedOnly,isKnownRole} from './rbac.js';
 import {registerComplaintRoutes} from './complaints-routes.js';
 import {runSchemaTransaction} from './schema-retry.js';
-import {reportPeriod} from './report-period.js';
+import {reportPeriod,reportPeriodMetadata} from './report-period.js';
 
 // Shared authentication and order authorization for every API service.
 const authenticated = Symbol('active-user');
@@ -178,11 +178,11 @@ export function installOrderAccess(app, db, service) {
       const scoped=async(start,end)=>{
         if(!branches.length)return zero;
         const params=[branches],where=["deleted_at IS NULL","status<>'CANCELLED'","branch_id=ANY($1::int[])"];
-        if(start&&end){params.push(start,end);where.push('created_at>=$2::date','created_at<$3::date')}else where.push("created_at>=date_trunc('month',now())");
+        if(start&&end){params.push(start,end);where.push('created_at>=$2::timestamptz','created_at<$3::timestamptz')}else where.push("created_at>=(date_trunc('month',now() AT TIME ZONE 'Asia/Qostanay') AT TIME ZONE 'Asia/Qostanay')");
         return (await db.query(`SELECT COALESCE(sum(total),0)::numeric revenue,COALESCE(sum(direct_cost),0)::numeric direct_cost,COALESCE(sum(total-direct_cost),0)::numeric gross_profit,COALESCE(sum(paid),0)::numeric paid,COALESCE(sum(GREATEST(total-paid,0)),0)::numeric outstanding FROM requests WHERE ${where.join(' AND ')}`,params)).rows[0];
       };
       const totals=await scoped(period?.start,period?.end),previous=period?await scoped(period.previousStart,period.previousEnd):null;
-      payload.data={totals,previous,period:period?{from:period.from,to:period.to,previous_from:period.previousFrom,previous_to:period.previousTo,days:period.days}:null};
+      payload.data={totals,previous,period:reportPeriodMetadata(period)};
       return payload;
     }
     return payload;

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {PGlite} from '@electric-sql/pglite';
 import {migrateCore} from '../src/migrate.js';
 import {calculatePayroll,payrollPeriod} from '../src/payroll-calculation.js';
+import {migrateFinance} from '../src/finance/migrate.js';
+import {buildFinanceApp} from '../src/finance/app.js';
 import {resolvePayrollExpense} from '../src/finance/pnl.js';
 
 test('Stage D P&L uses approved payroll snapshot instead of recalculating locked salary',async()=>{
@@ -46,5 +48,35 @@ test('Stage D P&L uses approved payroll snapshot instead of recalculating locked
     assert.equal(Number(live.rows.find(x=>Number(x.id)===2).salary),30000);
     const after=await resolvePayrollExpense(pool,'2026-09-01','2026-10-01');
     assert.equal(Number(after.amount),10000,'P&L payroll must remain the approved 10,000 ₸ snapshot');
+
+    const partial=await resolvePayrollExpense(pool,'2026-09-10','2026-10-01');
+    assert.equal(partial.available,false);assert.equal(partial.amount,null);assert.equal(partial.reason,'INCOMPLETE_PAYROLL_MONTH');
+    await query(`INSERT INTO requests(number,customer_id,engineer_id,branch_id,status,complaint,total,direct_cost,paid,closed_at) VALUES
+      ('PNL-BEFORE',1,2,$1,'CLOSED','Boundary',50000,10000,50000,'2026-08-31T18:59:59Z'),
+      ('PNL-START',1,2,$1,'CLOSED','Boundary',20000,4000,20000,'2026-08-31T19:00:00Z'),
+      ('PNL-END',1,2,$1,'CLOSED','Boundary',30000,6000,30000,'2026-09-30T18:59:59Z'),
+      ('PNL-AFTER',1,2,$1,'CLOSED','Boundary',70000,14000,70000,'2026-09-30T19:00:00Z')`,[branch]);
+    await query(`INSERT INTO payroll_rule_versions(user_id,effective_from,base_salary,order_percent,active,reason,created_by)
+      VALUES(2,'2026-10-01',2000,10,true,'October fixture',1)`);
+    await query("SET TIME ZONE 'Pacific/Honolulu'");
+    const several=await resolvePayrollExpense(pool,'2026-09-01','2026-11-01');
+    assert.equal(several.amount,19000,'September locked 10000 + October live 2000 base and 7000 local-boundary commission');
+    assert.deepEqual(several.months.map(x=>x.month),['2026-09','2026-10']);
+    await migrateFinance(pool);
+    const app=await buildFinanceApp(pool,{logger:false,secret:'synthetic-pnl-range-test-secret'});
+    try{
+      const get=async query=>{const r=await app.inject({url:'/api/v1/pnl?'+query,headers:{authorization:'Bearer '+app.jwt.sign({id:1,role:'OWNER'})}});assert.equal(r.statusCode,200,r.body);return r.json().data;};
+      const post=async(url,payload)=>{const r=await app.inject({method:'POST',url,headers:{authorization:'Bearer '+app.jwt.sign({id:1,role:'OWNER'}),'idempotency-key':'pnl-fixture-'+url.split('/').at(-1)+'-'+payload.occurred_at},payload});assert.equal(r.statusCode,201,r.body);return r.json().data;};
+      const account=await post('/api/v1/accounts',{name:'PnL synthetic cash',type:'CASH',branch_id:branch,initial_amount:0});
+      await post('/api/v1/transactions',{account_id:account.id,type:'INCOME',amount:50,occurred_at:'2026-09-01',category:'OTHER',comment:'Synthetic income'});
+      await post('/api/v1/transactions',{account_id:account.id,type:'EXPENSE',amount:20,occurred_at:'2026-09-30',category:'RENT',comment:'Synthetic expense'});
+      const monthly=await get('month=2026-09');
+      const ranged=await get('from=2026-09-01&to=2026-09-30');
+      assert.equal(monthly.service_revenue,350000);assert.equal(monthly.direct_cost,70000);assert.equal(monthly.payroll,10000);assert.equal(monthly.net_profit,270030);assert.equal(monthly.other_income,50);assert.equal(monthly.operating_expenses,20);assert.equal(Number(monthly.expense_categories[0].amount),20);
+      assert.deepEqual({...monthly,month:null},ranged);
+      const day=await get('from=2026-09-30&to=2026-09-30');
+      assert.equal(day.service_revenue,30000);assert.equal(day.payroll,null);assert.equal(day.net_profit,null);assert.equal(day.payroll_unavailable_reason,'INCOMPLETE_PAYROLL_MONTH');
+      const period=await get('from=2026-09-01&to=2026-10-31');assert.equal(period.payroll,19000);assert.equal(period.service_revenue,420000);
+    }finally{await app.close();}
   }finally{await db.close();}
 });

@@ -23,7 +23,7 @@ export function id(value,label='Счёт') {
   if(!/^\d+$/.test(String(value??''))||!Number.isSafeInteger(Number(value))||Number(value)<1||Number(value)>2147483647) reject(`Выберите: ${label}`);
   return Number(value);
 }
-export const today = () => new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Almaty',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+export const today = () => new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Qostanay',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
 export function date(value=today()) {
   if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(value)||!Number.isFinite(Date.parse(value))||new Date(value).toISOString().slice(0,10)!==value||value>today()) reject('Укажите существующую дату не позднее сегодняшней');
   return value;

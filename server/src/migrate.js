@@ -22,6 +22,7 @@ import {websiteIntakeStatements} from './website-intake-schema.js';
 import {faultModelStatements} from './fault-model-schema.js';
 import {customerMergeStatements} from './customer-merge-schema.js';
 import {customerPortalStatements} from './customer-portal-schema.js';
+import {slaStatements} from './sla-schema.js';
 import {migrateFinance} from './finance/migrate.js';
 
 export async function migrateCore(pool) {
@@ -48,12 +49,13 @@ export async function migrateCore(pool) {
   for(const sql of faultModelStatements) await pool.query(sql);
   for(const sql of customerMergeStatements) await pool.query(sql);
   for(const sql of customerPortalStatements) await pool.query(sql);
+  for(const sql of slaStatements) await pool.query(sql);
 }
 if(process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const pool=new pg.Pool({connectionString:process.env.DATABASE_URL});
   try {
     await migrateCore(pool);
-    console.log(`Applied ${coreStatements.length+branchStatements.length+lifecycleStatements.length+lifecycleV2Statements.length+lifecycleV3Statements.length+lifecycleV4Statements.length+complaintStatements.length+customerFeedbackStatements.length+customerVisitConfirmationStatements.length+serviceContractStatements.length+equipmentCustodyStatements.length+equipmentPickupStatements.length+payrollV2Statements.length+payrollKpiStatements.length+payrollPaymentStatements.length+engineerRouteStatements.length+visitReadinessStatements.length+websiteIntakeStatements.length+faultModelStatements.length+customerMergeStatements.length+customerPortalStatements.length} database migration statements`);
+    console.log(`Applied ${coreStatements.length+branchStatements.length+lifecycleStatements.length+lifecycleV2Statements.length+lifecycleV3Statements.length+lifecycleV4Statements.length+complaintStatements.length+customerFeedbackStatements.length+customerVisitConfirmationStatements.length+serviceContractStatements.length+equipmentCustodyStatements.length+equipmentPickupStatements.length+payrollV2Statements.length+payrollKpiStatements.length+payrollPaymentStatements.length+engineerRouteStatements.length+visitReadinessStatements.length+websiteIntakeStatements.length+faultModelStatements.length+customerMergeStatements.length+customerPortalStatements.length+slaStatements.length} database migration statements`);
   } catch(error) {
     console.error('Migration failed:',error);
     process.exitCode=1;
