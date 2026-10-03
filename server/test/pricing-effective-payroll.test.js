@@ -29,8 +29,8 @@ test('Stage D pricing uses current effective payroll rule and lets SUPERVISOR ch
       ('Pricing Supervisor','pricing-supervisor@test.invalid','unused','SUPERVISOR',$1),
       ('Pricing Engineer','pricing-engineer@test.invalid','unused','ENGINEER',$1)`,[branch]);
     await query(`INSERT INTO payroll_rule_versions(user_id,effective_from,base_salary,order_percent,work_percent,gross_profit_percent,active,reason,created_by) VALUES
-      (3,'2026-09-01',0,10,0,0,true,'September commission',1),
-      (3,'2026-10-01',0,50,0,0,true,'October commission',1)`);
+      (3,CURRENT_DATE-1,0,10,0,0,true,'Current commission',1),
+      (3,CURRENT_DATE+1,0,50,0,0,true,'Future commission',1)`);
     await query("INSERT INTO customers(name,phone) VALUES('Pricing Client','707')");
     const request=(await query(`INSERT INTO requests(number,customer_id,engineer_id,branch_id,status,complaint,total,direct_cost,paid,created_at)
       VALUES('PRICE-EFFECTIVE',1,3,$1,'REPAIR','Pricing',100000,0,0,'2026-09-06T10:00:00Z') RETURNING id`,[branch])).rows[0];
@@ -50,6 +50,8 @@ test('Stage D pricing uses current effective payroll rule and lets SUPERVISOR ch
       const call=async token=>{const r=await app.inject({method:'GET',url:`/api/v1/requests/${request.id}/check`,headers:{authorization:'Bearer '+token}});return{status:r.statusCode,body:r.json()}};
       const a=await call(owner);assert.equal(a.status,200,JSON.stringify(a.body));assert.equal(Number(a.body.data.payroll_estimate),10000);
       const b=await call(supervisor);assert.equal(b.status,200,JSON.stringify(b.body));assert.equal(Number(b.body.data.payroll_estimate),10000);
+      await query("INSERT INTO payroll_rule_versions(user_id,effective_from,base_salary,order_percent,work_percent,gross_profit_percent,active,reason,created_by) VALUES(3,CURRENT_DATE,0,50,0,0,true,'New effective revision',1)");
+      const next=await call(owner);assert.equal(next.status,200,JSON.stringify(next.body));assert.equal(Number(next.body.data.payroll_estimate),50000);
     }finally{await app.close()}
   }finally{await db.close();delete globalThis.__pricingStageDPool;}
 });

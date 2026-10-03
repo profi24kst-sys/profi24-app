@@ -148,6 +148,31 @@ test('MANAGER не видит чужой филиал в списках и dashb
     }});
     assert.equal(injection.statusCode,422);assert.equal(injection.json().error.code,'UNKNOWN_CUSTOM_FIELD');
 
+    // Isolated fixtures at local midnight; old test records must not affect totals.
+    await query("UPDATE requests SET created_at='2020-01-01T00:00:00Z'");
+    for(const [suffix,stamp,total,branch,status] of [
+      ['PREVIOUS-START','2026-07-31T19:00:00Z',700,kst,'REPAIR'],
+      ['BEFORE-PREVIOUS','2026-07-31T18:59:59Z',9000,kst,'REPAIR'],
+      ['BEFORE-START','2026-08-31T18:59:59Z',100,kst,'REPAIR'],
+      ['START','2026-08-31T19:00:00Z',1000,kst,'REPAIR'],
+      ['END','2026-09-30T18:59:59Z',2000,kst,'REPAIR'],
+      ['AFTER-END','2026-09-30T19:00:00Z',8000,kst,'REPAIR'],
+      ['FOREIGN','2026-09-15T12:00:00Z',50000,other,'REPAIR'],
+      ['CANCELLED','2026-09-15T12:00:00Z',70000,kst,'CANCELLED']
+    ])await query('INSERT INTO requests(number,customer_id,manager_id,branch_id,status,complaint,total,created_at) VALUES($1,1,2,$2,$3,$4,$5,$6)',['PERIOD-'+suffix,branch,status,'Timezone fixture',total,stamp]);
+    for(const timezone of ['UTC','America/New_York']){
+      await query(`SET TIME ZONE '${timezone}'`);
+      const url='/api/v1/dashboard/finance?from=2026-09-01&to=2026-09-30';
+      const scoped=await call(url);assert.equal(scoped.status,200);
+      assert.equal(Number(scoped.data.totals.revenue),3000,timezone+' manager current');
+      assert.equal(Number(scoped.data.previous.revenue),800,timezone+' manager previous');
+      assert.equal(scoped.data.period.previous_from,'2026-08-01');
+      assert.equal(scoped.data.period.time_zone,'Asia/Qostanay');
+      const global=await app.inject({method:'GET',url,headers:ownerHeaders});assert.equal(global.statusCode,200,global.body);
+      assert.equal(Number(global.json().data.totals.revenue),53000,timezone+' owner current');
+      assert.equal(Number(global.json().data.previous.revenue),800,timezone+' owner previous');
+    }
+
   }finally{
     if(app)await app.close();await db.close();delete globalThis.__managerBranchPool;
   }

@@ -2,7 +2,18 @@ const{chromium}=require('playwright');
 const fs=require('fs'),path=require('path');
 const BASE=process.env.BASE_URL||'http://127.0.0.1:5173',EMAIL=process.env.E2E_EMAIL,PASSWORD=process.env.E2E_PASSWORD,artifacts=path.join(__dirname,'artifacts');fs.mkdirSync(artifacts,{recursive:true});
 function fail(message){throw new Error(message)}
-async function login(page){await page.goto(BASE,{waitUntil:'domcontentloaded'});await page.locator('input[autocomplete="username"]').fill(EMAIL);await page.locator('input[autocomplete="current-password"]').fill(PASSWORD);await page.getByRole('button',{name:'Войти'}).click();await page.waitForFunction(email=>{try{return JSON.parse(localStorage.user||'null')?.email===email}catch{return false}},EMAIL,{timeout:10000});await page.locator('aside').waitFor({state:'visible',timeout:10000})}
+async function login(page){
+ await page.goto(BASE,{waitUntil:'domcontentloaded'});
+ await page.locator('input[autocomplete="username"]').fill(EMAIL);
+ await page.locator('input[autocomplete="current-password"]').fill(PASSWORD);
+ // session-role-refresh reloads once after anonymous login. Await that actual
+ // navigation before executing API calls in the page's JavaScript context.
+ const reloaded=page.waitForEvent('framenavigated',{predicate:frame=>frame===page.mainFrame(),timeout:10000});
+ await page.getByRole('button',{name:'Войти'}).click();
+ await reloaded;await page.waitForLoadState('domcontentloaded');
+ await page.waitForFunction(email=>{try{return JSON.parse(localStorage.user||'null')?.email===email}catch{return false}},EMAIL,{timeout:10000});
+ await page.locator('aside').waitFor({state:'visible',timeout:10000});
+}
 async function api(page,url){for(let attempt=0;attempt<2;attempt++)try{return await page.evaluate(async url=>{const response=await fetch(url,{headers:{Authorization:`Bearer ${localStorage.token||''}`}}),text=await response.text();let json={};try{json=JSON.parse(text)}catch{}return{status:response.status,data:json.data,text}},url)}catch(error){if(attempt||!/Execution context was destroyed/i.test(String(error)))throw error;await page.waitForLoadState('domcontentloaded')}throw new Error('api retry exhausted')}
 (async()=>{const browser=await chromium.launch({headless:true}),context=await browser.newContext(),page=await context.newPage();try{
  await login(page);const month=new Date().toISOString().slice(0,7);const response=await api(page,`/analytics-api/v1/seasonal-load-forecast?as_of=${month}-15&history_months=24&horizon_months=3`);if(response.status!==200)fail(`forecast ${response.status} ${response.text}`);if(response.data?.horizon_months!==3||response.data?.months?.length!==3)fail(`forecast horizon ${JSON.stringify(response.data)}`);if(!response.data?.summary?.backtest||!response.data?.methodology?.error)fail('forecast evidence metadata missing');
