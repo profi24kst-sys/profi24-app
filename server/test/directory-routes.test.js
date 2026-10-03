@@ -226,3 +226,17 @@ test('directory: pagination, filter/search, role and branch visibility, Excel ex
     });
   }finally{await s.close()}
 });
+
+// Permission changes are read from the database on every request.
+test('directory JSON, XLSX and counts honor individual access and cost overrides',async()=>{
+ const s=await setup();try{
+  await s.query("INSERT INTO user_permission_overrides(user_id,permission,allowed) VALUES(3,'cost.view',false),(3,'finance.view',false)");
+  const orders=await s.call(3,'/api/v1/directory/orders?status=ALL');
+  assert.ok(orders.body.data.length);assert.ok(orders.body.data.every(r=>!Object.hasOwn(r,'direct_cost')));
+  const costs=sheetXml((await s.call(3,'/api/v1/directory/orders/export?status=ALL')).raw);
+  assert.ok(!costs.includes('Себестоимость'));assert.ok(!costs.includes('Валовая прибыль'));
+  assert.ok((await s.call(3,'/api/v1/directory/customers')).body.data.every(r=>!Object.hasOwn(r,'lifetime_paid')));
+  await s.query("INSERT INTO user_permission_overrides(user_id,permission,allowed) VALUES(3,'orders.view.all',false)");
+  for(const kind of ['orders','customers','equipment'])assert.equal((await s.call(3,'/api/v1/directory/'+kind)).body.meta.total,0);
+ }finally{await s.close()}
+});

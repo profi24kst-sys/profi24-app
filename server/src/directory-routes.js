@@ -1,3 +1,4 @@
+import {can,isAssignedOnly,PERMISSIONS} from './rbac.js';
 import {authenticate} from './access.js';
 import {xlsxBuffer} from './xlsx-export.js';
 
@@ -48,7 +49,9 @@ function monthPredicate(params,alias,month){
   return ' AND '+alias+'.created_at >= '+first+' AND '+alias+'.created_at < '+next;
 }
 
-function visibleRequest(params,role,userId,alias){
+function visibleRequest(params,subject,userId,alias){
+  const role=typeof subject==='string'?subject:subject.role;
+  if(!isAssignedOnly(role)&&!can(subject,PERMISSIONS.ORDERS_VIEW_ALL))return 'FALSE';
   if(['OWNER','SUPERVISOR','ACCOUNTANT'].includes(role))return 'TRUE';
   const user=parameter(params,userId);
   if(role==='MANAGER'){
@@ -96,12 +99,13 @@ function ordersQuery(role,userId,filters,{withStatus=true}={}){
   return{params,from,where:where.join(' AND '),baseWhere};
 }
 
-function customersQuery(role,userId,filters){
-  const params=[],accessible=visibleRequest(params,role,userId,'r');
+function customersQuery(subject,userId,filters){
+  const role=typeof subject==='string'?subject:subject.role;
+  const params=[],accessible=visibleRequest(params,subject,userId,'r');
   let joinFilter='r.deleted_at IS NULL AND '+accessible;
   joinFilter+=monthPredicate(params,'r',filters.month);
   const where=['c.deleted_at IS NULL'];
-  if(role==='MANAGER'||role==='ENGINEER'||role==='TRAINEE'||filters.month){
+  if(!can(subject,PERMISSIONS.ORDERS_VIEW_ALL)||role==='MANAGER'||role==='ENGINEER'||role==='TRAINEE'||filters.month){
     where.push('EXISTS (SELECT 1 FROM requests r WHERE r.customer_id=c.id AND '+joinFilter+')');
   }
   if(filters.focusId)where.push('c.id='+parameter(params,filters.focusId));
@@ -122,12 +126,12 @@ const ORDER_SORT=" ORDER BY CASE WHEN r.status NOT IN ('CLOSED','CANCELLED') THE
 const CUSTOMER_SELECT='SELECT c.id,c.name,c.phone,c.email,c.address,c.created_at,'+
   'count(r.id)::int request_count,COALESCE(sum(r.paid),0)::numeric lifetime_paid';
 
-function safeOrders(rows,role){
-  if(role!=='ENGINEER'&&role!=='TRAINEE')return rows;
+function safeOrders(rows,user){
+  if(can(user,PERMISSIONS.COST_VIEW))return rows;
   return rows.map(({direct_cost,...row})=>row);
 }
-function safeCustomers(rows,role){
-  if(role!=='ENGINEER'&&role!=='TRAINEE')return rows;
+function safeCustomers(rows,user){
+  if(can(user,PERMISSIONS.FINANCE_VIEW))return rows;
   return rows.map(({lifetime_paid,...row})=>row);
 }
 function dateTime(value){
@@ -171,7 +175,7 @@ export function registerDirectoryRoutes(app,pool){
     if(!ALL_ROLES.has(req.user.role))return fail(reply,'FORBIDDEN','Недостаточно прав',403);
     const parsed=parseDirectoryQuery(req.query,'orders');
     if(parsed.error)return fail(reply,'VALIDATION',parsed.error);
-    const filters=parsed.value,sql=ordersQuery(req.user.role,req.user.id,filters);
+    const filters=parsed.value,sql=ordersQuery(req.user,req.user.id,filters);
     const countSql='SELECT count(*)::int total,'+
       "count(*) FILTER(WHERE r.status NOT IN ('CLOSED','CANCELLED'))::int active,"+
       "count(*) FILTER(WHERE r.status='NEW')::int new,"+
@@ -186,19 +190,19 @@ export function registerDirectoryRoutes(app,pool){
     const counts=countsResult.rows[0],total=totalResult.rows[0].total;
     const p=[...sql.params],limit=parameter(p,filters.limit),offset=parameter(p,filters.offset);
     const rows=(await q(ORDER_SELECT+sql.from+' WHERE '+sql.where+ORDER_SORT+' LIMIT '+limit+' OFFSET '+offset,p)).rows;
-    return{data:safeOrders(rows,req.user.role),meta:{page:filters.page,limit:filters.limit,total,pages:Math.ceil(total/filters.limit),counts}};
+    return{data:safeOrders(rows,req.user),meta:{page:filters.page,limit:filters.limit,total,pages:Math.ceil(total/filters.limit),counts}};
   });
 
   app.get('/api/v1/directory/customers',{preHandler:auth},async(req,reply)=>{
     if(!ALL_ROLES.has(req.user.role))return fail(reply,'FORBIDDEN','Недостаточно прав',403);
     const parsed=parseDirectoryQuery(req.query,'customers');
     if(parsed.error)return fail(reply,'VALIDATION',parsed.error);
-    const filters=parsed.value,sql=customersQuery(req.user.role,req.user.id,filters);
+    const filters=parsed.value,sql=customersQuery(req.user,req.user.id,filters);
     const total=(await q('SELECT count(*)::int total FROM customers c WHERE '+sql.where,sql.params)).rows[0].total;
     const params=[...sql.params],limit=parameter(params,filters.limit),offset=parameter(params,filters.offset);
     const rows=(await q(CUSTOMER_SELECT+' FROM customers c LEFT JOIN requests r ON r.customer_id=c.id AND '+
       sql.joinFilter+' WHERE '+sql.where+' GROUP BY c.id ORDER BY c.created_at DESC,c.id DESC LIMIT '+limit+' OFFSET '+offset,params)).rows;
-    return{data:safeCustomers(rows,req.user.role),meta:{page:filters.page,limit:filters.limit,total,pages:Math.ceil(total/filters.limit)}};
+    return{data:safeCustomers(rows,req.user),meta:{page:filters.page,limit:filters.limit,total,pages:Math.ceil(total/filters.limit)}};
   });
 
   // Server-side equipment lookup: scope every row to the caller's accessible orders.
@@ -208,8 +212,8 @@ export function registerDirectoryRoutes(app,pool){
     const parsed=parseDirectoryQuery(req.query,'equipment');
     if(parsed.error)return fail(reply,'VALIDATION',parsed.error);
     const filters=parsed.value,params=[],where=['e.deleted_at IS NULL','c.deleted_at IS NULL'];
-    if(!['OWNER','SUPERVISOR','ACCOUNTANT'].includes(req.user.role)){
-      where.push('EXISTS (SELECT 1 FROM requests r WHERE r.equipment_id=e.id AND r.deleted_at IS NULL AND '+visibleRequest(params,req.user.role,req.user.id,'r')+')');
+    if(!can(req.user,PERMISSIONS.ORDERS_VIEW_ALL)||!['OWNER','SUPERVISOR','ACCOUNTANT'].includes(req.user.role)){
+      where.push('EXISTS (SELECT 1 FROM requests r WHERE r.equipment_id=e.id AND r.deleted_at IS NULL AND '+visibleRequest(params,req.user,req.user.id,'r')+')');
     }
     if(filters.focusId)where.push('e.id='+parameter(params,filters.focusId));
     if(req.query.customer_id!=null){
@@ -235,27 +239,29 @@ export function registerDirectoryRoutes(app,pool){
     if(!EXPORT_ROLES.has(req.user.role))return fail(reply,'FORBIDDEN','Экспорт доступен руководству и бухгалтерии',403);
     const parsed=parseDirectoryQuery(req.query,'orders');
     if(parsed.error)return fail(reply,'VALIDATION',parsed.error);
-    const sql=ordersQuery(req.user.role,req.user.id,parsed.value);
+    const sql=ordersQuery(req.user,req.user.id,parsed.value);
     const rows=(await q(ORDER_SELECT+sql.from+' WHERE '+sql.where+ORDER_SORT+' LIMIT '+(MAX_EXPORT+1),sql.params)).rows;
     if(rows.length>MAX_EXPORT)return fail(reply,'EXPORT_LIMIT','Слишком много строк: выберите месяц или уточните фильтры',422);
-    return xlsxReply(reply,'orders',ORDER_COLUMNS,rows.map(r=>[
+    const costVisible=can(req.user,PERMISSIONS.COST_VIEW);
+    return xlsxReply(reply,'orders',ORDER_COLUMNS.filter((c,i)=>costVisible||i!==13&&i!==14),rows.map(r=>[
       r.number,dateTime(r.created_at),r.customer_name,r.phone,[r.category,r.brand,r.model].filter(Boolean).join(' '),
       r.complaint,STATUS[r.status]||r.status,r.priority,r.engineer_name||'',dateTime(r.scheduled_at),
       amount(r.total),amount(r.paid),Math.max(0,amount(r.total)-amount(r.paid)),
       amount(r.direct_cost),amount(r.total)-amount(r.direct_cost),r.branch_code||''
-    ]));
+    ].filter((v,i)=>costVisible||i!==13&&i!==14)));
   });
 
   app.get('/api/v1/directory/customers/export',{preHandler:auth},async(req,reply)=>{
     if(!EXPORT_ROLES.has(req.user.role))return fail(reply,'FORBIDDEN','Экспорт доступен руководству и бухгалтерии',403);
     const parsed=parseDirectoryQuery(req.query,'customers');
     if(parsed.error)return fail(reply,'VALIDATION',parsed.error);
-    const sql=customersQuery(req.user.role,req.user.id,parsed.value);
+    const sql=customersQuery(req.user,req.user.id,parsed.value);
     const rows=(await q(CUSTOMER_SELECT+' FROM customers c LEFT JOIN requests r ON r.customer_id=c.id AND '+
       sql.joinFilter+' WHERE '+sql.where+' GROUP BY c.id ORDER BY c.created_at DESC,c.id DESC LIMIT '+(MAX_EXPORT+1),sql.params)).rows;
     if(rows.length>MAX_EXPORT)return fail(reply,'EXPORT_LIMIT','Слишком много строк: выберите месяц или уточните фильтры',422);
-    return xlsxReply(reply,'customers',CUSTOMER_COLUMNS,rows.map(c=>[
+    const financeVisible=can(req.user,PERMISSIONS.FINANCE_VIEW);
+    return xlsxReply(reply,'customers',CUSTOMER_COLUMNS.filter((c,i)=>financeVisible||i!==5),rows.map(c=>[
       c.name,c.phone,c.email||'',c.address||'',c.request_count,amount(c.lifetime_paid),dateTime(c.created_at)
-    ]));
+    ].filter((v,i)=>financeVisible||i!==5)));
   });
 }
