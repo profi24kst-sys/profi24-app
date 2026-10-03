@@ -1,3 +1,4 @@
+import {OrderViewControls,DEFAULT_COLUMNS,COLUMN_LABELS} from './order-view-controls.jsx';
 import React,{useEffect,useState} from 'react';
 import {ChevronLeft,ChevronRight,Download,Search} from 'lucide-react';
 import './directory-pages.css';
@@ -103,7 +104,7 @@ function useDirectory(kind,filter,refreshKey=0){
       if(mounted&&error.name!=='AbortError')setState(previous=>({...previous,loading:false,error:error.message}));
     });
     return()=>{mounted=false;controller.abort()};
-  },[kind,filter.search,filter.status,filter.page,filter.limit,filter.month,filter.focus_id,refreshKey]);
+  },[kind,filter.search,filter.status,filter.page,filter.limit,filter.month,filter.focus_id,filter.brand,filter.order_type,filter.engineer_id,filter.contract_id,filter.only_mine,refreshKey]);
   return state;
 }
 function Pagination({meta,limit,onPage,onLimit,loading}){
@@ -140,40 +141,51 @@ function useSearch(){
     const timer=setTimeout(()=>setSearch(draft.trim()),320);
     return()=>clearTimeout(timer);
   },[draft]);
-  return{draft,setDraft,search};
+  return{draft,setDraft,search,setSearch};
 }
 export function OrdersDirectory({open,user,refreshKey=0}){
   const [updates,setUpdates]=useState(0);
   useEffect(()=>{const refresh=()=>setUpdates(x=>x+1);window.addEventListener('profi24:request-updated',refresh);return()=>window.removeEventListener('profi24:request-updated',refresh)},[]);
-  const {draft,setDraft,search}=useSearch();
+  const {draft,setDraft,search,setSearch}=useSearch();
   const [status,setStatus]=useState('ACTIVE'),[page,setPage]=useState(1),[limit,setLimit]=useState(25);
   useEffect(()=>setPage(1),[search,status,limit]);
-  const filter={search,status,page,limit},state=useDirectory('orders',filter,refreshKey+updates);
+  const [extra,setExtra]=useState({}),[columns,setColumns]=useState(DEFAULT_COLUMNS),[fields,setFields]=useState([]);
+  const applyView=view=>{const {status:nextStatus='ACTIVE',search:nextSearch='',...rest}=view;setStatus(nextStatus);setDraft(nextSearch);setSearch(nextSearch.trim());setExtra(rest);setPage(1)};
+  const onFilter=(key,value)=>{setExtra(current=>({...current,[key]:value}));setPage(1)};
+  const savedFilter={...extra,status,search:draft.trim()},filter={...extra,search,status,page,limit},state=useDirectory('orders',filter,refreshKey+updates);
+  const columnLabel=code=>COLUMN_LABELS[code]||fields.find(f=>'custom:'+f.code===code)?.label||code;
+  const customValue=(order,code)=>{const field=fields.find(f=>'custom:'+f.code===code),value=order.custom_fields?.[code.slice(7)];return value==null?'—':field?.field_type==='SELECT'?field.options?.find(o=>String(o.id)===String(value))?.value||String(value):String(value)};
+  const grid={gridTemplateColumns:columns.map(c=>c==='complaint'?'minmax(190px,1.4fr)':c==='number'?'minmax(160px,1fr)':'minmax(150px,1fr)').join(' ')};
+  function cell(order,code){
+   if(code==='number')return <div><b>{order.number}</b><small>{date(order.created_at)}</small></div>;
+   if(code==='customer')return <div><b>{order.customer_name}</b><small>{order.phone} · {[order.brand,order.model||order.category].filter(Boolean).join(' ')}</small></div>;
+   if(code==='complaint')return <div className="ellipsis" title={order.complaint||''}>{order.complaint}</div>;
+   if(code==='engineer')return <div><b>{order.engineer_name||'Не назначен'}</b><small>{overdue(order)?'SLA просрочен':order.scheduled_at?'Выезд '+date(order.scheduled_at):'Без времени'}</small></div>;
+   if(code==='status')return <InlineWorkflow order={order}/>;
+   if(code==='total')return <b className="right">{money(order.total)}</b>;
+   return <div>{customValue(order,code)}</div>;
+  }
   useEffect(()=>{
     if(!state.loading&&page>Math.max(1,Number(state.meta.pages)||0))setPage(Math.max(1,Number(state.meta.pages)||0));
   },[state.loading,state.meta.pages,page]);
   const counts=state.meta.counts||{},exportable=EXPORT_ROLES.has(user?.role);
   return <>
     <div className="toolbar dir-toolbar"><SearchBox value={draft} onChange={setDraft} placeholder="Номер, клиент, телефон, техника, мастер…"/>
-      <div className="dir-tools"><span>Найдено: <b>{state.meta.total||0}</b></span>{exportable&&<ExportButton kind="orders" filter={{search,status}}/>}</div>
+      <div className="dir-tools"><span>Найдено: <b>{state.meta.total||0}</b></span>{exportable&&<ExportButton kind="orders" filter={{...extra,search,status}}/>}</div>
     </div>
+    <OrderViewControls user={user} filters={savedFilter} onFilter={onFilter} onApply={applyView} columns={columns} onColumns={setColumns} onFields={setFields}/>
     <div className="tabs" role="tablist" aria-label="Статусы заказов">
       {TABS.map(([key,label,count])=><button type="button" role="tab" aria-selected={status===key} className={status===key?'on':''}
         onClick={()=>{setStatus(key);setPage(1)}} key={key}>{label} <small>{counts[count]??0}</small></button>)}
     </div>
     {state.error&&<div className="errorbox" role="alert">{state.error}</div>}
-    <section className="table" aria-busy={state.loading}>
-      <div className="thead"><span>№ / дата</span><span>Клиент и техника</span><span>Неисправность</span><span>Ответственный</span><span>Статус</span><span>Сумма</span></div>
+    <section className="table dir-orders-config" aria-busy={state.loading}>
+      <div className="thead" style={grid}>{columns.map(code=><span key={code}>{columnLabel(code)}</span>)}</div>
       {state.rows.length?state.rows.map(order=><div key={order.id} role="button" tabIndex={0}
-        className={'trow'+(overdue(order)?' slaOverdue':'')}
+        className={'trow'+(overdue(order)?' slaOverdue':'')} style={grid}
         onClick={()=>open(order.id)}
         onKeyDown={event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();open(order.id)}}}>
-        <div><b>{order.number}</b><small>{date(order.created_at)}</small></div>
-        <div><b>{order.customer_name}</b><small>{order.phone} · {[order.brand,order.model||order.category].filter(Boolean).join(' ')}</small></div>
-        <div className="ellipsis" title={order.complaint||''}>{order.complaint}</div>
-        <div><b>{order.engineer_name||'Не назначен'}</b><small>{overdue(order)?'SLA просрочен':order.scheduled_at?'Выезд '+date(order.scheduled_at):'Без времени'}</small></div>
-        <InlineWorkflow order={order}/>
-        <b className="right">{money(order.total)}</b>
+        {columns.map(code=><React.Fragment key={code}>{cell(order,code)}</React.Fragment>)}
       </div>):<div className="empty">{state.loading?'Загрузка заказов…':'По выбранным фильтрам заказов нет'}</div>}
     </section>
     <Pagination meta={state.meta} limit={limit} onPage={setPage} onLimit={value=>{setLimit(value);setPage(1)}} loading={state.loading}/>
