@@ -21,7 +21,10 @@ if(!['localhost','127.0.0.1','[::1]'].includes(new URL(BASE).hostname))throw new
   await dialog.getByRole('button',{name:'Сохранить статью',exact:true}).click();assert.equal((await created).status(),201);
   await dialog.waitFor({state:'hidden'});await panel.getByRole('cell',{name,exact:true}).waitFor();
   const account=await page.evaluate(async name=>{
-   const r=await fetch('/finance-api/v1/accounts',{method:'POST',headers:{Authorization:'Bearer '+localStorage.token,'Content-Type':'application/json','Idempotency-Key':crypto.randomUUID()},body:JSON.stringify({name,type:'CASH',initial_amount:100,initial_reason:'Synthetic DDS browser fixture'})});
+   const branchResponse=await fetch('/finance-api/v1/branches',{headers:{Authorization:'Bearer '+localStorage.token}});
+   if(!branchResponse.ok)throw new Error(await branchResponse.text());const branch=(await branchResponse.json()).data[0];
+   if(!branch)throw new Error('Synthetic browser stack has no active branch');
+   const r=await fetch('/finance-api/v1/accounts',{method:'POST',headers:{Authorization:'Bearer '+localStorage.token,'Content-Type':'application/json','Idempotency-Key':crypto.randomUUID()},body:JSON.stringify({name,type:'CASH',branch_id:branch.id,initial_amount:100,initial_reason:'Synthetic DDS browser fixture'})});
    if(!r.ok)throw new Error(await r.text());return (await r.json()).data;
   },name+' cash');
   await panel.getByRole('button',{name:'Движение денег',exact:true}).click();

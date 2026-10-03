@@ -99,7 +99,7 @@ test('ДДС: границы дат, сверка остатков, перево
     assert.equal((await s.api('GET','/api/v1/requests/1/categories',undefined,2)).status,200);
     assert.equal((await s.api('GET','/api/v1/requests/2/categories',undefined,2)).status,403);
     // New postings retain their method even after an account's type changes.
-    await s.api('PATCH','/api/v1/accounts/'+own,{type:'BANK'});
+    const changed=await s.api('PATCH','/api/v1/accounts/'+own,{type:'BANK'});assert.equal(changed.status,200,JSON.stringify(changed));assert.equal(changed.data.type,'BANK');
     assert.deepEqual((await s.api('GET',url+'&payment_method=CARD',undefined,3)).data,report.data);
   }finally{await s.close();}
 });
