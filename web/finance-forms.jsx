@@ -4,7 +4,7 @@ import {financeApi,financeKey,financeDate,financeMoney,accountTypes} from './fin
 import {CategorySelect} from './finance-category-select.jsx';
 
 export function AccountSelect({accounts,value,onChange,label='Источник оплаты',exclude}) {
-  return <label>{label}<select required value={value||''} onChange={e=>onChange(e.target.value)}><option value="">Выберите счёт</option>{accounts.filter(a=>a.is_active&&String(a.id)!==String(exclude)).map(a=><option key={a.id} value={a.id}>{a.name}{a.branch_name?' · '+a.branch_name:''} · {financeMoney(a.balance)}</option>)}</select></label>;
+  return <label>{label}<select aria-label={label} required value={value||''} onChange={e=>onChange(e.target.value)}><option value="">Выберите счёт</option>{accounts.filter(a=>a.is_active&&String(a.id)!==String(exclude)).map(a=><option key={a.id} value={a.id}>{a.name}{a.branch_name?' · '+a.branch_name:''} · {financeMoney(a.balance)}</option>)}</select></label>;
 }
 export function FinanceDialog({title,close,children}) {
   const ref=useRef(null);
