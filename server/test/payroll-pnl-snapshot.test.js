@@ -68,7 +68,7 @@ test('Stage D P&L uses approved payroll snapshot instead of recalculating locked
       const get=async query=>{const r=await app.inject({url:'/api/v1/pnl?'+query,headers:{authorization:'Bearer '+app.jwt.sign({id:1,role:'OWNER'})}});assert.equal(r.statusCode,200,r.body);return r.json().data;};
       const post=async(url,payload)=>{const r=await app.inject({method:'POST',url,headers:{authorization:'Bearer '+app.jwt.sign({id:1,role:'OWNER'}),'idempotency-key':'pnl-fixture-'+url.split('/').at(-1)+'-'+payload.occurred_at},payload});assert.equal(r.statusCode,201,r.body);return r.json().data;};
       const account=await post('/api/v1/accounts',{name:'PnL synthetic cash',type:'CASH',branch_id:branch,initial_amount:0});
-      await post('/api/v1/transactions',{account_id:account.id,type:'INCOME',amount:50,occurred_at:'2026-09-01',category:'OTHER',comment:'Synthetic income'});
+      await post('/api/v1/transactions',{account_id:account.id,type:'INCOME',amount:50,occurred_at:'2026-09-01',category:'OTHER_INCOME',comment:'Synthetic income'});
       await post('/api/v1/transactions',{account_id:account.id,type:'EXPENSE',amount:20,occurred_at:'2026-09-30',category:'RENT',comment:'Synthetic expense'});
       const monthly=await get('month=2026-09');
       const ranged=await get('from=2026-09-01&to=2026-09-30');

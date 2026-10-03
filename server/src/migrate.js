@@ -22,6 +22,7 @@ import {websiteIntakeStatements} from './website-intake-schema.js';
 import {faultModelStatements} from './fault-model-schema.js';
 import {customerMergeStatements} from './customer-merge-schema.js';
 import {customerPortalStatements} from './customer-portal-schema.js';
+import {orderViewStatements} from './order-views.js';
 import {slaStatements} from './sla-schema.js';
 import {migrateFinance} from './finance/migrate.js';
 
@@ -50,6 +51,7 @@ export async function migrateCore(pool) {
   for(const sql of customerMergeStatements) await pool.query(sql);
   for(const sql of customerPortalStatements) await pool.query(sql);
   for(const sql of slaStatements) await pool.query(sql);
+  for(const sql of orderViewStatements) await pool.query(sql);
 }
 if(process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const pool=new pg.Pool({connectionString:process.env.DATABASE_URL});
