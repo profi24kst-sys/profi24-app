@@ -4,6 +4,9 @@ import {readFile} from 'node:fs/promises';
 import {createRequire,builtinModules} from 'node:module';
 import {pathToFileURL,fileURLToPath} from 'node:url';
 import path from 'node:path';
+import Fastify from 'fastify';
+import jwt from '@fastify/jwt';
+import {prepareKnowledgeBase,installKnowledgeBase} from '../src/knowledge-base.js';
 import {PGlite} from '@electric-sql/pglite';
 import {migrateCore} from '../src/migrate.js';
 import {buildFinanceApp} from '../src/finance/app.js';
@@ -50,6 +53,10 @@ async function setup(){
 
   const services={};
   services.index2=await load('index2');
+  services.analytics=await load('analytics');
+  services.knowledge=Fastify({logger:false});
+  await services.knowledge.register(jwt,{secret:process.env.JWT_SECRET||'dev-secret-change-me'});
+  await prepareKnowledgeBase(pool);installKnowledgeBase(services.knowledge,pool);apps.push(services.knowledge);
   services.warehouse=await load('warehouse');
   services.procurement=await load('procurement');
   services.finance=await buildFinanceApp(pool,{logger:false});apps.push(services.finance);
@@ -104,6 +111,68 @@ test('HTTP acceptance: шесть ролей соблюдают границы �
       assert.equal((await call('index2','POST',`/api/v1/requests/${s.ownOrder}/payment`,{amount:'100',account_id:s.ownerAccount.id},4)).status,403);
       assert.equal((await call('index2','POST',`/api/v1/requests/${s.ownOrder}/payment`,{amount:'100',account_id:s.managerAccount.id},4)).status,200);
       assert.equal((await call('finance','GET','/api/v1/audit-view',undefined,4)).status,403);
+    });
+
+    await t.test('OWNER задаёт персональные overrides, они действуют между сервисами и сбрасываются к роли',async()=>{
+      let permissions=await call('index2','GET','/api/v1/users/4/permissions',undefined,1);
+      assert.equal(permissions.status,200,JSON.stringify(permissions));
+      assert.ok(permissions.data.role_permissions.includes('orders.discount'));
+      assert.ok(!permissions.data.role_permissions.includes('finance.audit'));
+      assert.ok(permissions.data.available_permissions.includes('finance.audit'));
+      assert.ok(permissions.data.available_permissions.includes('warehouse.view'));
+
+      permissions=await call('index2','PUT','/api/v1/users/4/permissions',{overrides:{
+        'orders.discount':false,
+        'warehouse.view':false,
+        'finance.audit':true
+      }},1);
+      assert.equal(permissions.status,200,JSON.stringify(permissions));
+      assert.ok(!permissions.data.effective_permissions.includes('orders.discount'));
+      assert.ok(!permissions.data.effective_permissions.includes('warehouse.view'));
+      assert.ok(permissions.data.effective_permissions.includes('finance.audit'));
+
+      assert.equal((await call('index2','POST',`/api/v1/requests/${s.ownOrder}/discount`,{amount:50},4)).status,403);
+      assert.equal((await call('warehouse','GET','/api/v1/stock',undefined,4)).status,403);
+      assert.equal((await call('finance','GET','/api/v1/audit-view',undefined,4)).status,200);
+
+      permissions=await call('index2','PUT','/api/v1/users/4/permissions',{overrides:{}},1);
+      assert.equal(permissions.status,200);
+      assert.equal(permissions.data.overrides.length,0);
+      assert.ok(permissions.data.effective_permissions.includes('orders.discount'));
+      assert.ok(permissions.data.effective_permissions.includes('warehouse.view'));
+      assert.ok(!permissions.data.effective_permissions.includes('finance.audit'));
+
+      assert.equal((await call('index2','POST',`/api/v1/requests/${s.ownOrder}/discount`,{amount:50},4)).status,200);
+      assert.equal((await call('warehouse','GET','/api/v1/stock',undefined,4)).status,200);
+      assert.equal((await call('finance','GET','/api/v1/audit-view',undefined,4)).status,403);
+    });
+
+    await t.test('аналитика и база знаний соблюдают индивидуальные запреты и сброс прав',async()=>{
+      {const r=await call('analytics','GET','/api/v1/fault-models',undefined,2);assert.equal(r.status,200,JSON.stringify(r));}
+      assert.equal((await call('knowledge','GET','/api/v1/articles',undefined,2)).status,200);
+      assert.equal((await call('index2','PUT','/api/v1/users/2/permissions',{overrides:{'analytics.view':false,'knowledge.view':false}},1)).status,200);
+      assert.equal((await call('analytics','GET','/api/v1/fault-models',undefined,2)).status,403);
+      assert.equal((await call('knowledge','GET','/api/v1/articles',undefined,2)).status,403);
+      assert.equal((await call('index2','PUT','/api/v1/users/2/permissions',{overrides:{}},1)).status,200);
+      {const r=await call('analytics','GET','/api/v1/fault-models',undefined,2);assert.equal(r.status,200,JSON.stringify(r));}
+      assert.equal((await call('knowledge','GET','/api/v1/articles',undefined,2)).status,200);
+    });
+
+    await t.test('запрет технических операций не обходится разрешёнными комментариями',async()=>{
+      const order=(await query("INSERT INTO requests(number,customer_id,manager_id,engineer_id,branch_id,status,complaint,total) VALUES('HTTP-OVERRIDE',1,4,5,$1,'REPAIR','Override isolation',1000) RETURNING id",[s.kst])).rows[0].id;
+      const override=async overrides=>assert.equal((await call('index2','PUT','/api/v1/users/5/permissions',{overrides},1)).status,200);
+      await override({'orders.technical':false});
+      assert.equal((await call('index2','POST',`/api/v1/requests/${order}/diagnosis`,{diagnosis:'Запрещённая диагностика'},5)).status,403);
+      assert.equal((await call('index2','POST',`/api/v1/requests/${order}/works`,{name:'Запрещённая работа',qty:1,unit_price:1},5)).status,403);
+      assert.equal((await call('index2','POST',`/api/v1/requests/${order}/notes`,{text:'Разрешённый комментарий'},5)).status,201);
+      assert.equal((await query('SELECT diagnosis FROM requests WHERE id=$1',[order])).rows[0].diagnosis,null);
+      assert.equal(Number((await query('SELECT count(*) n FROM request_works WHERE request_id=$1',[order])).rows[0].n),0);
+      await override({'orders.notes':false});
+      assert.equal((await call('index2','POST',`/api/v1/requests/${order}/notes`,{text:'Запрещённый комментарий'},5)).status,403);
+      assert.equal((await call('index2','POST',`/api/v1/requests/${order}/works`,{name:'Разрешённая работа',qty:1,unit_price:1},5)).status,201);
+      assert.equal(Number((await query('SELECT count(*) n FROM request_notes WHERE request_id=$1',[order])).rows[0].n),1);
+      await override({});
+      assert.equal((await call('index2','POST',`/api/v1/requests/${order}/notes`,{text:'Права восстановлены'},5)).status,201);
     });
 
     await t.test('ENGINEER работает только со своими заказами и не получает глобальные деньги/склад/закупки',async()=>{

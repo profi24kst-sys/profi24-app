@@ -22,8 +22,8 @@ export async function installFaultClassification(app,pool){
  await prepareFaultModelSchema(pool);
  await protectOrderTables(pool,['request_fault_classifications']);
  const auth=async(req,reply)=>{if(!await authenticate(req,reply,pool))return};
- const view=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,PERMISSIONS.KNOWLEDGE_VIEW)&&!can(req.user.role,PERMISSIONS.ORDERS_TECHNICAL))return fail(reply,'FORBIDDEN','Недостаточно прав для классификатора неисправностей',403)};
- const manage=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,PERMISSIONS.KNOWLEDGE_MANAGE))return fail(reply,'FORBIDDEN','Управление классификатором доступно владельцу и управляющему',403)};
+ const view=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user,PERMISSIONS.KNOWLEDGE_VIEW)&&!can(req.user,PERMISSIONS.ORDERS_TECHNICAL))return fail(reply,'FORBIDDEN','Недостаточно прав для классификатора неисправностей',403)};
+ const manage=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user,PERMISSIONS.KNOWLEDGE_MANAGE))return fail(reply,'FORBIDDEN','Управление классификатором доступно владельцу и управляющему',403)};
 
  app.get('/api/v1/fault-taxonomy',{preHandler:view},async req=>{
   const q=clean(req.query?.q,120),category=clean(req.query?.category,160),p=q?`%${q}%`:null;
@@ -50,7 +50,7 @@ export async function installFaultClassification(app,pool){
  app.get('/api/v1/requests/:id/fault-classification',{preHandler:auth},async(req,reply)=>{try{await requireOrder(pool,req.user,req.params.id)}catch(e){return fail(reply,e.code||'FORBIDDEN',e.message,e.statusCode||403)}return{data:await classificationRow(pool,Number(req.params.id))}});
 
  app.put('/api/v1/requests/:id/fault-classification',{preHandler:auth},async(req,reply)=>{
-  if(!can(req.user.role,PERMISSIONS.ORDERS_TECHNICAL))return fail(reply,'FORBIDDEN','Эта роль не может классифицировать ремонт',403);let order;try{order=await requireOrder(pool,req.user,req.params.id,{mutable:true})}catch(e){return fail(reply,e.code||'FORBIDDEN',e.message,e.statusCode||403)}
+  if(!can(req.user,PERMISSIONS.ORDERS_TECHNICAL))return fail(reply,'FORBIDDEN','Эта роль не может классифицировать ремонт',403);let order;try{order=await requireOrder(pool,req.user,req.params.id,{mutable:true})}catch(e){return fail(reply,e.code||'FORBIDDEN',e.message,e.statusCode||403)}
   const faultId=Number(req.body?.fault_id),causeId=Number(req.body?.cause_id),actionId=Number(req.body?.action_id),note=clean(req.body?.note,2000);if(!faultId||!causeId||!actionId)return fail(reply,'VALIDATION','Выберите неисправность, причину и выполненное действие');
   const [fault,cause,action,equipment]=await Promise.all([
    pool.query('SELECT * FROM fault_catalog WHERE id=$1 AND active=true',[faultId]).then(x=>x.rows[0]),
@@ -77,7 +77,7 @@ export async function installFaultClassification(app,pool){
 
 function dateValue(v,fallback){if(!v)return fallback;const d=new Date(v);return Number.isNaN(d.getTime())?null:d}
 export async function installFaultModelAnalytics(app,pool,{preHandler}={}){
- await prepareFaultModelSchema(pool);const guard=preHandler||((req,reply)=>{if(!can(req.user?.role,PERMISSIONS.ANALYTICS_VIEW))return fail(reply,'FORBIDDEN','Недостаточно прав для аналитики',403)});
+ await prepareFaultModelSchema(pool);const guard=preHandler||((req,reply)=>{if(!can(req.user,PERMISSIONS.ANALYTICS_VIEW))return fail(reply,'FORBIDDEN','Недостаточно прав для аналитики',403)});
  app.get('/api/v1/fault-models',{preHandler:guard},async(req,reply)=>{const now=new Date(),fallbackFrom=new Date(now.getTime()-365*86400000),from=dateValue(req.query?.from,fallbackFrom),to=dateValue(req.query?.to,now);if(!from||!to||from>=to)return fail(reply,'VALIDATION','Некорректный период');const params=[from,to],where=["r.deleted_at IS NULL","r.status='CLOSED'","r.closed_at>=$1","r.closed_at<$2"];
   for(const [field,column] of [['branch_id','r.branch_id'],['category','e.category'],['brand','e.brand'],['model','e.model']])if(req.query?.[field]){params.push(field==='branch_id'?Number(req.query[field]):clean(req.query[field],200));where.push(field==='branch_id'?`${column}=$${params.length}`:`lower(COALESCE(${column},''))=lower($${params.length})`)}
   const base=where.join(' AND ');const coverage=(await pool.query(`SELECT count(*) FILTER(WHERE COALESCE(trim(e.model),'')<>'')::int eligible_orders,count(*) FILTER(WHERE COALESCE(trim(e.model),'')<>'' AND c.request_id IS NOT NULL)::int classified_orders FROM requests r LEFT JOIN equipment e ON e.id=r.equipment_id LEFT JOIN request_fault_classifications c ON c.request_id=r.id WHERE ${base}`,params)).rows[0];

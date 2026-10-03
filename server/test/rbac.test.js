@@ -4,7 +4,7 @@ import {PGlite} from '@electric-sql/pglite';
 import {migrateCore} from '../src/migrate.js';
 import {requireOrder} from '../src/access.js';
 import {
-  ROLE_CODES,ROLE_LABELS,PERMISSIONS,can,permissionsForRole,canAccessAllOrders,canAdminFinance,canMutateOrder,
+  ROLE_CODES,ROLE_LABELS,PERMISSIONS,can,permissionsForRole,permissionsForUser,canAccessAllOrders,canAdminFinance,canMutateOrder,
   isAssignedOnly,roleAllowed
 } from '../src/rbac.js';
 
@@ -67,6 +67,20 @@ test('permission layer разделяет операционные, финанс
   assert.deepEqual(permissionsForRole('UNKNOWN'),[]);
 });
 
+test('индивидуальные overrides добавляют и отнимают права поверх роли',()=>{
+  const P=PERMISSIONS;
+  const manager={role:'MANAGER',permission_overrides:{[P.ORDERS_DISCOUNT]:false,[P.FINANCE_REFUND]:true}};
+  assert.equal(can('MANAGER',P.ORDERS_DISCOUNT),true);
+  assert.equal(can(manager,P.ORDERS_DISCOUNT),false);
+  assert.equal(can('MANAGER',P.FINANCE_REFUND),false);
+  assert.equal(can(manager,P.FINANCE_REFUND),true);
+  assert.ok(!permissionsForUser(manager).includes(P.ORDERS_DISCOUNT));
+  assert.ok(permissionsForUser(manager).includes(P.FINANCE_REFUND));
+  assert.equal(can({role:'MANAGER',permission_overrides:{}},P.ORDERS_DISCOUNT),true);
+  assert.equal(canMutateOrder(manager,{service:'index2',route:'/api/v1/requests/:id/discount',method:'POST'}),false);
+  assert.equal(canMutateOrder({...manager,permission_overrides:{[P.ORDERS_DISCOUNT]:true}},{service:'index2',route:'/api/v1/requests/:id/discount',method:'POST'}),true);
+});
+
 test('Stage D разделяет зарплату, сводку ФОТ, self-view и управление KPI',()=>{
   const P=PERMISSIONS;
   assert.equal(can('OWNER',P.PAYROLL_VIEW),true);
@@ -117,6 +131,7 @@ test('миграция принимает шесть ролей и БД отве
   const pool={query,connect:async()=>({query,release(){}}),end:async()=>{}};
   try{
     await migrateCore(pool);
+    assert.equal((await query("SELECT to_regclass('public.user_permission_overrides') name")).rows[0].name,'user_permission_overrides');
     for(const [i,role] of ROLE_CODES.entries()){
       await query('INSERT INTO users(name,email,password_hash,role) VALUES($1,$2,$3,$4)',[role,`role-${i}@test.invalid`,'unused',role]);
     }
@@ -159,4 +174,22 @@ test('стажёр получает заказ только как участн�
     await query('UPDATE user_mentors SET mentor_id=1,updated_at=now() WHERE trainee_id=6');
     await assert.rejects(requireOrder(pool,{id:6,role:'TRAINEE'},mentorOrder),error=>error.code==='FORBIDDEN');
   }finally{await db.close();}
+});
+
+test('отдельные права технических операций, комментариев и файлов независимы',()=>{
+  const subject=overrides=>({role:'ENGINEER',permission_overrides:overrides});
+  const denied=subject({'orders.technical':false});
+  for(const operation of [
+    {service:'index2',route:'/api/v1/requests/:id/diagnosis',method:'POST'},
+    {service:'index2',route:'/api/v1/requests/:id/works',method:'POST'},
+    {service:'diagnostic-flow',route:'/api/v1/requests/:id/diagnosis',method:'PUT'},
+    {service:'completion',route:'/api/v1/requests/:id/repair-done',method:'POST'}
+  ])assert.equal(canMutateOrder(denied,operation),false,operation.service+operation.route);
+  const notes={service:'index2',route:'/api/v1/requests/:id/notes',method:'POST'};
+  const files={service:'documents',route:'/api/v1/requests/:id/files',method:'POST'};
+  assert.equal(canMutateOrder(denied,notes),true);
+  assert.equal(canMutateOrder(denied,files),true);
+  assert.equal(canMutateOrder(subject({'orders.notes':false}),notes),false);
+  assert.equal(canMutateOrder(subject({'orders.files':false}),files),false);
+  assert.equal(canMutateOrder(subject({'orders.notes':false,'orders.files':false}),{service:'index2',route:'/api/v1/requests/:id/diagnosis',method:'POST'}),true);
 });

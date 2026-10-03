@@ -19,10 +19,10 @@ const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,max:Number(pro
 const q=(s,p=[])=>pool.query(s,p);const n=v=>Number(v||0);const fail=(r,c,m,s=422)=>r.code(s).send({data:null,error:{code:c,message:m}});
 const tx=async fn=>{const c=await pool.connect();try{await c.query('BEGIN');const out=await fn(c);await c.query('COMMIT');return out}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}};
 const auth=async(req,reply)=>{if(!await authenticate(req,reply,pool))return;};
-const view=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,PERMISSIONS.PAYROLL_VIEW))return fail(reply,'FORBIDDEN','Нет доступа к зарплате',403)};
-const manage=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,PERMISSIONS.PAYROLL_MANAGE))return fail(reply,'FORBIDDEN','Нет прав на операции по зарплате',403)};
-const summaryView=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,PERMISSIONS.PAYROLL_SUMMARY_VIEW))return fail(reply,'FORBIDDEN','Нет доступа к сводке зарплаты',403)};
-const selfView=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,PERMISSIONS.PAYROLL_SELF_VIEW)&&!can(req.user.role,PERMISSIONS.PAYROLL_VIEW))return fail(reply,'FORBIDDEN','Нет доступа к собственным начислениям',403)};
+const view=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user,PERMISSIONS.PAYROLL_VIEW))return fail(reply,'FORBIDDEN','Нет доступа к зарплате',403)};
+const manage=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user,PERMISSIONS.PAYROLL_MANAGE))return fail(reply,'FORBIDDEN','Нет прав на операции по зарплате',403)};
+const summaryView=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user,PERMISSIONS.PAYROLL_SUMMARY_VIEW))return fail(reply,'FORBIDDEN','Нет доступа к сводке зарплаты',403)};
+const selfView=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user,PERMISSIONS.PAYROLL_SELF_VIEW)&&!can(req.user,PERMISSIONS.PAYROLL_VIEW))return fail(reply,'FORBIDDEN','Нет доступа к собственным начислениям',403)};
 const owner=async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(req.user.role!=='OWNER')return fail(reply,'FORBIDDEN','Это действие доступно только собственнику',403)};
 const money=v=>Math.round((Number(v||0)+Number.EPSILON)*100)/100;
 const monthStart=v=>payrollPeriod(v)[0];

@@ -41,7 +41,7 @@ function stage(request,events){
   return request.status;
 }
 function allowed(user,request,next){
-  if(!next||!can(user.role,next.permission))return false;
+  if(!next||!can(user,next.permission))return false;
   if(next.primaryEngineer&&user.role==='ENGINEER'&&Number(request.engineer_id)!==Number(user.id))return false;
   return true;
 }

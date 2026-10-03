@@ -64,3 +64,15 @@ test('image uploads use the shared 10 MB client limit and compression helper',as
   assert.match(ui,/до 10 МБ/);
   assert.doesNotMatch(ui,/до 8 МБ/);
 });
+
+
+test('owner staff UI exposes inherited and per-user permission modes',()=>{
+  const ui=read('web/app3.jsx');
+  assert.match(ui,/function PermissionEditor/);
+  assert.match(ui,/available_permissions/);
+  assert.match(ui,/По роли/);
+  assert.match(ui,/Индивидуально разрешено/);
+  assert.match(ui,/Индивидуально запрещено/);
+  assert.match(ui,/PUT/);
+  assert.match(ui,/\/users\/'\+employee\.id\+'\/permissions/);
+});

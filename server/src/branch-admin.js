@@ -11,7 +11,7 @@ const q=(s,p=[])=>pool.query(s,p);
 const fail=(reply,code,message,status=422)=>reply.code(status).send({data:null,error:{code,message}});
 const tx=async fn=>{const c=await pool.connect();try{await c.query('BEGIN');const out=await fn(c);await c.query('COMMIT');return out}catch(e){try{await c.query('ROLLBACK')}catch{}throw e}finally{c.release()}};
 const auth=async(req,reply)=>{if(!await authenticate(req,reply,pool))return;};
-const permit=permission=>async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,permission))return fail(reply,'FORBIDDEN','Недостаточно прав',403)};
+const permit=permission=>async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user,permission))return fail(reply,'FORBIDDEN','Недостаточно прав',403)};
 const branchId=v=>{const n=Number(v);return Number.isSafeInteger(n)&&n>0?n:null};
 const cleanCode=v=>String(v||'').trim().toUpperCase();
 const cleanText=(v,max=300)=>String(v||'').trim().slice(0,max);
@@ -28,7 +28,7 @@ app.setErrorHandler((e,req,reply)=>{
 app.get('/health',async()=>{await q('SELECT 1');return{ok:true,service:'branch-admin',version:'1.0.0'}});
 
 app.get('/api/v1/branches',{preHandler:permit(PERMISSIONS.BRANCHES_VIEW)},async req=>{
-  const global=can(req.user.role,PERMISSIONS.BRANCHES_MANAGE)||req.user.role==='ACCOUNTANT';
+  const global=can(req.user,PERMISSIONS.BRANCHES_MANAGE)||req.user.role==='ACCOUNTANT';
   const rows=global
     ?(await q(`SELECT b.*,(SELECT count(*) FROM user_branches ub JOIN users u ON u.id=ub.user_id WHERE ub.branch_id=b.id AND u.active=true)::int active_users,(SELECT count(*) FROM requests r WHERE r.branch_id=b.id AND r.deleted_at IS NULL AND r.status NOT IN ('CLOSED','CANCELLED'))::int active_orders FROM branches b ORDER BY b.active DESC,b.name`)).rows
     :(await q(`SELECT b.*,(SELECT count(*) FROM user_branches x JOIN users u ON u.id=x.user_id WHERE x.branch_id=b.id AND u.active=true)::int active_users,(SELECT count(*) FROM requests r WHERE r.branch_id=b.id AND r.deleted_at IS NULL AND r.status NOT IN ('CLOSED','CANCELLED'))::int active_orders FROM branches b JOIN user_branches ub ON ub.branch_id=b.id WHERE ub.user_id=$1 AND b.active=true ORDER BY ub.is_primary DESC,b.name`,[req.user.id])).rows;
@@ -66,7 +66,7 @@ app.patch('/api/v1/branches/:id',{preHandler:permit(PERMISSIONS.BRANCHES_MANAGE)
 
 app.get('/api/v1/users/:id/branches',{preHandler:auth},async(req,reply)=>{
   const target=branchId(req.params.id);if(!target)return fail(reply,'VALIDATION','Некорректный сотрудник');
-  if(Number(req.user.id)!==target&&!can(req.user.role,PERMISSIONS.BRANCHES_MANAGE)&&!can(req.user.role,PERMISSIONS.STAFF_MANAGE))return fail(reply,'FORBIDDEN','Недостаточно прав',403);
+  if(Number(req.user.id)!==target&&!can(req.user,PERMISSIONS.BRANCHES_MANAGE)&&!can(req.user,PERMISSIONS.STAFF_MANAGE))return fail(reply,'FORBIDDEN','Недостаточно прав',403);
   const user=(await q('SELECT id,name,role,active,primary_branch_id FROM users WHERE id=$1',[target])).rows[0];if(!user)return fail(reply,'NOT_FOUND','Сотрудник не найден',404);
   const rows=(await q(`SELECT b.id,b.code,b.name,b.address,b.timezone,b.active,ub.is_primary,ub.created_at FROM user_branches ub JOIN branches b ON b.id=ub.branch_id WHERE ub.user_id=$1 ORDER BY ub.is_primary DESC,b.name`,[target])).rows;
   return{data:{user,branches:rows}};

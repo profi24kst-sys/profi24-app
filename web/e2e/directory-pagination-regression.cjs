@@ -18,7 +18,9 @@ function assert(condition,message){if(!condition)throw new Error(message)}
     await page.goto(BASE+'/orders',{waitUntil:'domcontentloaded',timeout:30000});
     await page.locator('input[autocomplete="username"]').fill(EMAIL);
     await page.locator('input[autocomplete="current-password"]').fill(PASSWORD);
+    const loginReload=page.waitForEvent('framenavigated',{predicate:frame=>frame===page.mainFrame(),timeout:15000});
     await page.getByRole('button',{name:'Войти',exact:true}).click();
+    await loginReload;await page.waitForLoadState('domcontentloaded');
     await page.locator('aside').waitFor({state:'visible',timeout:15000});
     await page.waitForFunction(()=>Boolean(localStorage.getItem('token')),{timeout:15000});
     const token=await page.evaluate(()=>localStorage.getItem('token'));

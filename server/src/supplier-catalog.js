@@ -22,7 +22,7 @@ export async function prepareSupplierCatalog(pool){for(const sql of supplierCata
 export function installSupplierCatalog(app,pool){
  const tx=async fn=>{const c=await pool.connect();try{await c.query('BEGIN');const out=await fn(c);await c.query('COMMIT');return out}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}};
  const auth=async(req,reply)=>{if(!await authenticate(req,reply,pool))return};
- const permit=permission=>async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,permission))return fail(reply,'FORBIDDEN','Недостаточно прав',403)};
+ const permit=permission=>async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user,permission))return fail(reply,'FORBIDDEN','Недостаточно прав',403)};
  const view=permit(PERMISSIONS.PROCUREMENT_VIEW),manage=permit(PERMISSIONS.PROCUREMENT_MANAGE);
  async function branchIds(c,user){if(globalRoles.has(user.role))return null;return(await c.query('SELECT branch_id FROM user_branches WHERE user_id=$1',[user.id])).rows.map(x=>Number(x.branch_id))}
  async function defaultBranch(c,user){const u=(await c.query('SELECT primary_branch_id FROM users WHERE id=$1',[user.id])).rows[0];if(u?.primary_branch_id)return Number(u.primary_branch_id);return Number((await c.query("SELECT id FROM branches WHERE code='KST' AND active=true LIMIT 1")).rows[0]?.id||0)}

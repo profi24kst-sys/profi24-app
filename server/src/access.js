@@ -19,6 +19,12 @@ export function passwordPolicyError(value){
 async function tableExists(db,name){
   return Boolean((await db.query('SELECT to_regclass($1) name',[`public.${name}`])).rows[0]?.name);
 }
+export async function loadPermissionOverrides(db,userId){
+  try{
+    const rows=(await db.query('SELECT permission,allowed FROM user_permission_overrides WHERE user_id=$1',[userId])).rows;
+    return Object.fromEntries(rows.map(row=>[row.permission,row.allowed===true]));
+  }catch(error){if(error.code==='42P01')return{};throw error}
+}
 async function managerBranchIds(db,userId){
   if(!await tableExists(db,'user_branches'))return null;
   return (await db.query('SELECT branch_id FROM user_branches WHERE user_id=$1 ORDER BY branch_id',[userId])).rows.map(x=>Number(x.branch_id));
@@ -41,6 +47,7 @@ export async function authenticate(req, reply, db) {
   catch(error){if(error.code!=='42703')throw error;user=(await db.query('SELECT id,name,email,role FROM users WHERE id=$1 AND active=true',[req.user.id])).rows[0];}
   if (!user) { reply.code(403).send({data:null,error:{code:'FORBIDDEN',message:'Пользователь неактивен'}}); return false; }
   if (!isKnownRole(user.role)) { reply.code(403).send({data:null,error:{code:'FORBIDDEN',message:'Роль пользователя не поддерживается'}}); return false; }
+  user.permission_overrides=await loadPermissionOverrides(db,user.id);
   req.user = user;
   req[authenticated] = true;
   return true;
@@ -105,7 +112,7 @@ export async function requireOrder(db, user, requestId, {mutable=false, lock=fal
     if (isAssignedOnly(user.role) && !await hasTechnicalOrderAccess(db,user,order)) {
       throw accessError('FORBIDDEN','Нет доступа к этому заказу',403);
     }
-    if (!isAssignedOnly(user.role) && !canAccessAllOrders(user.role)) {
+    if (!isAssignedOnly(user.role) && !canAccessAllOrders(user)) {
       throw accessError('FORBIDDEN','Нет доступа к заказам',403);
     }
     if (!await hasManagerBranchAccess(db,user,order)) {
@@ -205,7 +212,7 @@ export function installOrderAccess(app, db, service) {
     }
     if (requestId == null) return;
     const readOnly = ['GET','HEAD'].includes(req.method);
-    if (!readOnly && !canMutateOrder(req.user.role,{service,route,method:req.method})) {
+    if (!readOnly && !canMutateOrder(req.user,{service,route,method:req.method})) {
       throw accessError('FORBIDDEN','Эта роль не может изменять ремонт или его операционные данные',403);
     }
     // Append-only evidence and documented corrections may bypass terminal/hold guards only where explicitly required.

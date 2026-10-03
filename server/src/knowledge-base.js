@@ -25,9 +25,9 @@ export async function prepareKnowledgeBase(pool){for(const sql of knowledgeBaseS
 export function installKnowledgeBase(app,pool){
  const tx=async fn=>{const c=await pool.connect();try{await c.query('BEGIN');const out=await fn(c);await c.query('COMMIT');return out}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}};
  const auth=async(req,reply)=>{if(!await authenticate(req,reply,pool))return};
- const permit=permission=>async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user.role,permission))return fail(reply,'FORBIDDEN','Недостаточно прав',403)};
+ const permit=permission=>async(req,reply)=>{await auth(req,reply);if(reply.sent)return;if(!can(req.user,permission))return fail(reply,'FORBIDDEN','Недостаточно прав',403)};
  const view=permit(PERMISSIONS.KNOWLEDGE_VIEW),manage=permit(PERMISSIONS.KNOWLEDGE_MANAGE);
- const canManage=req=>can(req.user?.role,PERMISSIONS.KNOWLEDGE_MANAGE);
+ const canManage=req=>can(req.user,PERMISSIONS.KNOWLEDGE_MANAGE);
  async function byId(c,id){return(await c.query(`${articleSelect} WHERE a.id=$1`,[Number(id)])).rows[0]||null}
  function snapshot(row){const out={id:row.id,version:row.version,status:row.status};for(const k of editable)out[k]=row[k]??'';out.published_at=row.published_at||null;return out}
  async function storeVersion(c,row,userId){await c.query('INSERT INTO knowledge_article_versions(article_id,version,snapshot,changed_by) VALUES($1,$2,$3::jsonb,$4)',[row.id,row.version,JSON.stringify(snapshot(row)),userId])}
