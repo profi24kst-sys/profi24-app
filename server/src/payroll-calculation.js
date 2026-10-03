@@ -33,8 +33,8 @@ async function versionedUsers(c,start,branchId=null){
 // Single source for live preview, payroll snapshots, P&L and order profitability.
 // Versioned rules take precedence. Legacy payroll_rules remain a compatibility fallback until every employee has a versioned rule.
 // branchId limits both employee ownership (primary branch) and orders used for commissions.
-export async function calculatePayroll(c,start,end,{branchId=null}={}) {
-  const users=await versionedUsers(c,start,branchId);
+export async function calculatePayroll(c,start,end,{branchId=null,calendarStart=start,calendarEnd=end}={}) {
+  const users=await versionedUsers(c,calendarStart,branchId);
   const orderParams=[start,end];let orderBranch='';
   if(branchId){orderParams.push(branchId);orderBranch=` AND branch_id=$${orderParams.length}`;}
   const orders=(await c.query(`SELECT id,branch_id,engineer_id,manager_id,total,direct_cost FROM requests
@@ -45,11 +45,11 @@ export async function calculatePayroll(c,start,end,{branchId=null}={}) {
     FROM request_works w JOIN requests r ON r.id=w.request_id
     WHERE r.deleted_at IS NULL AND r.status='CLOSED' AND r.closed_at>=$1 AND r.closed_at<$2${workBranch}
     GROUP BY w.request_id,COALESCE(w.performed_by,r.engineer_id)`,workParams)).rows;
-  const adjustmentParams=[start,end];let adjustmentBranch='';
+  const adjustmentParams=[calendarStart,calendarEnd];let adjustmentBranch='';
   if(branchId){adjustmentParams.push(branchId);adjustmentBranch=` AND branch_id=$${adjustmentParams.length}`;}
   const adjustments=(await c.query(`SELECT user_id,sum(amount) amount FROM payroll_adjustments
     WHERE period_month>=$1 AND period_month<$2${adjustmentBranch} GROUP BY user_id`,adjustmentParams)).rows;
-  const kpiParams=[start];let kpiBranch='';
+  const kpiParams=[calendarStart];let kpiBranch='';
   if(branchId){kpiParams.push(branchId);kpiBranch=` AND branch_id=$${kpiParams.length}`;}
   const kpi=(await c.query(`SELECT DISTINCT ON(user_id) id,user_id,bonus_amount,score FROM kpi_result_snapshots
     WHERE period_month=$1::date AND status='APPROVED'${kpiBranch}
