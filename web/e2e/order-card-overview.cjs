@@ -3,7 +3,7 @@ const assert=require('node:assert/strict'),{chromium}=require('playwright');
 const BASE=process.env.BASE_URL||'http://127.0.0.1:5173';
 (async()=>{
  const browser=await chromium.launch({headless:true}),context=await browser.newContext({serviceWorkers:'block',viewport:{width:1366,height:900}}),page=await context.newPage();
- const errors=[],unexpectedWrites=[],comments=[];let rejectComment=true,delayFirst=false,releaseFirst;
+ const errors=[],unexpectedWrites=[],comments=[];let rejectComment=true,delayFirst=false,releaseFirst;const delayed=[];
  const first={id:900001,number:'KST-2026-900001',status:'ACCEPTED',customer_name:'Синтетический клиент',phone:'0000000000',address:'Тестовый адрес',category:'Стиральная машина',brand:'BOSCH',model:'Fixture',serial_number:'SERIAL-UX',complaint:'<img src=x onerror=alert(1)>',diagnosis:'Тестовая диагностика',manager_name:'Тестовый менеджер',engineer_name:'Тестовый инженер',order_type:'FIELD',created_at:'2026-10-04T10:00:00Z',total:10000.75,paid:5950.25,discount_amount:100,works:[{id:1,name:'Тестовая работа',qty:1.5,unit_price:2000.5,performed_by_name:'Тестовый инженер'}],parts:[{id:1,name:'Тестовая деталь',qty:1,sale_price:3000,status:'REQUESTED'},{id:2,name:'Отменённая деталь',qty:1,sale_price:9000,status:'CANCELLED'}],payments:Array.from({length:6},(_,i)=>({id:11+i,kind:'PAYMENT',amount:1000,method:'CASH',account_name:'Тестовая касса',document_reference:'UX-'+i,created_by_name:'Тестовый кассир',created_at:'2026-10-04T10:00:00Z'})).concat({id:17,kind:'REFUND',amount:49.75,source_payment_id:11,method:'CASH',created_at:'2026-10-04T11:00:00Z'}),history:[{id:1,action:'REQUEST_CREATED',created_at:'2026-10-04T10:00:00Z'}]};
  const second={...first,id:900002,number:'KST-2026-900002',customer_name:'Второй тестовый клиент',total:0,paid:0,works:[],parts:[],payments:[],history:[]};
  page.on('pageerror',e=>errors.push(e.message));
@@ -19,7 +19,7 @@ const BASE=process.env.BASE_URL||'http://127.0.0.1:5173';
   }
   if(/^\/api\/v1\/requests\/90000[12]$/.test(path)){
    const data=path.endsWith('1')?structuredClone(first):second;
-   if(delayFirst&&path.endsWith('1')){delayFirst=false;await new Promise(resolve=>{releaseFirst=resolve})}
+   if(delayFirst&&path.endsWith('1')){await new Promise(resolve=>{delayed.push(resolve);releaseFirst=()=>{delayFirst=false;delayed.splice(0).forEach(done=>done())}})}
    return route.fulfill({json:{data}});
   }
   if(path==='/api/v1/requests')return route.fulfill({json:{data:[first,second]}});
@@ -55,7 +55,7 @@ const BASE=process.env.BASE_URL||'http://127.0.0.1:5173';
   await history.getByRole('button',{name:'Отправить',exact:true}).click();await history.locator('.o360TlFeed').getByText('Тестовый комментарий',{exact:true}).waitFor();
   assert.equal(await history.getByRole('textbox').inputValue(),'');assert.equal(comments.length,2);
   await history.getByRole('button',{name:'Закрыть историю заказа'}).click();assert.equal(await history.isVisible(),false);
-  const phoneLayout=await card.locator('main').evaluate(e=>({width:e.clientWidth,scroll:e.scrollWidth,overflow:[...e.querySelectorAll('*')].filter(x=>!x.closest('.o360OverviewTable,.o360SectionNav')&&x.getBoundingClientRect().right>e.getBoundingClientRect().right).map(x=>({tag:x.tagName,class:x.className,right:x.getBoundingClientRect().right,text:x.textContent.slice(0,120)})).slice(0,20)}));
+  const phoneLayout=await card.locator('main').evaluate(e=>({width:e.clientWidth,scroll:e.scrollWidth,overflow:[...e.querySelectorAll('*')].filter(x=>!x.closest('.o360OverviewTable,.o360SectionNav,.wfTrack')&&x.getBoundingClientRect().right>e.getBoundingClientRect().right).map(x=>({tag:x.tagName,class:x.className,right:x.getBoundingClientRect().right,text:x.textContent.slice(0,120)})).slice(0,20)}));
   console.log('ORDER_CARD_PHONE_LAYOUT: '+JSON.stringify(phoneLayout));
   assert.ok(phoneLayout.scroll<=phoneLayout.width+1,'Card must fit a phone; tables scroll inside: '+JSON.stringify(phoneLayout));
   await open(900001);await card.locator('#o360-overview').waitFor(); // Reopening the active order must reload it, not leave an empty card.
