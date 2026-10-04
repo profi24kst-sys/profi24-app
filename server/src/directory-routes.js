@@ -25,7 +25,14 @@ export function parseDirectoryQuery(query={},kind='orders'){
   if(focusId!=null&&(!Number.isSafeInteger(focusId)||focusId<1))return{error:'Некорректный номер клиента'};
   const month=query.month==null?'':String(query.month);
   if(month&&!/^20\d\d-(0[1-9]|1[0-2])$/.test(month))return{error:'Месяц укажите в формате ГГГГ-ММ'};
-  return{value:{page,limit,search,status,month,focusId,offset:(page-1)*limit}};
+  const brand=String(query.brand??'').trim(),orderType=String(query.order_type||'');
+  if(brand.length>120)return{error:'Бренд: максимум 120 символов'};
+  if(orderType&&!['REPAIR','FIELD','PAID_WORKSHOP','SALE','PARTS'].includes(orderType))return{error:'Неизвестный тип заказа'};
+  const idFilter=key=>query[key]==null||query[key]===''?null:Number(query[key]);
+  const engineerId=idFilter('engineer_id'),contractId=idFilter('contract_id');
+  if([engineerId,contractId].some(v=>v!==null&&(!Number.isSafeInteger(v)||v<1)))return{error:'Некорректный исполнитель или контракт'};
+  if(query.only_mine!=null&&![true,false,'true','false',''].includes(query.only_mine))return{error:'Некорректный фильтр своих заказов'};
+  return{value:{page,limit,search,status,month,focusId,offset:(page-1)*limit,brand,order_type:orderType,engineer_id:engineerId,contract_id:contractId,only_mine:query.only_mine===true||query.only_mine==='true'}};
 }
 
 function escapeLike(value){
@@ -49,7 +56,7 @@ function monthPredicate(params,alias,month){
   return ' AND '+alias+'.created_at >= '+first+' AND '+alias+'.created_at < '+next;
 }
 
-function visibleRequest(params,subject,userId,alias){
+export function visibleRequest(params,subject,userId,alias){
   const role=typeof subject==='string'?subject:subject.role;
   if(!isAssignedOnly(role)&&!can(subject,PERMISSIONS.ORDERS_VIEW_ALL))return 'FALSE';
   if(['OWNER','SUPERVISOR','ACCOUNTANT'].includes(role))return 'TRUE';
@@ -84,6 +91,11 @@ function ordersQuery(role,userId,filters,{withStatus=true}={}){
   }
   const month=monthPredicate(params,'r',filters.month);
   if(month)where.push(month.slice(5));
+  if(filters.brand)where.push('e.brand='+parameter(params,filters.brand));
+  if(filters.order_type)where.push('r.order_type='+parameter(params,filters.order_type));
+  if(filters.engineer_id)where.push('r.engineer_id='+parameter(params,filters.engineer_id));
+  if(filters.contract_id)where.push('EXISTS(SELECT 1 FROM service_maintenance_cycles mc JOIN service_contract_assets ca ON ca.id=mc.contract_asset_id WHERE mc.request_id=r.id AND ca.contract_id='+parameter(params,filters.contract_id)+')');
+  if(filters.only_mine){const mine=parameter(params,userId);where.push('(r.manager_id='+mine+' OR r.engineer_id='+mine+' OR EXISTS(SELECT 1 FROM request_participants rp WHERE rp.request_id=r.id AND rp.user_id='+mine+' AND rp.removed_at IS NULL))')}
   const baseWhere=where.join(' AND ');
   if(withStatus){
     if(filters.status==='ACTIVE')where.push("r.status NOT IN ('CLOSED','CANCELLED')");
@@ -120,6 +132,7 @@ function customersQuery(subject,userId,filters){
 }
 
 const ORDER_SELECT='SELECT r.id,r.number,r.status,r.priority,r.created_at,r.closed_at,r.scheduled_at,r.sla_deadline,'+
+  `r.order_type,COALESCE((SELECT jsonb_object_agg(f.code,r.custom_fields->f.code) FROM order_field_defs f WHERE f.active AND r.order_type=ANY(f.order_types) AND r.custom_fields ? f.code),'{}'::jsonb) custom_fields,`+
   'r.total,r.paid,r.direct_cost,r.source,r.complaint,r.branch_id,c.name customer_name,c.phone,'+
   'e.category,e.brand,e.model,eng.name engineer_name,b.code branch_code';
 const ORDER_SORT=" ORDER BY CASE WHEN r.status NOT IN ('CLOSED','CANCELLED') THEN 0 ELSE 1 END,r.created_at DESC,r.id DESC";
