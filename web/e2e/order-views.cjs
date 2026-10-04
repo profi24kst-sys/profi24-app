@@ -30,6 +30,8 @@ const BASE=process.env.BASE_URL||'http://127.0.0.1:5173';
  try{
   await page.goto(BASE+'/orders',{waitUntil:'networkidle'});
   const panel=page.getByRole('region',{name:'Представления заказов'});
+  await panel.getByText('Все фильтры',{exact:true}).click();
+  await panel.getByText('Сохранить и настроить список',{exact:true}).click();
   await panel.getByLabel('Фильтр по бренду').selectOption('BOSCH');
   await panel.getByLabel('Фильтр по исполнителю').selectOption('91');
   await panel.getByLabel('Мои заказы',{exact:true}).check();

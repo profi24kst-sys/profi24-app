@@ -116,6 +116,7 @@ jobs:
             cash-flow-categories.cjs
             sla-settings.cjs
             order-views.cjs
+            order-quick-lists.cjs
             customer-merge-regression.cjs
             current-order360-regression.cjs
             documents-entrypoint-regression.cjs
