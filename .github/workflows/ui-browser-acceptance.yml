@@ -117,6 +117,7 @@ jobs:
             sla-settings.cjs
             order-views.cjs
             order-quick-lists.cjs
+            order-card-overview.cjs
             customer-merge-regression.cjs
             current-order360-regression.cjs
             documents-entrypoint-regression.cjs
