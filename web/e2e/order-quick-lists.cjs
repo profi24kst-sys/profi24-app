@@ -14,6 +14,7 @@ const BASE=process.env.BASE_URL||'http://127.0.0.1:5173';
    queries.push(url.searchParams);
    return route.fulfill({json:{data:[{id:1,number:'UX-001',status:'WAITING_PART',customer_name:'Тестовый клиент',phone:'',brand:'BOSCH',complaint:'Тестовая неисправность',engineer_name:'Тестовый инженер',total:100}],meta:{total:1,page:1,pages:1,counts:{active:1,part:1}}}});
   }
+  if(path==='/api/v1/directory/orders/export')return route.fulfill({body:'synthetic export',headers:{'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}});
   if(path.includes('/workflow-api/'))return route.fulfill({json:{data:{status:'WAITING_PART',next:null}}});
   return route.fulfill({json:{data:path.includes('/dashboard')?{}:[]}});
  });
@@ -40,6 +41,10 @@ const BASE=process.env.BASE_URL||'http://127.0.0.1:5173';
   await changed(()=>panel.getByRole('button',{name:'Сбросить фильтры',exact:true}).click(),{status:'ACTIVE',search:'',brand:'',engineer_id:'',only_mine:''});
   await changed(()=>panel.getByRole('button',{name:'Мой стационар',exact:true}).click(),{status:'PART',brand:'BOSCH',engineer_id:'91',order_type:'PAID_WORKSHOP',only_mine:'true',search:'fixture',page:'1'});
   await panel.getByRole('button',{name:'Убрать фильтр Тип: Стационар',exact:true}).waitFor();
+  const exported=page.waitForRequest(r=>new URL(r.url()).pathname==='/api/v1/directory/orders/export');
+  await page.getByRole('button',{name:'Excel (.xlsx)',exact:true}).click();
+  const exportQuery=new URL((await exported).url()).searchParams;
+  for(const [key,value] of Object.entries({status:'PART',brand:'BOSCH',engineer_id:'91',order_type:'PAID_WORKSHOP',only_mine:'true',search:'fixture'}))assert.equal(exportQuery.get(key),value,'Export must match the displayed filters: '+key);
   await page.setViewportSize({width:390,height:844});
   assert.equal(await brands.getByRole('button',{name:'BOSCH',exact:true}).isVisible(),true);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true,'Page should fit a phone; the table scrolls inside its container');
