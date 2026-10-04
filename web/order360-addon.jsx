@@ -10,7 +10,8 @@ const token=()=>localStorage.token;async function api(base,p,o={}){const r=await
 function App(){const[open,setOpen]=useState(false),[id,setId]=useState(null),[r,setR]=useState(null),[approvals,setApprovals]=useState([]),[files,setFiles]=useState([]),[expenses,setExpenses]=useState([]),[workflow,setWorkflow]=useState(null),[profit,setProfit]=useState(null),[err,setErr]=useState(''),[busy,setBusy]=useState(false),[editDiag,setEditDiag]=useState(false),[part,setPart]=useState({name:'',qty:1,sale_price:'',purchase_price:''}),[expense,setExpense]=useState({category:'TAXI',amount:'',comment:''});
 const [historyOpen,setHistoryOpen]=useState(false),[loading,setLoading]=useState(false),historyButton=useRef(null),openVersion=useRef(0),activeOrder=useRef(null);activeOrder.current={open,id};
 function closeHistory(){setHistoryOpen(false);historyButton.current?.focus()}
-function openHistory(){setHistoryOpen(true);requestAnimationFrame(()=>document.getElementById('o360-history')?.focus())}
+function openHistory(){setHistoryOpen(true)}
+useEffect(()=>{if(historyOpen)document.getElementById('o360-history')?.focus()},[historyOpen]);
 function closeOrder(){openVersion.current++;loadVersion.current++;setOpen(false);setHistoryOpen(false);setR(null);window.Profi24O360State=null}
 const diagnosisDraft=useOrderDraft('diagnosis'),workDraft=useOrderDraft('work',{qty:1}),diag=diagnosisDraft.value.diagnosis,setDiag=v=>diagnosisDraft.setValue({diagnosis:v}),work=workDraft.value,setWork=workDraft.setValue,loadVersion=useRef(0);
 async function resolveTarget(detail={}){let target=detail.id||detail.request_id;if(target)return Number(target);if(detail.number){const x=await api(A,'/requests');return Number((x||[]).find(o=>String(o.number)===String(detail.number))?.id||0)}return 0}
