@@ -34,12 +34,10 @@ module.exports=async({browser,owner,base})=>{
   const d=m.p.locator('.drawer');await d.waitFor({state:'visible'});
   await d.locator('#new-customer-name').fill('Pilot Client '+s);
   await d.locator('#new-customer-phone').fill('+7705'+String(Date.now()).slice(-7));
-  await d.getByRole('button',{name:'Далее',exact:true}).click();
   await d.locator('#new-equipment-brand').fill('LG');
   await d.locator('#new-equipment-model').fill('PILOT-'+s);
-  await d.getByRole('button',{name:'Далее',exact:true}).click();
   await d.locator('#new-order-complaint').fill('Пилотный заказ '+s);
-  await d.locator('.grid2 select').nth(2).selectOption(String(users.ENGINEER.id));
+  await d.getByLabel('Инженер',{exact:true}).selectOption(String(users.ENGINEER.id));
   await d.getByRole('button',{name:'Создать заказ',exact:true}).click();
   await d.waitFor({state:'detached',timeout:20000});
   const rows=await api(m.p,'/api/v1/requests');

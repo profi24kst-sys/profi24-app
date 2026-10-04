@@ -44,9 +44,8 @@ async function api(page,url,{method='GET',body}={}){const headers={Authorization
   await drawer.locator('#new-order-customer-search').fill('E2E Поиск '+suffix);
   await drawer.locator('#new-order-customer-select').locator('option[value="'+customer.id+'"]').waitFor({state:'attached',timeout:10000});
   await drawer.locator('#new-order-customer-select').selectOption(String(customer.id));
-  await drawer.getByRole('button',{name:'Далее',exact:true}).click();
   await drawer.getByText('Техника клиента',{exact:true}).waitFor({state:'visible',timeout:8000});
-  await drawer.locator('select').first().selectOption(String(equipment.id));
+  await drawer.locator('#new-equipment-existing').selectOption(String(equipment.id));
   await drawer.getByRole('button',{name:'Закрыть создание заказа'}).click();
   console.log('global_search_regression=ok order='+order.number);
  }catch(error){try{await page.screenshot({path:path.join(artifacts,'global-search-failure.png'),fullPage:true})}catch{}fs.writeFileSync(path.join(artifacts,'global-search-error.txt'),String(error.stack||error));console.error(error);process.exitCode=1}
