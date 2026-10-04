@@ -55,7 +55,8 @@ const BASE=process.env.BASE_URL||'http://127.0.0.1:5173';
   await history.getByRole('button',{name:'Отправить',exact:true}).click();await history.locator('.o360TlFeed').getByText('Тестовый комментарий',{exact:true}).waitFor();
   assert.equal(await history.getByRole('textbox').inputValue(),'');assert.equal(comments.length,2);
   await history.getByRole('button',{name:'Закрыть историю заказа'}).click();assert.equal(await history.isVisible(),false);
-  assert.equal(await card.locator('main').evaluate(e=>e.scrollWidth<=e.clientWidth+1),true,'Card must fit a phone; tables scroll inside');
+  const phoneLayout=await card.locator('main').evaluate(e=>({width:e.clientWidth,scroll:e.scrollWidth,overflow:[...e.querySelectorAll('*')].filter(x=>!x.closest('.o360OverviewTable,.o360SectionNav')&&x.getBoundingClientRect().right>e.getBoundingClientRect().right).map(x=>({tag:x.tagName,class:x.className,right:x.getBoundingClientRect().right,text:x.textContent.slice(0,120)})).slice(0,20)}));
+  assert.ok(phoneLayout.scroll<=phoneLayout.width+1,'Card must fit a phone; tables scroll inside: '+JSON.stringify(phoneLayout));
   await open(900001);await card.locator('#o360-overview').waitFor(); // Reopening the active order must reload it, not leave an empty card.
   await nav.getByRole('button',{name:'История',exact:true}).click();await history.getByRole('textbox').fill('Черновик первого заказа');
   await open(900002);await card.locator('.o360Hero h2').getByText('Второй тестовый клиент',{exact:true}).waitFor();
