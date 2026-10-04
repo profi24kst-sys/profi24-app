@@ -36,10 +36,8 @@ function ok(v,msg){if(!v)throw Error(msg)}
    const drawer=page.locator('.drawer');await drawer.waitFor({state:'visible'});
    await drawer.locator('#new-customer-name').fill('E2E '+label+' '+suffix);
    await drawer.locator('#new-customer-phone').fill('+7705'+String(Date.now()+Math.floor(Math.random()*10000)).slice(-7));
-   await drawer.getByRole('button',{name:'Далее',exact:true}).click();
    await drawer.locator('#new-equipment-brand').fill('LG');
    await drawer.locator('#new-equipment-model').fill('TYPE-'+label+'-'+suffix);
-   await drawer.getByRole('button',{name:'Далее',exact:true}).click();
    await drawer.locator('#new-order-complaint').fill('Проверка '+label+' '+suffix);
    return drawer;
   }

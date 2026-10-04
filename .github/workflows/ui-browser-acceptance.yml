@@ -118,6 +118,7 @@ jobs:
             order-views.cjs
             order-quick-lists.cjs
             order-card-overview.cjs
+            order-intake-workspace.cjs
             customer-merge-regression.cjs
             current-order360-regression.cjs
             documents-entrypoint-regression.cjs
