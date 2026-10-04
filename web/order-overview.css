@@ -1,5 +1,5 @@
-.o360SectionNav{position:sticky;top:-18px;z-index:6;display:flex;gap:6px;overflow-x:auto;background:#f4f6f8;padding:10px 0;margin-bottom:12px;scrollbar-width:thin}
-.o360SectionNav button{flex-shrink:0;white-space:nowrap;background:#fff;border:1px solid #dfe4ea;border-radius:8px;padding:8px 12px;font-size:13px;color:#344054;cursor:pointer}
+.o360SectionNav{min-width:0;max-width:100%;box-sizing:border-box;position:sticky;top:-18px;z-index:6;display:flex;gap:6px;overflow-x:auto;background:#f4f6f8;padding:10px 0;margin-bottom:12px;scrollbar-width:thin}
+.o360SectionNav button{flex:0 0 auto;width:auto;height:auto;white-space:nowrap;background:#fff;border:1px solid #dfe4ea;border-radius:8px;padding:8px 12px;font-size:13px;color:#344054;cursor:pointer}
 .o360SectionNav button:hover{border-color:#e5b528;background:#fff8dc}
 .o360Overview{background:#fff;border:1px solid #e4e7ec;border-radius:12px;padding:18px;margin-bottom:14px;scroll-margin-top:56px}
 .o360Overview h3{margin:0 0 12px;font-size:15px}
