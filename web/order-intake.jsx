@@ -9,12 +9,12 @@ export function NewOrder({close,users,reload,call,categories,sources}){
  const start=initial.record?.values||emptyIntake();
  const[cid,setCid]=useState(start.cid),[eid,setEid]=useState(start.eid),[cust,setCust]=useState(start.cust),[dev,setDev]=useState(start.dev);
  const[form,setForm]=useState(start.form),[orderType,setOrderType]=useState(start.orderType);
- const[error,setError]=useState(initial.failure||''),[errors,setErrors]=useState({}),[saving,setSaving]=useState(false),savingRef=useRef(false),dialog=useRef(null),mounted=useRef(true),session=useRef(localStorage.token);
+ const[error,setError]=useState(initial.failure||''),[errors,setErrors]=useState({}),[saving,setSaving]=useState(false),savingRef=useRef(false),dialog=useRef(null),mounted=useRef(true);
  const[pending,setPending]=useState(initial.record?.pending||null),[draftWarning,setDraftWarning]=useState(''),[restored,setRestored]=useState(Boolean(initial.record));
  const[customerQuery,setCustomerQuery]=useState(''),[customerMatches,setCustomerMatches]=useState([]),[selectedCustomer,setSelectedCustomer]=useState(start.selectedCustomer),[customersLoading,setCustomersLoading]=useState(false),[customersError,setCustomersError]=useState(''),[customerRetry,setCustomerRetry]=useState(0);
  const[devs,setDevs]=useState([]),[equipmentLoading,setEquipmentLoading]=useState(false),[loadedEquipmentCustomer,setLoadedEquipmentCustomer]=useState(''),[equipmentError,setEquipmentError]=useState(''),[equipmentRetry,setEquipmentRetry]=useState(0);
  const[extraDefinitions,setExtraDefinitions]=useState([]),[extraValues,setExtraValues]=useState(start.extraValues),[extraState,setExtraState]=useState('loading'),[extraError,setExtraError]=useState(''),[schemaRetry,setSchemaRetry]=useState(0);
- const live=()=>mounted.current&&localStorage.token===session.current;
+ const live=()=>{try{const user=JSON.parse(localStorage.user||'null');return mounted.current&&Boolean(localStorage.token)&&Number(user?.id)===initial.scope?.userId&&user?.role===initial.scope?.role}catch{return false}};
  const snapshot=()=>({cid,eid,cust,dev,form,orderType,extraValues,selectedCustomer});
  useEffect(()=>{if(!live()||initial.failure)return;try{writeIntake(localStorage,initial.scope,snapshot(),pending);setDraftWarning('')}catch{setDraftWarning('Черновик не сохраняется в браузере. Освободите место или разрешите локальное хранение перед отправкой.')}},[cid,eid,cust,dev,form,orderType,extraValues,selectedCustomer,pending]);
  function discardDraft(){if(pending||savingRef.current)return;try{clearIntake(localStorage,initial.scope);const empty=emptyIntake();setCid(empty.cid);setEid(empty.eid);setCust(empty.cust);setDev(empty.dev);setForm(empty.form);setOrderType(empty.orderType);setExtraValues(empty.extraValues);setSelectedCustomer(null);setCustomerQuery('');setRestored(false);setErrors({});setError('')}catch{setDraftWarning('Не удалось удалить черновик из браузера')}}
@@ -67,11 +67,11 @@ export function NewOrder({close,users,reload,call,categories,sources}){
    setPending(operation);
    await call('/requests/intake',{method:'POST',headers:{'X-Idempotency-Key':operation.key},body:JSON.stringify(operation.body)});
    if(!live())return;
-   try{clearIntake(localStorage,initial.scope)}catch{/* Retaining a confirmed key is safe: reopening will replay the same order. */}
+   try{clearIntake(localStorage,initial.scope,operation.key)}catch{/* Retaining a confirmed key is safe: reopening will replay the same order. */}
    close();await reload();
   }catch(problem){
    if(live()){
-    if(problem.safeToEdit){try{writeIntake(localStorage,initial.scope,snapshot(),null);setPending(null)}catch{setDraftWarning('Не удалось обновить черновик. Повторите сохранение с тем же ключом.')}}
+    if(problem.safeToEdit){try{writeIntake(localStorage,initial.scope,snapshot(),null,Date.now(),operation.key);setPending(null)}catch{setDraftWarning('Не удалось обновить черновик. Повторите сохранение с тем же ключом.')}}
     setError(problem.message||'Не удалось подтвердить сохранение. Повторите с тем же ключом.');
    }
   }finally{savingRef.current=false;if(live())setSaving(false)}

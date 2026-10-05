@@ -26,14 +26,16 @@ export function readIntake(storage,scope,now=Date.now()){
  if(!pending&&now-record.updatedAt>TTL){storage.removeItem(k);return null}
  return {values:normalizeIntake(record.values),pending,updatedAt:record.updatedAt};
 }
-export function writeIntake(storage,scope,values,pending=null,now=Date.now()){
+export function writeIntake(storage,scope,values,pending=null,now=Date.now(),resolvedKey=null){
  const k=key(scope);if(!k)throw Error('Не удалось определить владельца черновика');
  const clean=normalizeIntake(values),operation=pendingOperation(pending);
+ const previous=readIntake(storage,scope,now);
+ if(previous?.pending&&previous.pending.key!==operation?.key&&previous.pending.key!==resolvedKey)throw Error('В другой вкладке есть незавершённое сохранение. Закройте и откройте форму для проверки результата.');
  if(!operation&&JSON.stringify(clean)===JSON.stringify(emptyIntake())){storage.removeItem(k);return}
  const raw=JSON.stringify({version:1,updatedAt:now,values:clean,pending:operation});
  if(raw.length>MAX)throw Error('Черновик слишком большой');storage.setItem(k,raw);
 }
-export function clearIntake(storage,scope){const k=key(scope);if(k)storage.removeItem(k)}
+export function clearIntake(storage,scope,confirmedKey=null,now=Date.now()){const k=key(scope);if(!k)return;const previous=readIntake(storage,scope,now);if(previous?.pending&&previous.pending.key!==confirmedKey)throw Error('Сначала подтвердите незавершённое сохранение');storage.removeItem(k)}
 export function clearSessionKeepingIntake(storage){
  const keys=Array.from({length:storage.length},(_,i)=>storage.key(i));
  for(const k of keys)if(k&&!k.startsWith(PREFIX))storage.removeItem(k);

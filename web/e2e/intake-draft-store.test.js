@@ -6,7 +6,7 @@ const storage=()=>{const entries=new Map();return{getItem:k=>entries.get(k)||nul
 test('intake draft survives reopen and is isolated by account and role',()=>{
  const s=storage(),value=emptyIntake();value.cust.name='Synthetic';value.extraValues={custom:'Saved'};writeIntake(s,scope,value,null,now);
  assert.deepEqual(readIntake(s,scope,now).values,value);assert.equal(readIntake(s,{...scope,userId:42},now),null);assert.equal(readIntake(s,{...scope,role:'OWNER'},now),null);
- clearIntake(s,scope);assert.equal(readIntake(s,scope,now),null);
+ clearIntake(s,scope,null,now);assert.equal(readIntake(s,scope,now),null);
 });
 test('normal drafts expire while uncertain operations retain the exact key and body',()=>{
  const s=storage(),v=emptyIntake();v.form.complaint='Fixture';writeIntake(s,scope,v,null,now);assert.equal(readIntake(s,scope,now+8*86400000),null);
@@ -23,10 +23,17 @@ test('corrupt uncertain operations block saving instead of silently losing their
 });
 test('unavailable storage and missing account fail before submission',()=>{
  const blocked={setItem(){throw Error('quota')},getItem(){throw Error('blocked')}};
- assert.throws(()=>writeIntake(blocked,scope,emptyIntake(),{key,body:{order:{}}},now),/quota/);assert.throws(()=>readIntake(blocked,scope,now),/blocked/);
+ assert.throws(()=>writeIntake(blocked,scope,emptyIntake(),{key,body:{order:{}}},now),/blocked/);
+ assert.throws(()=>writeIntake({...blocked,getItem:()=>null},scope,emptyIntake(),{key,body:{order:{}}},now),/quota/);assert.throws(()=>readIntake(blocked,scope,now),/blocked/);
  assert.throws(()=>writeIntake(storage(),{userId:0,role:'OWNER'},emptyIntake()),/владельца/);
 });
 test('logout removes credentials but keeps the account-scoped recovery operation',()=>{
  const s=storage(),pending={key,body:{order:{complaint:'Fixture'}}};writeIntake(s,scope,emptyIntake(),pending,now);s.setItem('token','secret');s.setItem('user','owner');s.setItem('unrelated','cache');
  clearSessionKeepingIntake(s);assert.equal(s.getItem('token'),null);assert.equal(s.getItem('user'),null);assert.equal(s.getItem('unrelated'),null);assert.deepEqual(readIntake(s,scope,now).pending,pending);assert.equal(s.length,1);
+});
+test('another open form cannot overwrite or discard an uncertain operation',()=>{
+ const s=storage(),v=emptyIntake(),pending={key,body:{order:{complaint:'Fixture'}}};writeIntake(s,scope,v,pending,now);
+ assert.throws(()=>writeIntake(s,scope,v,null,now),/другой вкладке/);assert.throws(()=>writeIntake(s,scope,v,{...pending,key:'c191519f-63b4-440d-ae4c-9494d4c71bff'},now),/другой вкладке/);
+ assert.throws(()=>clearIntake(s,scope,null,now),/подтвердите/);assert.deepEqual(readIntake(s,scope,now).pending,pending);
+ writeIntake(s,scope,v,null,now,key);assert.equal(readIntake(s,scope,now),null);
 });

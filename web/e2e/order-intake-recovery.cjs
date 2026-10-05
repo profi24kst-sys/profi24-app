@@ -19,7 +19,10 @@ const BASE=process.env.BASE_URL||'http://127.0.0.1:5173',EMAIL=process.env.E2E_E
   await drawer.getByRole('button',{name:'Закрыть создание заказа'}).click();await drawer.waitFor({state:'detached'});await open();
   assert.equal(await drawer.locator('#new-customer-name').inputValue(),name);await drawer.getByRole('status').filter({hasText:'Восстановлен черновик'}).waitFor();assert.equal(submissions.length,0);
   await page.reload();await open();assert.equal(await drawer.locator('#new-equipment-model').inputValue(),'RECOVERY-'+suffix);assert.equal(await drawer.locator('#new-order-complaint').inputValue(),complaint);
+  const other=await context.newPage();await other.goto(BASE+'/orders');await other.locator('section.table[aria-busy="false"]').waitFor();await other.getByRole('button',{name:'Новый заказ',exact:true}).click();await other.locator('#new-order-complaint').waitFor();
   await drawer.getByRole('button',{name:'Создать заказ',exact:true}).click();await drawer.getByRole('alert').waitFor();await drawer.getByRole('button',{name:'Повторить сохранение',exact:true}).waitFor();assert.ok(created?.id);assert.equal(submissions.length,1);assert.equal(await drawer.locator('#new-customer-name').isDisabled(),true);
+  let otherWrites=0;other.on('request',r=>{if(r.method()==='POST'&&new URL(r.url()).pathname==='/api/v1/requests/intake')otherWrites++});
+  await other.locator('#new-order-complaint').fill('Stale form must not overwrite the pending key');await other.locator('.intakeDrawer').getByRole('button',{name:'Создать заказ',exact:true}).click();await other.getByRole('alert').filter({hasText:'Не удалось сохранить ключ операции'}).waitFor();assert.equal(otherWrites,0);await other.close();
   await drawer.getByRole('button',{name:'Закрыть создание заказа'}).click();await drawer.waitFor({state:'detached'});
   await page.locator('.profile').getByRole('button',{name:'Выйти',exact:true}).click();await page.getByPlaceholder('Email').waitFor();assert.equal(await page.evaluate(()=>Boolean(localStorage.token)),false);
   await page.reload();await page.getByPlaceholder('Email').fill(EMAIL);await page.getByPlaceholder('Пароль').fill(PASSWORD);await page.getByRole('button',{name:'Войти',exact:true}).click();await page.locator('aside').waitFor();await open();assert.equal(await drawer.locator('#new-order-complaint').inputValue(),complaint);
@@ -40,6 +43,6 @@ const BASE=process.env.BASE_URL||'http://127.0.0.1:5173',EMAIL=process.env.E2E_E
   let blockedWrites=0;page.on('request',r=>{if(r.method()==='POST'&&new URL(r.url()).pathname==='/api/v1/requests/intake')blockedWrites++});
   await page.evaluate(()=>{const original=Storage.prototype.setItem;Storage.prototype.setItem=function(k,v){if(k.startsWith('profi24:intake-draft:'))throw Error('synthetic quota');return original.call(this,k,v)}});
   await drawer.getByRole('button',{name:'Создать заказ',exact:true}).click();await drawer.getByRole('alert').filter({hasText:'Не удалось сохранить ключ операции'}).waitFor();assert.equal(blockedWrites,0);
-  assert.deepEqual(errors,[]);console.log('ORDER_INTAKE_RECOVERY: ok draft_reopen=ok lost_response=ok concurrent_retry=ok storage_guard=ok');
+  assert.deepEqual(errors,[]);console.log('ORDER_INTAKE_RECOVERY: ok draft_reopen=ok lost_response=ok concurrent_retry=ok stale_form_guard=ok storage_guard=ok');
  }finally{await context.close();await browser.close()}
 })().catch(error=>{console.error(error);process.exitCode=1});
