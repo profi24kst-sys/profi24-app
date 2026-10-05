@@ -75,8 +75,10 @@ for(const file of [supplierCatalogCssPath,supplierCatalogUiPath]){
 }
 
 const app=fs.readFileSync(appPath,'utf8');
-for(const component of ['App','Orders','Order','NewOrder','Staff','SimpleCustomers','SimpleEquipment','TaskPage','ComplaintPage','Finance','Reports']){
+for(const component of ['App','Orders','Order','Staff','SimpleCustomers','SimpleEquipment','TaskPage','ComplaintPage','Finance','Reports']){
   if(!app.includes(`function ${component}(`)) fail(`main CRM component missing: ${component}`);
 }
 
+if(!app.includes("import {NewOrder} from './order-intake.jsx'")) fail('main CRM must import intake');
+if(!fs.readFileSync(path.resolve(__dirname,'..','order-intake.jsx'),'utf8').includes('function NewOrder(')) fail('intake component is missing');
 console.log('PWA_BUILD_REGRESSION: ok');

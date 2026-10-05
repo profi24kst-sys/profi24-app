@@ -1,9 +1,10 @@
 import React,{useEffect,useRef,useState} from 'react';
 import {X} from 'lucide-react';
 import {financeApi,financeKey,financeDate,financeMoney,accountTypes} from './finance-client.js';
+import {CategorySelect} from './finance-category-select.jsx';
 
 export function AccountSelect({accounts,value,onChange,label='Источник оплаты',exclude}) {
-  return <label>{label}<select required value={value||''} onChange={e=>onChange(e.target.value)}><option value="">Выберите счёт</option>{accounts.filter(a=>a.is_active&&String(a.id)!==String(exclude)).map(a=><option key={a.id} value={a.id}>{a.name}{a.branch_name?' · '+a.branch_name:''} · {financeMoney(a.balance)}</option>)}</select></label>;
+  return <label>{label}<select aria-label={label} required value={value||''} onChange={e=>onChange(e.target.value)}><option value="">Выберите счёт</option>{accounts.filter(a=>a.is_active&&String(a.id)!==String(exclude)).map(a=><option key={a.id} value={a.id}>{a.name}{a.branch_name?' · '+a.branch_name:''} · {financeMoney(a.balance)}</option>)}</select></label>;
 }
 export function FinanceDialog({title,close,children}) {
   const ref=useRef(null);
@@ -35,6 +36,7 @@ export function AccountForm({account,users,branches=[],close,done}) {
   </fieldset><FormActions busy={f.busy} error={f.error} close={close} label={account?'Сохранить настройки':'Создать счёт'} disabled={!b.branch_id}/></form></FinanceDialog>;
 }
 export function MoneyForm({mode,accounts,account,entry,close,done}) {
+  const [categoryValid,setCategoryValid]=useState(false);
   const f=useFinanceForm({account_id:account?.id||'',type:'EXPENSE',category:'OTHER',amount:'',from_account_id:account?.id||'',to_account_id:'',delta:'',reason:'',comment:'',document_reference:'',occurred_at:financeDate()}),{form:b}=f;
   const title={operation:'Приход или расход',transfer:'Перевод между счетами',adjustment:'Корректировка остатка',reverse:'Сторно операции'}[mode];
   const save=async(body,key)=>{
@@ -42,7 +44,7 @@ export function MoneyForm({mode,accounts,account,entry,close,done}) {
     await financeApi(config[0],{method:'POST',body:config[1],key});done();
   };
   return <FinanceDialog title={title} close={()=>!f.busy&&close()}><form className="finForm" onSubmit={f.submit(save)}><fieldset disabled={f.busy}>
-    {mode==='operation'&&<><AccountSelect accounts={accounts} value={b.account_id} onChange={v=>f.change('account_id',v)}/><label>Операция<select value={b.type} onChange={e=>f.change('type',e.target.value)}><option value="EXPENSE">Расход</option><option value="INCOME">Прочий приход</option></select></label><label>Категория<input required value={b.category} onChange={e=>f.change('category',e.target.value)}/></label></>}
+    {mode==='operation'&&<><AccountSelect accounts={accounts} value={b.account_id} onChange={v=>f.change('account_id',v)}/><label>Операция<select value={b.type} onChange={e=>f.change('type',e.target.value)}><option value="EXPENSE">Расход</option><option value="INCOME">Прочий приход</option></select></label><CategorySelect onValidityChange={setCategoryValid} type={b.type} accountType={accounts.find(a=>String(a.id)===String(b.account_id))?.type} value={b.category} onChange={v=>f.change('category',v)}/></>}
     {mode==='transfer'&&<><AccountSelect accounts={accounts} label="Откуда" value={b.from_account_id} onChange={v=>f.change('from_account_id',v)}/><AccountSelect accounts={accounts} label="Куда" exclude={b.from_account_id} value={b.to_account_id} onChange={v=>f.change('to_account_id',v)}/><p className="finHint">Два связанных движения. Прибыль компании не меняется.</p></>}
     {['operation','transfer'].includes(mode)&&<><label>Сумма, ₸<input required type="number" min="0.01" step="0.01" value={b.amount} onChange={e=>f.change('amount',e.target.value)}/></label><label>Назначение<input required minLength={3} value={b.comment} onChange={e=>f.change('comment',e.target.value)}/></label></>}
     {mode==='adjustment'&&<><p>{account.name}: {financeMoney(account.balance)}</p><label>Изменение остатка, ₸<input required type="number" step="0.01" placeholder="Например, -2500 или 10000" value={b.delta} onChange={e=>f.change('delta',e.target.value)}/></label><p className="finHint">После корректировки: {financeMoney(Number(account.balance)+Number(b.delta||0))}. Корректировка не является доходом или расходом P&L.</p></>}
@@ -50,5 +52,5 @@ export function MoneyForm({mode,accounts,account,entry,close,done}) {
     {['adjustment','reverse'].includes(mode)&&<label>Причина<input required minLength={3} value={b.reason} onChange={e=>f.change('reason',e.target.value)}/></label>}
     {mode!=='reverse'&&<label>Дата<input required type="date" max={financeDate()} value={b.occurred_at} onChange={e=>f.change('occurred_at',e.target.value)}/></label>}
     {mode!=='transfer'&&<label>Документ-основание<input required={mode==='adjustment'} value={b.document_reference} onChange={e=>f.change('document_reference',e.target.value)} placeholder="Номер акта, чека или платёжного документа"/></label>}
-  </fieldset><FormActions busy={f.busy} error={f.error} close={close}/></form></FinanceDialog>;
+  </fieldset><FormActions busy={f.busy} error={f.error} close={close} disabled={mode==='operation'&&!categoryValid}/></form></FinanceDialog>;
 }

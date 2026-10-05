@@ -34,10 +34,8 @@ function ok(value,message){if(!value)throw Error(message)}
   const drawer=page.locator('.drawer');await drawer.waitFor({state:'visible'});
   await drawer.locator('#new-customer-name').fill('E2E Поля '+suffix);
   await drawer.locator('#new-customer-phone').fill('+7708'+String(Date.now()).slice(-7));
-  await drawer.getByRole('button',{name:'Далее',exact:true}).click();
   await drawer.locator('#new-equipment-brand').fill('LG');
   await drawer.locator('#new-equipment-model').fill('E2E-Fields-'+suffix);
-  await drawer.getByRole('button',{name:'Далее',exact:true}).click();
   await drawer.locator('#new-order-complaint').fill('Проверка динамического поля '+suffix);
   const select=drawer.locator('#custom-field-'+code);
   await select.waitFor({state:'visible',timeout:12000});
