@@ -4,7 +4,7 @@ const BASE=process.env.BASE_URL||'http://127.0.0.1:5173',EMAIL=process.env.E2E_E
 function fail(message){throw new Error(message)}
 (async()=>{
  const browser=await chromium.launch({headless:true}),page=await browser.newPage({viewport:{width:1400,height:900}});let requestPosts=0;
- page.on('request',r=>{if(r.method()==='POST'&&new URL(r.url()).pathname==='/api/v1/requests')requestPosts++});
+ page.on('request',r=>{if(r.method()==='POST'&&new URL(r.url()).pathname==='/api/v1/requests/intake')requestPosts++});
  try{
   if(!PASSWORD)fail('E2E_PASSWORD is required');
   await page.goto(BASE,{waitUntil:'domcontentloaded',timeout:30000});

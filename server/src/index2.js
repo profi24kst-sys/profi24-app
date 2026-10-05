@@ -1,4 +1,5 @@
 import {registerOrderViewRoutes} from './order-views.js';
+import {registerOrderIntakeRoutes} from './order-intake.js';
 import {registerSlaRoutes,syncSlaControls} from './sla.js';
 import {recalculateOrder} from './order-totals.js';
 import {authenticate,installOrderAccess,protectOrderTables,requireOrder} from './access.js';
@@ -170,6 +171,7 @@ app.get('/api/v1/dashboard',{preHandler:auth},async req=>{const p=[],where=['r.d
 app.get('/api/v1/dashboard/finance',{preHandler:roles('OWNER','MANAGER','ACCOUNTANT')},async(req,reply)=>{let period;try{period=reportPeriod(req.query||{})}catch(e){return err(reply,e.code||'VALIDATION',e.message,e.statusCode||422)}const aggregate=async(start,end)=>{const params=[],where=["deleted_at IS NULL","status<>'CANCELLED'"];if(start&&end){params.push(start,end);where.push('created_at>=$1::timestamptz','created_at<$2::timestamptz')}else where.push("created_at>=(date_trunc('month',now() AT TIME ZONE 'Asia/Qostanay') AT TIME ZONE 'Asia/Qostanay')");return (await q(`SELECT COALESCE(sum(total),0)::numeric revenue,COALESCE(sum(direct_cost),0)::numeric direct_cost,COALESCE(sum(total-direct_cost),0)::numeric gross_profit,COALESCE(sum(paid),0)::numeric paid,COALESCE(sum(GREATEST(total-paid,0)),0)::numeric outstanding FROM requests WHERE ${where.join(' AND ')}`,params)).rows[0]};const totals=await aggregate(period?.start,period?.end),previous=period?await aggregate(period.previousStart,period.previousEnd):null;return {data:{totals,previous,period:reportPeriodMetadata(period)}}});
 registerDirectoryRoutes(app,pool);
 registerOrderViewRoutes(app,pool);
+registerOrderIntakeRoutes(app,pool);
 registerOrderFormRoutes(app,pool,{auth,roles,err});
 registerSlaRoutes(app,pool);
 // Time passes without order edits; periodically enqueue breaches.
