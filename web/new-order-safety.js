@@ -18,7 +18,7 @@
     }
     root.dataset.equipmentExplicit='0';
   }
-  function bind(root){if(root===lastModal)return;lastModal=root;detect(root);root.dataset.equipmentExplicit='0';
+  function bind(root){if(root.dataset.orderIntake==='controlled')return;if(root===lastModal)return;lastModal=root;detect(root);root.dataset.equipmentExplicit='0';
     customerSelect?.addEventListener('change',()=>{detect(root);clearOrderSpecific(root)},true);
     equipmentSelect?.addEventListener('change',e=>{if(e.isTrusted||equipmentSelect.value)root.dataset.equipmentExplicit=equipmentSelect.value?'1':'0'},true)
   }
@@ -26,7 +26,7 @@
   window.fetch=async function(input,init){
     const url=typeof input==='string'?input:(input?.url||''),method=String(init?.method||'GET').toUpperCase();
     if(method==='POST'&&/\/api\/v1\/requests(?:\?|$)/.test(url)&&typeof init?.body==='string'){
-      try{const b=JSON.parse(init.body),m=modal();if(m&&m.dataset.equipmentExplicit!=='1'&&b.equipment_id){delete b.equipment_id;init={...init,body:JSON.stringify(b)}}}catch{}
+      try{const b=JSON.parse(init.body),m=modal();if(m&&m.dataset.orderIntake!=='controlled'&&m.dataset.equipmentExplicit!=='1'&&b.equipment_id){delete b.equipment_id;init={...init,body:JSON.stringify(b)}}}catch{}
     }
     return nativeFetch(input,init)
   };

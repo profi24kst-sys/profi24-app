@@ -64,6 +64,7 @@ async function setup(){
   services.diagnostic=await load('diagnostic-flow');
   services.approvals=await load('approvals-portal');
   services.completion=await load('completion');
+  services.cash=await load('cash-register');
   services.finance=await buildFinanceApp(pool,{logger:false});apps.push(services.finance);
   const tokens=Object.fromEntries(users.map(x=>[Number(x.id),services.index2.jwt.sign({id:Number(x.id),role:x.role})]));
   let seq=0;
@@ -88,14 +89,19 @@ test('A32: полный рабочий день проходит всеми ше
     // OWNER: opens the real branch cash account used later by ACCOUNTANT.
     let r=await call('finance','POST','/api/v1/accounts',{name:'A32 Касса смены',type:'CASH',branch_id:s.branch,initial_amount:'0'},ids.owner);
     assert.equal(r.status,201,JSON.stringify(r));const cash=r.data;
+    r=await call('cash','POST',`/api/v1/accounts/${cash.id}/open`,{actual_opening_balance:0},ids.owner);
+    assert.equal(r.status,201,JSON.stringify(r));const shift=r.data;
 
-    // MANAGER: accepts the customer, appliance and service request through core CRM APIs.
-    r=await call('index2','POST','/api/v1/customers',{name:'A32 Клиент',phone:'+77071234567',address:'Костанай'},ids.manager);
-    assert.equal(r.status,201,JSON.stringify(r));const customer=r.data;
-    r=await call('index2','POST','/api/v1/equipment',{customer_id:customer.id,category:'Стиральная машина',brand:'LG',model:'A32'},ids.manager);
-    assert.equal(r.status,201,JSON.stringify(r));const equipment=r.data;
-    r=await call('index2','POST','/api/v1/requests',{customer_id:customer.id,equipment_id:equipment.id,complaint:'Не сливает воду',source:'OTHER',visit_type:'FIELD'},ids.manager);
+    // MANAGER: use the same atomic intake as the new UI; simulate a lost response.
+    const intakeBody={customer:{name:'A32 Клиент',phone:'+77071234567',address:'Костанай'},equipment:{category:'Стиральная машина',brand:'LG',model:'A32'},order:{complaint:'Не сливает воду',source:'OTHER',order_type:'FIELD',visit_type:'FIELD'}};
+    const intakeKey={'x-idempotency-key':'68d236de-c1a0-413d-a44a-2ea088678f2c'};
+    r=await call('index2','POST','/api/v1/requests/intake',intakeBody,ids.manager,intakeKey);
     assert.equal(r.status,201,JSON.stringify(r));const order=r.data;
+    const retry=await call('index2','POST','/api/v1/requests/intake',intakeBody,ids.manager,intakeKey);
+    assert.equal(retry.status,200,JSON.stringify(retry));assert.equal(retry.data.id,order.id);
+    assert.equal(Number((await query('SELECT count(*) c FROM customers')).rows[0].c),1);
+    assert.equal(Number((await query('SELECT count(*) c FROM equipment')).rows[0].c),1);
+    assert.equal(Number((await query('SELECT count(*) c FROM requests')).rows[0].c),1);
 
     // OWNER: records the mentorship relation before the trainee joins any order.
     r=await call('directory','PUT',`/api/v1/trainees/${ids.trainee}/mentor`,{mentor_id:ids.engineer},ids.owner);assert.ok([200,201].includes(r.status),JSON.stringify(r));
@@ -137,6 +143,11 @@ test('A32: полный рабочий день проходит всеми ше
     // ENGINEER: completes repair, the reserved consumable is posted atomically, photo and test are recorded.
     r=await call('completion','POST',`/api/v1/requests/${order.id}/repair-done`,{repair_result:'Сливной тракт очищен, расходник установлен'},ids.engineer);assert.equal(r.status,200,JSON.stringify(r));
     assert.equal(r.data.parts_installed,1);
+    r=await call('completion','POST',`/api/v1/requests/${order.id}/test`,{test_result:'No after-photo'},ids.engineer);
+    assert.equal(r.status,409);assert.equal(r.error?.code,'PHOTO_REQUIRED');
+    r=await call('completion','POST',`/api/v1/requests/${order.id}/payment`,{amount:'15000',account_id:cash.id},ids.accountant);
+    assert.equal(r.status,409,'payment must wait for functional testing');
+
     r=await call('documents','POST',`/api/v1/requests/${order.id}/files`,{name:'a32-after.png',kind:'PHOTO_AFTER',data:png},ids.engineer);assert.equal(r.status,201,JSON.stringify(r));
     r=await call('completion','POST',`/api/v1/requests/${order.id}/test`,{test_result:'Три цикла слива пройдены'},ids.engineer);assert.equal(r.status,200,JSON.stringify(r));
 
@@ -145,9 +156,9 @@ test('A32: полный рабочий день проходит всеми ше
     assert.equal(r.status,403,'engineer must not post a payment');
     assert.equal(Number((await query('SELECT paid FROM requests WHERE id=$1',[order.id])).rows[0].paid),0,'denied payment mutated request');
     assert.equal(Number((await query('SELECT count(*) c FROM payments WHERE request_id=$1',[order.id])).rows[0].c),0,'denied payment created a receipt');
+    r=await call('completion','POST',`/api/v1/requests/${order.id}/payment`,{amount:'15000',account_id:cash.id},ids.supervisor);
+    assert.equal(r.status,403,'supervisor default permissions exclude receiving payments');
 
-    // MANAGER captures the client's handover signature.
-    r=await call('documents','POST',`/api/v1/requests/${order.id}/signatures`,{signer_type:'CLIENT',signer_name:'A32 Клиент',signature_data:png},ids.manager);assert.equal(r.status,201,JSON.stringify(r));
 
     // ACCOUNTANT: receives the exact approved amount to the real branch cash account.
     const beforePay=(await query('SELECT total,paid FROM requests WHERE id=$1',[order.id])).rows[0];
@@ -168,6 +179,13 @@ test('A32: полный рабочий день проходит всеми ше
     r=await call('completion','POST',`/api/v1/requests/${order.id}/payment`,{...paymentPayload,amount:'14000'},ids.accountant,samePaymentKey);
     assert.equal(r.status,409,'reusing a payment key with altered amount must be rejected');
 
+    // Full payment must not bypass signed handover.
+    r=await call('completion','POST',`/api/v1/requests/${order.id}/close`,{},ids.manager);
+    assert.equal(r.status,409);assert.equal(r.error?.code,'CLIENT_SIGNATURE_REQUIRED');
+    assert.equal((await query('SELECT status FROM requests WHERE id=$1',[order.id])).rows[0].status,'PAYMENT_REQUIRED');
+    r=await call('documents','POST',`/api/v1/requests/${order.id}/signatures`,{signer_type:'CLIENT',signer_name:'A32 Клиент',signature_data:png},ids.manager);
+    assert.equal(r.status,201,JSON.stringify(r));
+
     // MANAGER: closes through the completion procedure; direct status rewrite is never used.
     r=await call('completion','POST',`/api/v1/requests/${order.id}/close`,{},ids.manager);assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.status,'CLOSED');
 
@@ -184,6 +202,20 @@ test('A32: полный рабочий день проходит всеми ше
     assert.equal(Number((await query("SELECT count(*) c FROM request_signatures WHERE request_id=$1 AND signer_type='CLIENT'",[order.id])).rows[0].c),1);
     const actors=(await query('SELECT DISTINCT user_id FROM request_history WHERE request_id=$1 AND user_id IS NOT NULL',[order.id])).rows.map(x=>Number(x.user_id));
     for(const id of Object.values(ids))assert.ok(actors.includes(id),`role user ${id} did not leave request history`);
+    assert.equal(Number((await query("SELECT count(*) c FROM finance_transactions WHERE cash_shift_id=$1 AND kind='PAYMENT'",[shift.id])).rows[0].c),1);
+    // Reconciliation blocks an unexplained shortage at both HTTP and database layers.
+    r=await call('cash','POST',`/api/v1/shifts/${shift.id}/close`,{actual_closing_balance:14900},ids.accountant);
+    assert.equal(r.status,422);assert.equal(r.error?.code,'VARIANCE_NOTE_REQUIRED');
+    assert.equal((await query('SELECT status FROM finance_cash_shifts WHERE id=$1',[shift.id])).rows[0].status,'OPEN');
+    await assert.rejects(query("UPDATE finance_cash_shifts SET status='CLOSED',expected_closing_balance=15000,actual_closing_balance=14900,closed_by=$1 WHERE id=$2",[ids.accountant,shift.id]),error=>error.code==='P2400');
+    r=await call('cash','POST',`/api/v1/shifts/${shift.id}/close`,{actual_closing_balance:15000},ids.accountant);
+    assert.equal(r.status,200,JSON.stringify(r));assert.equal(Number(r.data.variance),0);
+    r=await call('cash','POST',`/api/v1/accounts/${cash.id}/open`,{actual_opening_balance:15000},ids.owner);assert.equal(r.status,201,JSON.stringify(r));
+    const discrepancyShift=r.data.id;
+    r=await call('cash','POST',`/api/v1/shifts/${discrepancyShift}/close`,{actual_closing_balance:14900,note:'Synthetic documented shortage for reconciliation'},ids.accountant);
+    assert.equal(r.status,200,JSON.stringify(r));assert.equal(Number(r.data.variance),-100);
+    assert.equal(Number((await query('SELECT balance FROM finance_account_balances WHERE id=$1',[cash.id])).rows[0].balance),15000,'reconciliation must not fabricate cash adjustments');
+    assert.ok((await query("SELECT id FROM tasks WHERE title LIKE 'Сверить расхождение кассы%' AND assigned_to=$1",[ids.supervisor])).rows.length);
     r=await call('finance','GET','/api/v1/audit-view',undefined,ids.owner);assert.equal(r.status,200,JSON.stringify(r));
   }finally{await s.close();}
 });
