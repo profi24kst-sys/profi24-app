@@ -1,6 +1,7 @@
 import React,{useEffect,useState} from 'react';
 import {financeApi,financeMoney as money,financeUser,coreMoneyApi,coreOrderApi} from './finance-client.js';
 import {AccountSelect,FormActions,useFinanceForm,FinanceDialog} from './finance-forms.jsx';
+import {CategorySelect} from './finance-category-select.jsx';
 import './finance.css';
 
 function useSources(requestId) {
@@ -16,10 +17,10 @@ function SourceState({source}) {
   return null;
 }
 export function OrderExpenseForm({requestId,onSaved}) {
+  const [categoryValid,setCategoryValid]=useState(false);
   const source=useSources(requestId),f=useFinanceForm({account_id:'',category:'TAXI',amount:'',comment:'',document_reference:''}),b=f.form;
-  const names={TAXI:'Такси / выезд',DELIVERY:'Доставка',CONSUMABLES:'Расходные материалы',PARKING:'Парковка',FUEL:'Топливо',OTHER:'Прочее'};
   return <form className="finOrderForm" onSubmit={f.submit(async(body,key)=>{await financeApi('/requests/'+requestId+'/expenses',{method:'POST',body,key});f.reset();await source.load();await onSaved();})}>
-    <SourceState source={source}/><fieldset disabled={f.busy||source.loading||!!source.error}><AccountSelect accounts={source.accounts} value={b.account_id} onChange={v=>f.change('account_id',v)}/><label>Категория<select value={b.category} onChange={e=>f.change('category',e.target.value)}>{Object.entries(names).map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></label><label>Сумма, ₸<input required type="number" min="0.01" step="0.01" value={b.amount} onChange={e=>f.change('amount',e.target.value)}/></label><label>Чек / документ<input value={b.document_reference} onChange={e=>f.change('document_reference',e.target.value)}/></label><label className="finFull">Назначение расхода<input required minLength={3} value={b.comment} onChange={e=>f.change('comment',e.target.value)} placeholder="Например, такси до клиента"/></label></fieldset><FormActions busy={f.busy||source.loading} error={f.error} label="Провести расход"/>
+    <SourceState source={source}/><fieldset disabled={f.busy||source.loading||!!source.error}><AccountSelect accounts={source.accounts} value={b.account_id} onChange={v=>f.change('account_id',v)}/><CategorySelect onValidityChange={setCategoryValid} requestId={requestId} accountType={source.accounts.find(a=>String(a.id)===String(b.account_id))?.type} value={b.category} onChange={v=>f.change('category',v)}/><label>Сумма, ₸<input required type="number" min="0.01" step="0.01" value={b.amount} onChange={e=>f.change('amount',e.target.value)}/></label><label>Чек / документ<input value={b.document_reference} onChange={e=>f.change('document_reference',e.target.value)}/></label><label className="finFull">Назначение расхода<input required minLength={3} value={b.comment} onChange={e=>f.change('comment',e.target.value)} placeholder="Например, такси до клиента"/></label></fieldset><FormActions busy={f.busy||source.loading} error={f.error} disabled={!categoryValid||!!source.error} label="Провести расход"/>
   </form>;
 }
 export function OrderPurchaseForm({requestId,onSaved,withActions=false}) {

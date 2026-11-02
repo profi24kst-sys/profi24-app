@@ -1,0 +1,21 @@
+.o360SectionNav{min-width:0;max-width:100%;box-sizing:border-box;position:sticky;top:-18px;z-index:6;display:flex;gap:6px;overflow-x:auto;background:#f4f6f8;padding:10px 0;margin-bottom:12px;scrollbar-width:thin}
+.o360SectionNav button{flex:0 0 auto;width:auto;height:auto;white-space:nowrap;background:#fff;border:1px solid #dfe4ea;border-radius:8px;padding:8px 12px;font-size:13px;color:#344054;cursor:pointer}
+.o360SectionNav button:hover{border-color:#e5b528;background:#fff8dc}
+.o360Overview{background:#fff;border:1px solid #e4e7ec;border-radius:12px;padding:18px;margin-bottom:14px;scroll-margin-top:56px}
+.o360Overview h3{margin:0 0 12px;font-size:15px}
+.o360InfoColumns{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:30px;margin-bottom:16px}
+.o360InfoColumns dl{margin:0}.o360InfoColumns dl>div{display:grid;grid-template-columns:140px minmax(0,1fr);gap:10px;border-bottom:1px solid #f0f2f5;padding:8px 0;font-size:13px}
+.o360InfoColumns dt{color:#667085}.o360InfoColumns dd{margin:0;overflow-wrap:anywhere;white-space:pre-wrap}
+.o360MoneySummary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;background:#f8fafc;border-radius:9px;padding:14px;margin-bottom:18px}
+.o360MoneySummary>div{display:grid;gap:5px;min-width:0}.o360MoneySummary span{color:#667085;font-size:12px}.o360MoneySummary b{font-size:17px;overflow-wrap:anywhere}.o360MoneySummary .debt b{color:#9c571d}
+.o360OverviewTable{overflow:auto;border:1px solid #e4e7ec;border-radius:8px}.o360OverviewTable table{border-collapse:collapse;width:100%;min-width:660px;font-size:12px}
+.o360OverviewTable th{text-align:left;font-weight:600;color:#667085;background:#f8fafc}.o360OverviewTable th,.o360OverviewTable td{padding:10px 12px;border-bottom:1px solid #edf0f4;vertical-align:top}
+.o360OverviewTable tbody tr:last-child td{border-bottom:0}.o360OverviewTable td{overflow-wrap:anywhere;max-width:280px}.o360OverviewTable td small{display:block;color:#667085;margin-top:4px}.o360OverviewTable .refund td:last-child{color:#b42318}
+.o360OverviewHint,.o360OverviewEmpty{font-size:12px;color:#667085;line-height:1.5}.o360OverviewHint{margin:12px 0 0}
+.o360 [id^=o360-]{scroll-margin-top:56px}.o360SectionNav button:focus-visible,.o360Overview:focus-visible,.o360Card:focus-visible,.o360Timeline:focus-visible{outline:3px solid #b7890b;outline-offset:2px}
+.o360HistoryClose{display:none!important}.o360HistoryBackdrop{display:none}.o360Timeline [role=alert]{color:#b42318;font-size:12px;margin:6px 0;white-space:pre-wrap}
+@media(max-width:1050px){.o360InfoColumns{gap:18px}.o360InfoColumns dl>div{grid-template-columns:110px minmax(0,1fr)}}
+@media(max-width:760px){.o360SectionNav{top:-10px}.o360Overview{padding:14px}.o360InfoColumns{grid-template-columns:1fr;gap:18px}.o360InfoColumns dl>div{grid-template-columns:115px minmax(0,1fr)}.o360MoneySummary{grid-template-columns:1fr;gap:12px}.o360MoneySummary>div{grid-template-columns:minmax(0,1fr) auto;align-items:center}.o360MoneySummary b{font-size:15px}.o360 .o360Timeline.o360HistoryExpanded{display:flex!important;position:absolute;inset:0 0 0 auto;width:min(92vw,360px);height:100%;z-index:40;box-shadow:-12px 0 35px #0f172a33;border-left:1px solid #dfe4ea}.o360HistoryClose{display:grid!important;place-items:center;flex-shrink:0}.o360HistoryBackdrop{display:block;position:absolute;inset:0;background:#0f172a55;z-index:39}.o360TlHead{gap:8px}.o360TlHead>div{margin-right:auto}}
+@media(max-width:760px){.o360Hero>div{min-width:0;max-width:100%}.o360Hero h2,.o360Hero p{overflow-wrap:anywhere}.o360 .o360Row>b{white-space:normal;overflow-wrap:anywhere}}
+@media(max-width:760px){.o360 .wf header{flex-wrap:wrap;gap:10px}.o360 .wf header>div{min-width:0}.o360 .wf header b{overflow-wrap:anywhere}}
+@media(max-width:760px){.o360Quick{flex-wrap:wrap}.o360Card>header{flex-wrap:wrap}}

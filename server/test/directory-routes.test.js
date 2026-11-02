@@ -87,6 +87,8 @@ test('directory query parser validates limits, dates and status',()=>{
   assert.ok(parseDirectoryQuery({limit:101}).error);
   assert.ok(parseDirectoryQuery({status:'UNKNOWN'}).error);
   assert.ok(parseDirectoryQuery({month:'2026-13'}).error);
+  assert.equal(parseDirectoryQuery({from:'2026-09-01',to:'2026-09-30'}).value.from,'2026-09-01');
+  for(const dates of [{from:'2026-09-01'},{to:'2026-09-30'},{from:'2026-09-30',to:'2026-09-01'},{from:'2026-02-30',to:'2026-03-01'},{from:'2026-01-01',to:'2027-01-02'},{month:'2026-09',from:'2026-09-01',to:'2026-09-30'}])assert.ok(parseDirectoryQuery(dates).error,JSON.stringify(dates));
 });
 
 test('XLSX uses literal text and a valid ZIP worksheet; caps exported rows',()=>{
@@ -223,6 +225,25 @@ test('directory: pagination, filter/search, role and branch visibility, Excel ex
       const sepCustomers=await s.call(3,'/api/v1/directory/customers?month=2026-09');
       assert.equal(sepCustomers.status,200);
       assert.equal(sepCustomers.body.meta.total,1);
+    });
+    await t.test('selected report range includes local boundary days and applies identical branch-scoped XLSX filters',async()=>{
+      const dates=[['RANGE-BEFORE','2026-08-31T18:59:59Z',s.kst,3,101],['RANGE-FIRST','2026-08-31T19:00:00Z',s.kst,3,102],['RANGE-LAST','2026-09-02T18:59:59Z',s.kst,3,103],['RANGE-AFTER','2026-09-02T19:00:00Z',s.kst,3,104],['RANGE-FOREIGN','2026-09-01T10:00:00Z',s.other,4,105]];
+      for(const [number,date,branch,manager,paid] of dates){
+        const customer=(await s.query('INSERT INTO customers(name,phone) VALUES($1,$2) RETURNING id',[number,'7700222'+paid])).rows[0].id;
+        await s.query("INSERT INTO requests(number,customer_id,manager_id,branch_id,status,complaint,total,paid,created_at) VALUES($1,$2,$3,$4,'NEW','Range fixture',200,$5,$6)",[number,customer,manager,branch,paid,date]);
+      }
+      const range='from=2026-09-01&to=2026-09-02&search=RANGE-&status=ALL';
+      const list=await s.call(3,'/api/v1/directory/orders?'+range);assert.equal(list.status,200);assert.deepEqual(list.body.data.map(r=>r.number).sort(),['RANGE-FIRST','RANGE-LAST']);
+      const exported=await s.call(3,'/api/v1/directory/orders/export?'+range);assert.equal(exported.status,200);const xml=sheetXml(exported.raw);
+      for(const expected of ['RANGE-FIRST','RANGE-LAST'])assert.ok(xml.includes(expected));for(const excluded of ['RANGE-BEFORE','RANGE-AFTER','RANGE-FOREIGN'])assert.ok(!xml.includes(excluded));
+      const customers=await s.call(3,'/api/v1/directory/customers?'+range);assert.equal(customers.status,200);assert.deepEqual(customers.body.data.map(r=>r.name).sort(),['RANGE-FIRST','RANGE-LAST']);assert.equal(Number(customers.body.data.find(r=>r.name==='RANGE-FIRST').lifetime_paid),102);
+      const customerXml=sheetXml((await s.call(3,'/api/v1/directory/customers/export?'+range)).raw);assert.ok(customerXml.includes('RANGE-FIRST'));assert.ok(!customerXml.includes('RANGE-FOREIGN'));assert.ok(!customerXml.includes('RANGE-AFTER'));
+      const foreign=await s.call(4,'/api/v1/directory/orders?'+range);assert.deepEqual(foreign.body.data.map(r=>r.number),['RANGE-FOREIGN']);
+      await s.query("INSERT INTO user_permission_overrides(user_id,permission,allowed) VALUES(3,'orders.view.all',false)");
+      assert.equal((await s.call(3,'/api/v1/directory/orders?'+range)).body.meta.total,0);
+      assert.ok(!sheetXml((await s.call(3,'/api/v1/directory/orders/export?'+range)).raw).includes('RANGE-FIRST'));
+      await s.query("DELETE FROM user_permission_overrides WHERE user_id=3");
+      for(const bad of ['from=2026-09-01','from=2026-09-02&to=2026-09-01','month=2026-09&from=2026-09-01&to=2026-09-02'])assert.equal((await s.call(3,'/api/v1/directory/orders/export?'+bad)).status,422);
     });
   }finally{await s.close()}
 });

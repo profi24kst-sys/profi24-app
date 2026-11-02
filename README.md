@@ -174,14 +174,10 @@ Approved payroll snapshots are immutable, KPI bonuses enter payroll once, paymen
 - manager/engineer/trainee scopes are constrained by branch/order participation;
 - backup/restore is checksum-verified and CI-tested.
 
-## Stacked implementation branches
+## Current acceptance candidate
 
-Until the implementation stack is flattened, preserve dependency order:
+The consolidated branch `release/crm-acceptance-20261102` includes the latest order-list, finance, card and atomic-intake changes from PR #112–#117, selected-period exports and strengthened cash reconciliation.
 
-1. Stage B — PR #3;
-2. Stage B.2 — PR #5;
-3. Stage C — PR #6;
-4. Stage D — PR #7;
-5. Stage E — PR #8.
+See [the release acceptance matrix](docs/RELEASE_ACCEPTANCE_2026-11-02.md) for all 37 requirements, remaining gaps, source PR decisions and Windows test-stack update commands. [PILOT_ROLLOUT_CHECKLIST.md](docs/PILOT_ROLLOUT_CHECKLIST.md) remains the operational acceptance gate.
 
-Do not merge a later stage across an unmerged parent stage.
+Require every check on the exact candidate HEAD before accepting the release. A tested candidate is not evidence of production deployment, real staff acceptance, configured customer messaging or completed HelloClient migration. Merge and deployment are separate operations.

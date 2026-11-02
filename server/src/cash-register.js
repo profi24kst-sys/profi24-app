@@ -65,6 +65,7 @@ app.post('/api/v1/shifts/:id/close',{preHandler:permit(PERMISSIONS.CASH_SHIFTS_O
     if(shift.status!=='OPEN')throw Object.assign(new Error('Кассовая смена уже закрыта'),{code:'STATE_CONFLICT',statusCode:409});
     const [account]=await lockAccounts(c,[shift.account_id],req.user,{active:false});
     const expected=(await c.query('SELECT balance FROM finance_account_balances WHERE id=$1',[account.id])).rows[0]?.balance??0;
+    if(Math.abs(Number(actual)-Number(expected))>=0.01&&!closingNote)throw Object.assign(new Error('Укажите причину расхождения фактического и ожидаемого остатка кассы'),{code:'VARIANCE_NOTE_REQUIRED',statusCode:422});
     const closed=(await c.query("UPDATE finance_cash_shifts SET status='CLOSED',expected_closing_balance=$1,actual_closing_balance=$2,closed_by=$3,closing_note=$4 WHERE id=$5 RETURNING *",[expected,actual,req.user.id,closingNote,shift.id])).rows[0];
     if(Math.abs(Number(closed.variance||0))>=0.01){
       const controller=(await c.query("SELECT id FROM users WHERE active=true AND role='SUPERVISOR' ORDER BY id LIMIT 1")).rows[0]||(await c.query("SELECT id FROM users WHERE active=true AND role='OWNER' ORDER BY id LIMIT 1")).rows[0];
